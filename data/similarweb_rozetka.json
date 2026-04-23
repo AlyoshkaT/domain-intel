@@ -1,0 +1,1486 @@
+{
+  "AiTrafficDetails": {
+    "ReferralTraffic": 0.0019368,
+    "TopPrompts": {
+      "ErrorMessage": null,
+      "Prompts": [
+        "What are the latest smartphone deals on rozetka.com.ua?",
+        "Can you find kitchen appliances on rozetka.com.ua?",
+        "Are there any discounts on laptops at rozetka.com.ua?"
+      ],
+      "Status": 0
+    },
+    "TotalVisits": 90695.8171652,
+    "Traffic": {
+      "Distribution": {
+        "Boundary": "<1M",
+        "Chart": [
+          {
+            "History": [
+              {
+                "Date": "2026-03-01",
+                "Value": 67.11455958659259
+              },
+              {
+                "Date": "2026-02-01",
+                "Value": 67.91429806491557
+              },
+              {
+                "Date": "2026-01-01",
+                "Value": 81.5757377931918
+              }
+            ],
+            "Icon": "/image?url=chatgpt.com&t=2&s=1&h=a31616ae3cdef12fcfc664127563e6092e7531e7b4c3cde7e0c8c5fd3310dfc0",
+            "Name": "chatgpt.com"
+          },
+          {
+            "History": [
+              {
+                "Date": "2026-03-01",
+                "Value": 7.131695014108934
+              },
+              {
+                "Date": "2026-02-01",
+                "Value": 6.91742986941878
+              },
+              {
+                "Date": "2026-01-01",
+                "Value": 11.900104681451486
+              }
+            ],
+            "Icon": "/image?url=perplexity.ai&t=2&s=1&h=f48fa93e79e65eef47bff5b62e7037bccffb0629aecaed2d0c9f2fb25f177362",
+            "Name": "perplexity.ai"
+          },
+          {
+            "History": [
+              {
+                "Date": "2026-03-01",
+                "Value": 3.8735618246700425
+              },
+              {
+                "Date": "2026-02-01",
+                "Value": 5.510056955421024
+              },
+              {
+                "Date": "2026-01-01",
+                "Value": 5.709828268793729
+              }
+            ],
+            "Icon": "/image?url=gemini.google.com&t=2&s=1&h=ec0ae7eb3432025135e3658db1edf54cfa2710c74ca7f113d026db33002def01",
+            "Name": "gemini.google.com"
+          }
+        ],
+        "Chatbots": [
+          {
+            "Icon": "/image?url=chatgpt.com&t=2&s=1&h=a31616ae3cdef12fcfc664127563e6092e7531e7b4c3cde7e0c8c5fd3310dfc0",
+            "Name": "chatgpt.com",
+            "Value": 67.11455958659259
+          },
+          {
+            "Icon": "/image?url=perplexity.ai&t=2&s=1&h=f48fa93e79e65eef47bff5b62e7037bccffb0629aecaed2d0c9f2fb25f177362",
+            "Name": "perplexity.ai",
+            "Value": 7.131695014108934
+          },
+          {
+            "Icon": "/image?url=gemini.google.com&t=2&s=1&h=ec0ae7eb3432025135e3658db1edf54cfa2710c74ca7f113d026db33002def01",
+            "Name": "gemini.google.com",
+            "Value": 3.8735618246700425
+          }
+        ]
+      },
+      "Split": [
+        {
+          "Icon": "/image?url=chatgpt.com&t=2&s=1&h=a31616ae3cdef12fcfc664127563e6092e7531e7b4c3cde7e0c8c5fd3310dfc0",
+          "Name": "chatgpt.com",
+          "Rank": 1
+        },
+        {
+          "Icon": "/image?url=perplexity.ai&t=2&s=1&h=f48fa93e79e65eef47bff5b62e7037bccffb0629aecaed2d0c9f2fb25f177362",
+          "Name": "perplexity.ai",
+          "Rank": 2
+        },
+        {
+          "Icon": "/image?url=gemini.google.com&t=2&s=1&h=ec0ae7eb3432025135e3658db1edf54cfa2710c74ca7f113d026db33002def01",
+          "Name": "gemini.google.com",
+          "Rank": 3
+        },
+        {
+          "Icon": "/image?url=claude.ai&t=2&s=1&h=a3b3778e02952b653132fb6d019ed0361cff7850429377787fbdc4c86ce1565e",
+          "Name": "claude.ai",
+          "Rank": 4
+        }
+      ]
+    }
+  },
+  "Category": "e-commerce_and_shopping/marketplace",
+  "CategoryRank": {
+    "Category": "E-commerce_and_Shopping/Marketplace",
+    "Rank": "1"
+  },
+  "Competitors": {
+    "TopSimilarityCompetitors": []
+  },
+  "Countries": [
+    {
+      "Code": "AF",
+      "Name": "Afghanistan",
+      "UrlCode": "afghanistan"
+    },
+    {
+      "Code": "AX",
+      "Name": "Åland Islands",
+      "UrlCode": "land-islands"
+    },
+    {
+      "Code": "AL",
+      "Name": "Albania",
+      "UrlCode": "albania"
+    },
+    {
+      "Code": "DZ",
+      "Name": "Algeria",
+      "UrlCode": "algeria"
+    },
+    {
+      "Code": "AS",
+      "Name": "American Samoa",
+      "UrlCode": "american-samoa"
+    },
+    {
+      "Code": "AD",
+      "Name": "Andorra",
+      "UrlCode": "andorra"
+    },
+    {
+      "Code": "AO",
+      "Name": "Angola",
+      "UrlCode": "angola"
+    },
+    {
+      "Code": "AI",
+      "Name": "Anguilla",
+      "UrlCode": "anguilla"
+    },
+    {
+      "Code": "AQ",
+      "Name": "Antarctica",
+      "UrlCode": "antarctica"
+    },
+    {
+      "Code": "AG",
+      "Name": "Antigua and Barbuda",
+      "UrlCode": "antigua-and-barbuda"
+    },
+    {
+      "Code": "AR",
+      "Name": "Argentina",
+      "UrlCode": "argentina"
+    },
+    {
+      "Code": "AM",
+      "Name": "Armenia",
+      "UrlCode": "armenia"
+    },
+    {
+      "Code": "AW",
+      "Name": "Aruba",
+      "UrlCode": "aruba"
+    },
+    {
+      "Code": "AU",
+      "Name": "Australia",
+      "UrlCode": "australia"
+    },
+    {
+      "Code": "AT",
+      "Name": "Austria",
+      "UrlCode": "austria"
+    },
+    {
+      "Code": "AZ",
+      "Name": "Azerbaijan",
+      "UrlCode": "azerbaijan"
+    },
+    {
+      "Code": "BS",
+      "Name": "Bahamas",
+      "UrlCode": "bahamas"
+    },
+    {
+      "Code": "BH",
+      "Name": "Bahrain",
+      "UrlCode": "bahrain"
+    },
+    {
+      "Code": "BD",
+      "Name": "Bangladesh",
+      "UrlCode": "bangladesh"
+    },
+    {
+      "Code": "BB",
+      "Name": "Barbados",
+      "UrlCode": "barbados"
+    },
+    {
+      "Code": "BY",
+      "Name": "Belarus",
+      "UrlCode": "belarus"
+    },
+    {
+      "Code": "BE",
+      "Name": "Belgium",
+      "UrlCode": "belgium"
+    },
+    {
+      "Code": "BZ",
+      "Name": "Belize",
+      "UrlCode": "belize"
+    },
+    {
+      "Code": "BJ",
+      "Name": "Benin",
+      "UrlCode": "benin"
+    },
+    {
+      "Code": "BM",
+      "Name": "Bermuda",
+      "UrlCode": "bermuda"
+    },
+    {
+      "Code": "BT",
+      "Name": "Bhutan",
+      "UrlCode": "bhutan"
+    },
+    {
+      "Code": "BO",
+      "Name": "Bolivia",
+      "UrlCode": "bolivia-plurinational-state-of"
+    },
+    {
+      "Code": "BQ",
+      "Name": "Bonaire, Sint Eustatius and Saba",
+      "UrlCode": "bonaire-sint-eustatius-and-saba"
+    },
+    {
+      "Code": "BA",
+      "Name": "Bosnia and Herzegovina",
+      "UrlCode": "bosnia-and-herzegovina"
+    },
+    {
+      "Code": "BW",
+      "Name": "Botswana",
+      "UrlCode": "botswana"
+    },
+    {
+      "Code": "BV",
+      "Name": "Bouvet Island",
+      "UrlCode": "bouvet-island"
+    },
+    {
+      "Code": "BR",
+      "Name": "Brazil",
+      "UrlCode": "brazil"
+    },
+    {
+      "Code": "IO",
+      "Name": "British Indian Ocean Territory",
+      "UrlCode": "british-indian-ocean-territory"
+    },
+    {
+      "Code": "BN",
+      "Name": "Brunei Darussalam",
+      "UrlCode": "brunei-darussalam"
+    },
+    {
+      "Code": "BG",
+      "Name": "Bulgaria",
+      "UrlCode": "bulgaria"
+    },
+    {
+      "Code": "BF",
+      "Name": "Burkina Faso",
+      "UrlCode": "burkina-faso"
+    },
+    {
+      "Code": "BI",
+      "Name": "Burundi",
+      "UrlCode": "burundi"
+    },
+    {
+      "Code": "CV",
+      "Name": "Cabo Verde",
+      "UrlCode": "cabo-verde"
+    },
+    {
+      "Code": "KH",
+      "Name": "Cambodia",
+      "UrlCode": "cambodia"
+    },
+    {
+      "Code": "CM",
+      "Name": "Cameroon",
+      "UrlCode": "cameroon"
+    },
+    {
+      "Code": "CA",
+      "Name": "Canada",
+      "UrlCode": "canada"
+    },
+    {
+      "Code": "KY",
+      "Name": "Cayman Islands",
+      "UrlCode": "cayman-islands"
+    },
+    {
+      "Code": "CF",
+      "Name": "Central African Republic",
+      "UrlCode": "central-african-republic"
+    },
+    {
+      "Code": "TD",
+      "Name": "Chad",
+      "UrlCode": "chad"
+    },
+    {
+      "Code": "CL",
+      "Name": "Chile",
+      "UrlCode": "chile"
+    },
+    {
+      "Code": "CN",
+      "Name": "China",
+      "UrlCode": "china"
+    },
+    {
+      "Code": "CX",
+      "Name": "Christmas Island",
+      "UrlCode": "christmas-island"
+    },
+    {
+      "Code": "CC",
+      "Name": "Cocos (Keeling) Islands",
+      "UrlCode": "cocos-keeling-islands"
+    },
+    {
+      "Code": "CO",
+      "Name": "Colombia",
+      "UrlCode": "colombia"
+    },
+    {
+      "Code": "KM",
+      "Name": "Comoros",
+      "UrlCode": "comoros"
+    },
+    {
+      "Code": "CG",
+      "Name": "Congo",
+      "UrlCode": "congo"
+    },
+    {
+      "Code": "CD",
+      "Name": "Congo, the Democratic Republic of the",
+      "UrlCode": "congo-the-democratic-republic-of-the"
+    },
+    {
+      "Code": "CK",
+      "Name": "Cook Islands",
+      "UrlCode": "cook-islands"
+    },
+    {
+      "Code": "CR",
+      "Name": "Costa Rica",
+      "UrlCode": "costa-rica"
+    },
+    {
+      "Code": "CI",
+      "Name": "Côte d'Ivoire",
+      "UrlCode": "cte-divoire"
+    },
+    {
+      "Code": "HR",
+      "Name": "Croatia",
+      "UrlCode": "croatia"
+    },
+    {
+      "Code": "CU",
+      "Name": "Cuba",
+      "UrlCode": "cuba"
+    },
+    {
+      "Code": "CW",
+      "Name": "Curaçao",
+      "UrlCode": "curaao"
+    },
+    {
+      "Code": "CY",
+      "Name": "Cyprus",
+      "UrlCode": "cyprus"
+    },
+    {
+      "Code": "CZ",
+      "Name": "Czech Republic",
+      "UrlCode": "czech-republic"
+    },
+    {
+      "Code": "DK",
+      "Name": "Denmark",
+      "UrlCode": "denmark"
+    },
+    {
+      "Code": "DJ",
+      "Name": "Djibouti",
+      "UrlCode": "djibouti"
+    },
+    {
+      "Code": "DM",
+      "Name": "Dominica",
+      "UrlCode": "dominica"
+    },
+    {
+      "Code": "DO",
+      "Name": "Dominican Republic",
+      "UrlCode": "dominican-republic"
+    },
+    {
+      "Code": "EC",
+      "Name": "Ecuador",
+      "UrlCode": "ecuador"
+    },
+    {
+      "Code": "EG",
+      "Name": "Egypt",
+      "UrlCode": "egypt"
+    },
+    {
+      "Code": "SV",
+      "Name": "El Salvador",
+      "UrlCode": "el-salvador"
+    },
+    {
+      "Code": "GQ",
+      "Name": "Equatorial Guinea",
+      "UrlCode": "equatorial-guinea"
+    },
+    {
+      "Code": "ER",
+      "Name": "Eritrea",
+      "UrlCode": "eritrea"
+    },
+    {
+      "Code": "EE",
+      "Name": "Estonia",
+      "UrlCode": "estonia"
+    },
+    {
+      "Code": "ET",
+      "Name": "Ethiopia",
+      "UrlCode": "ethiopia"
+    },
+    {
+      "Code": "FK",
+      "Name": "Falkland Islands (Malvinas)",
+      "UrlCode": "falkland-islands-malvinas"
+    },
+    {
+      "Code": "FO",
+      "Name": "Faroe Islands",
+      "UrlCode": "faroe-islands"
+    },
+    {
+      "Code": "FJ",
+      "Name": "Fiji",
+      "UrlCode": "fiji"
+    },
+    {
+      "Code": "FI",
+      "Name": "Finland",
+      "UrlCode": "finland"
+    },
+    {
+      "Code": "FR",
+      "Name": "France",
+      "UrlCode": "france"
+    },
+    {
+      "Code": "GF",
+      "Name": "French Guiana",
+      "UrlCode": "french-guiana"
+    },
+    {
+      "Code": "PF",
+      "Name": "French Polynesia",
+      "UrlCode": "french-polynesia"
+    },
+    {
+      "Code": "TF",
+      "Name": "French Southern Territories",
+      "UrlCode": "french-southern-territories"
+    },
+    {
+      "Code": "GA",
+      "Name": "Gabon",
+      "UrlCode": "gabon"
+    },
+    {
+      "Code": "GM",
+      "Name": "Gambia",
+      "UrlCode": "gambia"
+    },
+    {
+      "Code": "GE",
+      "Name": "Georgia",
+      "UrlCode": "georgia"
+    },
+    {
+      "Code": "DE",
+      "Name": "Germany",
+      "UrlCode": "germany"
+    },
+    {
+      "Code": "GH",
+      "Name": "Ghana",
+      "UrlCode": "ghana"
+    },
+    {
+      "Code": "GI",
+      "Name": "Gibraltar",
+      "UrlCode": "gibraltar"
+    },
+    {
+      "Code": "GR",
+      "Name": "Greece",
+      "UrlCode": "greece"
+    },
+    {
+      "Code": "GL",
+      "Name": "Greenland",
+      "UrlCode": "greenland"
+    },
+    {
+      "Code": "GD",
+      "Name": "Grenada",
+      "UrlCode": "grenada"
+    },
+    {
+      "Code": "GP",
+      "Name": "Guadeloupe",
+      "UrlCode": "guadeloupe"
+    },
+    {
+      "Code": "GU",
+      "Name": "Guam",
+      "UrlCode": "guam"
+    },
+    {
+      "Code": "GT",
+      "Name": "Guatemala",
+      "UrlCode": "guatemala"
+    },
+    {
+      "Code": "GG",
+      "Name": "Guernsey",
+      "UrlCode": "guernsey"
+    },
+    {
+      "Code": "GN",
+      "Name": "Guinea",
+      "UrlCode": "guinea"
+    },
+    {
+      "Code": "GW",
+      "Name": "Guinea-Bissau",
+      "UrlCode": "guinea-bissau"
+    },
+    {
+      "Code": "GY",
+      "Name": "Guyana",
+      "UrlCode": "guyana"
+    },
+    {
+      "Code": "HT",
+      "Name": "Haiti",
+      "UrlCode": "haiti"
+    },
+    {
+      "Code": "HM",
+      "Name": "Heard Island and McDonald Islands",
+      "UrlCode": "heard-island-and-mcdonald-islands"
+    },
+    {
+      "Code": "VA",
+      "Name": "Holy See (Vatican City State)",
+      "UrlCode": "holy-see-vatican-city-state"
+    },
+    {
+      "Code": "HN",
+      "Name": "Honduras",
+      "UrlCode": "honduras"
+    },
+    {
+      "Code": "HK",
+      "Name": "Hong Kong",
+      "UrlCode": "hong-kong"
+    },
+    {
+      "Code": "HU",
+      "Name": "Hungary",
+      "UrlCode": "hungary"
+    },
+    {
+      "Code": "IS",
+      "Name": "Iceland",
+      "UrlCode": "iceland"
+    },
+    {
+      "Code": "IN",
+      "Name": "India",
+      "UrlCode": "india"
+    },
+    {
+      "Code": "ID",
+      "Name": "Indonesia",
+      "UrlCode": "indonesia"
+    },
+    {
+      "Code": "IR",
+      "Name": "Iran",
+      "UrlCode": "iran-islamic-republic-of"
+    },
+    {
+      "Code": "IQ",
+      "Name": "Iraq",
+      "UrlCode": "iraq"
+    },
+    {
+      "Code": "IE",
+      "Name": "Ireland",
+      "UrlCode": "ireland"
+    },
+    {
+      "Code": "IM",
+      "Name": "Isle of Man",
+      "UrlCode": "isle-of-man"
+    },
+    {
+      "Code": "IL",
+      "Name": "Israel",
+      "UrlCode": "israel"
+    },
+    {
+      "Code": "IT",
+      "Name": "Italy",
+      "UrlCode": "italy"
+    },
+    {
+      "Code": "JM",
+      "Name": "Jamaica",
+      "UrlCode": "jamaica"
+    },
+    {
+      "Code": "JP",
+      "Name": "Japan",
+      "UrlCode": "japan"
+    },
+    {
+      "Code": "JE",
+      "Name": "Jersey",
+      "UrlCode": "jersey"
+    },
+    {
+      "Code": "JO",
+      "Name": "Jordan",
+      "UrlCode": "jordan"
+    },
+    {
+      "Code": "KZ",
+      "Name": "Kazakhstan",
+      "UrlCode": "kazakhstan"
+    },
+    {
+      "Code": "KE",
+      "Name": "Kenya",
+      "UrlCode": "kenya"
+    },
+    {
+      "Code": "KI",
+      "Name": "Kiribati",
+      "UrlCode": "kiribati"
+    },
+    {
+      "Code": "KP",
+      "Name": "Korea, Democratic People's Republic of",
+      "UrlCode": "korea-democratic-peoples-republic-of"
+    },
+    {
+      "Code": "KR",
+      "Name": "Korea, Republic of",
+      "UrlCode": "korea-republic-of"
+    },
+    {
+      "Code": "KW",
+      "Name": "Kuwait",
+      "UrlCode": "kuwait"
+    },
+    {
+      "Code": "KG",
+      "Name": "Kyrgyzstan",
+      "UrlCode": "kyrgyzstan"
+    },
+    {
+      "Code": "LA",
+      "Name": "Lao People's Democratic Republic",
+      "UrlCode": "lao-peoples-democratic-republic"
+    },
+    {
+      "Code": "LV",
+      "Name": "Latvia",
+      "UrlCode": "latvia"
+    },
+    {
+      "Code": "LB",
+      "Name": "Lebanon",
+      "UrlCode": "lebanon"
+    },
+    {
+      "Code": "LS",
+      "Name": "Lesotho",
+      "UrlCode": "lesotho"
+    },
+    {
+      "Code": "LR",
+      "Name": "Liberia",
+      "UrlCode": "liberia"
+    },
+    {
+      "Code": "LY",
+      "Name": "Libya",
+      "UrlCode": "libya"
+    },
+    {
+      "Code": "LI",
+      "Name": "Liechtenstein",
+      "UrlCode": "liechtenstein"
+    },
+    {
+      "Code": "LT",
+      "Name": "Lithuania",
+      "UrlCode": "lithuania"
+    },
+    {
+      "Code": "LU",
+      "Name": "Luxembourg",
+      "UrlCode": "luxembourg"
+    },
+    {
+      "Code": "MO",
+      "Name": "Macao",
+      "UrlCode": "macao"
+    },
+    {
+      "Code": "MK",
+      "Name": "Macedonia (FYROM)",
+      "UrlCode": "macedonia-the-former-yugoslav-republic-of"
+    },
+    {
+      "Code": "MG",
+      "Name": "Madagascar",
+      "UrlCode": "madagascar"
+    },
+    {
+      "Code": "MW",
+      "Name": "Malawi",
+      "UrlCode": "malawi"
+    },
+    {
+      "Code": "MY",
+      "Name": "Malaysia",
+      "UrlCode": "malaysia"
+    },
+    {
+      "Code": "MV",
+      "Name": "Maldives",
+      "UrlCode": "maldives"
+    },
+    {
+      "Code": "ML",
+      "Name": "Mali",
+      "UrlCode": "mali"
+    },
+    {
+      "Code": "MT",
+      "Name": "Malta",
+      "UrlCode": "malta"
+    },
+    {
+      "Code": "MH",
+      "Name": "Marshall Islands",
+      "UrlCode": "marshall-islands"
+    },
+    {
+      "Code": "MQ",
+      "Name": "Martinique",
+      "UrlCode": "martinique"
+    },
+    {
+      "Code": "MR",
+      "Name": "Mauritania",
+      "UrlCode": "mauritania"
+    },
+    {
+      "Code": "MU",
+      "Name": "Mauritius",
+      "UrlCode": "mauritius"
+    },
+    {
+      "Code": "YT",
+      "Name": "Mayotte",
+      "UrlCode": "mayotte"
+    },
+    {
+      "Code": "MX",
+      "Name": "Mexico",
+      "UrlCode": "mexico"
+    },
+    {
+      "Code": "FM",
+      "Name": "Micronesia, Federated States of",
+      "UrlCode": "micronesia-federated-states-of"
+    },
+    {
+      "Code": "MD",
+      "Name": "Moldova",
+      "UrlCode": "moldova-republic-of"
+    },
+    {
+      "Code": "MC",
+      "Name": "Monaco",
+      "UrlCode": "monaco"
+    },
+    {
+      "Code": "MN",
+      "Name": "Mongolia",
+      "UrlCode": "mongolia"
+    },
+    {
+      "Code": "ME",
+      "Name": "Montenegro",
+      "UrlCode": "montenegro"
+    },
+    {
+      "Code": "MS",
+      "Name": "Montserrat",
+      "UrlCode": "montserrat"
+    },
+    {
+      "Code": "MA",
+      "Name": "Morocco",
+      "UrlCode": "morocco"
+    },
+    {
+      "Code": "MZ",
+      "Name": "Mozambique",
+      "UrlCode": "mozambique"
+    },
+    {
+      "Code": "MM",
+      "Name": "Myanmar",
+      "UrlCode": "myanmar"
+    },
+    {
+      "Code": "NA",
+      "Name": "Namibia",
+      "UrlCode": "namibia"
+    },
+    {
+      "Code": "NR",
+      "Name": "Nauru",
+      "UrlCode": "nauru"
+    },
+    {
+      "Code": "NP",
+      "Name": "Nepal",
+      "UrlCode": "nepal"
+    },
+    {
+      "Code": "NL",
+      "Name": "Netherlands",
+      "UrlCode": "netherlands"
+    },
+    {
+      "Code": "AN",
+      "Name": "Netherlands Antilles",
+      "UrlCode": "netherlands-antilles"
+    },
+    {
+      "Code": "NC",
+      "Name": "New Caledonia",
+      "UrlCode": "new-caledonia"
+    },
+    {
+      "Code": "NZ",
+      "Name": "New Zealand",
+      "UrlCode": "new-zealand"
+    },
+    {
+      "Code": "NI",
+      "Name": "Nicaragua",
+      "UrlCode": "nicaragua"
+    },
+    {
+      "Code": "NE",
+      "Name": "Niger",
+      "UrlCode": "niger"
+    },
+    {
+      "Code": "NG",
+      "Name": "Nigeria",
+      "UrlCode": "nigeria"
+    },
+    {
+      "Code": "NU",
+      "Name": "Niue",
+      "UrlCode": "niue"
+    },
+    {
+      "Code": "AP",
+      "Name": "Non-spec Asia Pas Location",
+      "UrlCode": "non-spec-asia-pas-location"
+    },
+    {
+      "Code": "NF",
+      "Name": "Norfolk Island",
+      "UrlCode": "norfolk-island"
+    },
+    {
+      "Code": "MP",
+      "Name": "Northern Mariana Islands",
+      "UrlCode": "northern-mariana-islands"
+    },
+    {
+      "Code": "NO",
+      "Name": "Norway",
+      "UrlCode": "norway"
+    },
+    {
+      "Code": "OM",
+      "Name": "Oman",
+      "UrlCode": "oman"
+    },
+    {
+      "Code": "PK",
+      "Name": "Pakistan",
+      "UrlCode": "pakistan"
+    },
+    {
+      "Code": "PW",
+      "Name": "Palau",
+      "UrlCode": "palau"
+    },
+    {
+      "Code": "PS",
+      "Name": "Palestine",
+      "UrlCode": "palestine-state-of"
+    },
+    {
+      "Code": "PA",
+      "Name": "Panama",
+      "UrlCode": "panama"
+    },
+    {
+      "Code": "PG",
+      "Name": "Papua New Guinea",
+      "UrlCode": "papua-new-guinea"
+    },
+    {
+      "Code": "PY",
+      "Name": "Paraguay",
+      "UrlCode": "paraguay"
+    },
+    {
+      "Code": "PE",
+      "Name": "Peru",
+      "UrlCode": "peru"
+    },
+    {
+      "Code": "PH",
+      "Name": "Philippines",
+      "UrlCode": "philippines"
+    },
+    {
+      "Code": "PN",
+      "Name": "Pitcairn",
+      "UrlCode": "pitcairn"
+    },
+    {
+      "Code": "PL",
+      "Name": "Poland",
+      "UrlCode": "poland"
+    },
+    {
+      "Code": "PT",
+      "Name": "Portugal",
+      "UrlCode": "portugal"
+    },
+    {
+      "Code": "PR",
+      "Name": "Puerto Rico",
+      "UrlCode": "puerto-rico"
+    },
+    {
+      "Code": "QA",
+      "Name": "Qatar",
+      "UrlCode": "qatar"
+    },
+    {
+      "Code": "RE",
+      "Name": "Réunion",
+      "UrlCode": "runion"
+    },
+    {
+      "Code": "RO",
+      "Name": "Romania",
+      "UrlCode": "romania"
+    },
+    {
+      "Code": "RU",
+      "Name": "Russia",
+      "UrlCode": "russian-federation"
+    },
+    {
+      "Code": "RW",
+      "Name": "Rwanda",
+      "UrlCode": "rwanda"
+    },
+    {
+      "Code": "BL",
+      "Name": "Saint Barthélemy",
+      "UrlCode": "saint-barthlemy"
+    },
+    {
+      "Code": "SH",
+      "Name": "Saint Helena, Ascension and Tristan da Cunha",
+      "UrlCode": "saint-helena-ascension-and-tristan-da-cunha"
+    },
+    {
+      "Code": "KN",
+      "Name": "Saint Kitts and Nevis",
+      "UrlCode": "saint-kitts-and-nevis"
+    },
+    {
+      "Code": "LC",
+      "Name": "Saint Lucia",
+      "UrlCode": "saint-lucia"
+    },
+    {
+      "Code": "MF",
+      "Name": "Saint Martin (French part)",
+      "UrlCode": "saint-martin-french-part"
+    },
+    {
+      "Code": "PM",
+      "Name": "Saint Pierre and Miquelon",
+      "UrlCode": "saint-pierre-and-miquelon"
+    },
+    {
+      "Code": "VC",
+      "Name": "Saint Vincent and the Grenadines",
+      "UrlCode": "saint-vincent-and-the-grenadines"
+    },
+    {
+      "Code": "WS",
+      "Name": "Samoa",
+      "UrlCode": "samoa"
+    },
+    {
+      "Code": "SM",
+      "Name": "San Marino",
+      "UrlCode": "san-marino"
+    },
+    {
+      "Code": "ST",
+      "Name": "Sao Tome and Principe",
+      "UrlCode": "sao-tome-and-principe"
+    },
+    {
+      "Code": "SA",
+      "Name": "Saudi Arabia",
+      "UrlCode": "saudi-arabia"
+    },
+    {
+      "Code": "SN",
+      "Name": "Senegal",
+      "UrlCode": "senegal"
+    },
+    {
+      "Code": "RS",
+      "Name": "Serbia",
+      "UrlCode": "serbia"
+    },
+    {
+      "Code": "CS",
+      "Name": "SERBIA AND MONTENEGRO",
+      "UrlCode": "serbia-and-montenegro"
+    },
+    {
+      "Code": "SC",
+      "Name": "Seychelles",
+      "UrlCode": "seychelles"
+    },
+    {
+      "Code": "SL",
+      "Name": "Sierra Leone",
+      "UrlCode": "sierra-leone"
+    },
+    {
+      "Code": "SG",
+      "Name": "Singapore",
+      "UrlCode": "singapore"
+    },
+    {
+      "Code": "SX",
+      "Name": "Sint Maarten (Dutch part)",
+      "UrlCode": "sint-maarten-dutch-part"
+    },
+    {
+      "Code": "SK",
+      "Name": "Slovakia",
+      "UrlCode": "slovakia"
+    },
+    {
+      "Code": "SI",
+      "Name": "Slovenia",
+      "UrlCode": "slovenia"
+    },
+    {
+      "Code": "SB",
+      "Name": "Solomon Islands",
+      "UrlCode": "solomon-islands"
+    },
+    {
+      "Code": "SO",
+      "Name": "Somalia",
+      "UrlCode": "somalia"
+    },
+    {
+      "Code": "ZA",
+      "Name": "South Africa",
+      "UrlCode": "south-africa"
+    },
+    {
+      "Code": "GS",
+      "Name": "South Georgia and the South Sandwich Islands",
+      "UrlCode": "south-georgia-and-the-south-sandwich-islands"
+    },
+    {
+      "Code": "SS",
+      "Name": "South Sudan",
+      "UrlCode": "south-sudan"
+    },
+    {
+      "Code": "ES",
+      "Name": "Spain",
+      "UrlCode": "spain"
+    },
+    {
+      "Code": "LK",
+      "Name": "Sri Lanka",
+      "UrlCode": "sri-lanka"
+    },
+    {
+      "Code": "SD",
+      "Name": "Sudan",
+      "UrlCode": "sudan"
+    },
+    {
+      "Code": "SR",
+      "Name": "Suriname",
+      "UrlCode": "suriname"
+    },
+    {
+      "Code": "SJ",
+      "Name": "Svalbard and Jan Mayen",
+      "UrlCode": "svalbard-and-jan-mayen"
+    },
+    {
+      "Code": "SZ",
+      "Name": "Swaziland",
+      "UrlCode": "swaziland"
+    },
+    {
+      "Code": "SE",
+      "Name": "Sweden",
+      "UrlCode": "sweden"
+    },
+    {
+      "Code": "CH",
+      "Name": "Switzerland",
+      "UrlCode": "switzerland"
+    },
+    {
+      "Code": "SY",
+      "Name": "Syrian Arab Republic",
+      "UrlCode": "syrian-arab-republic"
+    },
+    {
+      "Code": "TW",
+      "Name": "Taiwan",
+      "UrlCode": "taiwan"
+    },
+    {
+      "Code": "TJ",
+      "Name": "Tajikistan",
+      "UrlCode": "tajikistan"
+    },
+    {
+      "Code": "TZ",
+      "Name": "Tanzania, United Republic of",
+      "UrlCode": "tanzania-united-republic-of"
+    },
+    {
+      "Code": "TH",
+      "Name": "Thailand",
+      "UrlCode": "thailand"
+    },
+    {
+      "Code": "TL",
+      "Name": "Timor-Leste",
+      "UrlCode": "timor-leste"
+    },
+    {
+      "Code": "TG",
+      "Name": "Togo",
+      "UrlCode": "togo"
+    },
+    {
+      "Code": "TK",
+      "Name": "Tokelau",
+      "UrlCode": "tokelau"
+    },
+    {
+      "Code": "TO",
+      "Name": "Tonga",
+      "UrlCode": "tonga"
+    },
+    {
+      "Code": "TT",
+      "Name": "Trinidad and Tobago",
+      "UrlCode": "trinidad-and-tobago"
+    },
+    {
+      "Code": "TN",
+      "Name": "Tunisia",
+      "UrlCode": "tunisia"
+    },
+    {
+      "Code": "TR",
+      "Name": "Turkey",
+      "UrlCode": "turkey"
+    },
+    {
+      "Code": "TM",
+      "Name": "Turkmenistan",
+      "UrlCode": "turkmenistan"
+    },
+    {
+      "Code": "TC",
+      "Name": "Turks and Caicos Islands",
+      "UrlCode": "turks-and-caicos-islands"
+    },
+    {
+      "Code": "TV",
+      "Name": "Tuvalu",
+      "UrlCode": "tuvalu"
+    },
+    {
+      "Code": "UG",
+      "Name": "Uganda",
+      "UrlCode": "uganda"
+    },
+    {
+      "Code": "UA",
+      "Name": "Ukraine",
+      "UrlCode": "ukraine"
+    },
+    {
+      "Code": "AE",
+      "Name": "United Arab Emirates",
+      "UrlCode": "united-arab-emirates"
+    },
+    {
+      "Code": "GB",
+      "Name": "United Kingdom",
+      "UrlCode": "united-kingdom"
+    },
+    {
+      "Code": "US",
+      "Name": "United States",
+      "UrlCode": "united-states"
+    },
+    {
+      "Code": "UM",
+      "Name": "United States Minor Outlying Islands",
+      "UrlCode": "united-states-minor-outlying-islands"
+    },
+    {
+      "Code": "UY",
+      "Name": "Uruguay",
+      "UrlCode": "uruguay"
+    },
+    {
+      "Code": "UZ",
+      "Name": "Uzbekistan",
+      "UrlCode": "uzbekistan"
+    },
+    {
+      "Code": "VU",
+      "Name": "Vanuatu",
+      "UrlCode": "vanuatu"
+    },
+    {
+      "Code": "VE",
+      "Name": "Venezuela",
+      "UrlCode": "venezuela-bolivarian-republic-of"
+    },
+    {
+      "Code": "VN",
+      "Name": "Vietnam",
+      "UrlCode": "vietnam"
+    },
+    {
+      "Code": "VG",
+      "Name": "Virgin Islands, British",
+      "UrlCode": "virgin-islands-british"
+    },
+    {
+      "Code": "VI",
+      "Name": "Virgin Islands, U.S.",
+      "UrlCode": "virgin-islands-us"
+    },
+    {
+      "Code": "WF",
+      "Name": "Wallis and Futuna",
+      "UrlCode": "wallis-and-futuna"
+    },
+    {
+      "Code": "EH",
+      "Name": "Western Sahara",
+      "UrlCode": "western-sahara"
+    },
+    {
+      "Code": "YE",
+      "Name": "Yemen",
+      "UrlCode": "yemen"
+    },
+    {
+      "Code": "ZM",
+      "Name": "Zambia",
+      "UrlCode": "zambia"
+    },
+    {
+      "Code": "ZW",
+      "Name": "Zimbabwe",
+      "UrlCode": "zimbabwe"
+    }
+  ],
+  "CountryRank": {
+    "Country": 804,
+    "CountryCode": "UA",
+    "Rank": 7
+  },
+  "Description": "интернет-магазин rozetka: электроника, одежда и обувь, бытовая техника, автотовары, товары для дома и бизнеса. покупайте в розетке: ✓ официальная гарантия ✓ доставка по всей украине 🚚 ✓ отзывы покупателей, обзоры и характеристики товаров $ выгодные цены и скидки %",
+  "Engagments": {
+    "BounceRate": "0.3352905209351503",
+    "Month": "3",
+    "PagePerVisit": "5.181595060758353",
+    "TimeOnSite": "267.2971736733049",
+    "Visits": "46827979",
+    "Year": "2026"
+  },
+  "EstimatedMonthlyVisits": {
+    "2026-01-01": 51267806,
+    "2026-02-01": 43977043,
+    "2026-03-01": 46827979
+  },
+  "GlobalCategoryRank": null,
+  "GlobalRank": {
+    "Rank": 829
+  },
+  "IsDataFromGa": false,
+  "IsSmall": false,
+  "LargeScreenshot": "https://site-images.similarcdn.com/image?url=rozetka.com.ua&t=1&s=1&h=a18245033e41669cfef8ae041c04a94cae12807c3da536b90ba5647df1ffe30f",
+  "Notification": {
+    "Content": null
+  },
+  "Policy": 0,
+  "SiteName": "rozetka.com.ua",
+  "SnapshotDate": "2026-03-01T00:00:00+00:00",
+  "Title": "Інтернет-магазин ROZETKA™: офіційний сайт онлайн-гіпермаркету Розетка в Україні",
+  "TopCountryShares": [
+    {
+      "Country": 804,
+      "CountryCode": "UA",
+      "Value": 0.953567637753153
+    },
+    {
+      "Country": 616,
+      "CountryCode": "PL",
+      "Value": 0.006648309516622893
+    },
+    {
+      "Country": 276,
+      "CountryCode": "DE",
+      "Value": 0.005571876792671131
+    },
+    {
+      "Country": 840,
+      "CountryCode": "US",
+      "Value": 0.005295397671563254
+    },
+    {
+      "Country": 528,
+      "CountryCode": "NL",
+      "Value": 0.0027798765873988237
+    }
+  ],
+  "TopKeywords": [
+    {
+      "Cpc": 0.08,
+      "EstimatedValue": 1020560,
+      "Name": "розетка",
+      "Volume": 498430
+    },
+    {
+      "Cpc": 0.04,
+      "EstimatedValue": 248100,
+      "Name": "rozetka",
+      "Volume": 176830
+    },
+    {
+      "Cpc": 0.12,
+      "EstimatedValue": 28330,
+      "Name": "розетка юа",
+      "Volume": 14360
+    },
+    {
+      "Cpc": 0.12,
+      "EstimatedValue": 24100,
+      "Name": "hjptnrf",
+      "Volume": 32860
+    },
+    {
+      "Cpc": 0.15,
+      "EstimatedValue": 20560,
+      "Name": "аерогриль",
+      "Volume": 13280
+    }
+  ],
+  "TrafficSources": {
+    "Direct": 0.33132322601730246,
+    "Mail": 0.0003773417741636657,
+    "Paid Referrals": 0.05417483402190035,
+    "Referrals": 0.03142779432732001,
+    "Search": 0.5739837849139191,
+    "Social": 0.008713018945342805
+  },
+  "Version": 1
+}
