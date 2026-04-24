@@ -62,7 +62,10 @@ def _apply_filters(profiles: list[dict], filters: dict) -> list[dict]:
             val = p.get(field)
             val_str = str(val).lower() if val is not None else ""
 
-            if ftype == "contains":
+            if ftype == "in" and "values" in flt:
+                if str(val) not in [str(v) for v in flt.get("values", [])]:
+                    match = False; break
+            elif ftype == "contains":
                 if flt.get("value", "").lower() not in val_str:
                     match = False; break
             elif ftype == "not_contains":
@@ -139,7 +142,7 @@ async def get_field_values(field: str, q: str = ""):
             val = p.get(field)
             if val and str(val).strip():
                 counts[str(val)] += 1
-        items = [{"value": v, "count": c} for v, c in counts.most_common(300)]
+        items = [{"value": v, "count": c} for v, c in counts.most_common(200000)]
         if q:
             items = [i for i in items if q.lower() in i["value"].lower()]
         return {"values": items}
@@ -150,7 +153,7 @@ async def get_field_values(field: str, q: str = ""):
 @router.post("/search")
 async def explore_search(body: dict):
     filters = body.get("filters", {})
-    limit   = min(int(body.get("limit", 100)), 500)
+    limit   = min(int(body.get("limit", 100)), 200000)
     offset  = int(body.get("offset", 0))
     try:
         profiles = await _get_profiles()
@@ -203,6 +206,65 @@ async def explore_export_sheets(body: dict, background_tasks: BackgroundTasks):
 
     background_tasks.add_task(do_export)
     return {"status": "exporting"}
+
+@router.post("/export/xlsx")
+async def explore_export_xlsx(body: dict):
+    """Direct XLSX download of filtered results."""
+    import io
+    import pandas as pd
+    from fastapi.responses import StreamingResponse
+    results = body.get("results", [])
+    if not results:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="No results")
+    df = pd.DataFrame(results)
+    # Remove timezone from datetime columns
+    for col in df.columns:
+        if df[col].dtype == "object":
+            try:
+                conv = pd.to_datetime(df[col], utc=True)
+                df[col] = conv.dt.tz_localize(None)
+            except Exception:
+                pass
+    stream = io.BytesIO()
+    with pd.ExcelWriter(stream, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Results")
+    stream.seek(0)
+    return StreamingResponse(
+        iter([stream.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=explorer_results.xlsx"}
+    )
+
+
+@router.post("/export/xlsx")
+async def explore_export_xlsx(body: dict):
+    """Export filtered results to XLSX."""
+    import io
+    import pandas as pd
+    from fastapi.responses import StreamingResponse
+    results = body.get("results", [])
+    if not results:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="No results")
+    df = pd.DataFrame(results)
+    # Strip timezone
+    for col in df.columns:
+        try:
+            if hasattr(df[col], 'dt') and hasattr(df[col].dt, 'tz') and df[col].dt.tz:
+                df[col] = df[col].dt.tz_localize(None)
+        except Exception:
+            pass
+    stream = io.BytesIO()
+    with pd.ExcelWriter(stream, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Explorer")
+    stream.seek(0)
+    return StreamingResponse(
+        iter([stream.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=explorer_results.xlsx"}
+    )
+
 
 @router.get("/export/sheets/url")
 async def explore_sheets_url():

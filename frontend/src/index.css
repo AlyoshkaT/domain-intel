@@ -289,3 +289,70 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .flt-tag:hover{background:var(--red-bg);border-color:rgba(220,38,38,0.25);color:var(--red)}
 .flt-tag-more{background:var(--bg-3);border-color:var(--border);color:var(--text-3);cursor:default}
 .flt-tag-more:hover{background:var(--bg-3);border-color:var(--border);color:var(--text-3)}
+
+/* ── Dashboard ───────────────────────────────────────────────────────────────── */
+.dashboard{display:flex;flex-direction:column;gap:12px;margin-bottom:16px}
+.dashboard-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.chart-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;box-shadow:var(--shadow)}
+.chart-card-wide{grid-column:1/-1}
+.chart-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:10px}
+
+/* Pie */
+.pie-wrap{display:flex;gap:16px;align-items:flex-start}
+.pie-svg{width:100px;height:100px;flex-shrink:0}
+.pie-legend{display:flex;flex-direction:column;gap:4px;flex:1;overflow:hidden}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:11px}
+.legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.legend-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
+.legend-count{font-family:var(--mono);font-size:10px;color:var(--text-3)}
+
+/* Bar chart */
+.bar-chart-list{display:flex;flex-direction:column;gap:6px}
+.bar-chart-row{display:flex;align-items:center;gap:8px}
+.bar-chart-label{font-size:11px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 0 100px}
+.bar-chart-track{flex:1;height:8px;background:var(--bg-3);border-radius:4px;overflow:hidden}
+.bar-chart-fill{height:100%;border-radius:4px;transition:width 0.4s}
+.bar-chart-count{font-family:var(--mono);font-size:10px;color:var(--text-3);white-space:nowrap;min-width:40px;text-align:right}
+
+/* Region bubbles */
+.region-grid{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.region-bubble-wrap{display:flex;flex-direction:column;align-items:center;gap:2px}
+.region-bubble{border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:600;color:white;font-family:var(--mono);transition:all 0.2s}
+.region-count{font-size:9px;color:var(--text-3);font-family:var(--mono)}
+
+/* ── Dashboard ───────────────────────────────────────────────────────────────── */
+.dashboard{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:16px}
+.dash-chart{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;box-shadow:var(--shadow)}
+.dash-chart-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:10px}
+.dash-chart-body{display:flex;align-items:flex-start;gap:12px}
+.dash-legend{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+.dash-legend-item{display:flex;align-items:center;gap:5px;font-size:11px}
+.dash-legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dash-legend-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
+.dash-legend-count{font-family:var(--mono);font-size:10px;color:var(--text-3);white-space:nowrap}
+.dash-legend-pct{font-size:10px;color:var(--text-3);white-space:nowrap;min-width:38px;text-align:right}
+
+/* ── Country bars ────────────────────────────────────────────────────────────── */
+.dash-country-list{display:flex;flex-direction:column;gap:5px}
+.dash-country-row{display:flex;align-items:center;gap:6px;font-size:11px}
+.dash-country-flag{font-size:13px;width:20px;text-align:center}
+.dash-country-code{font-family:var(--mono);font-size:10px;color:var(--text-2);width:24px}
+.dash-country-bar-wrap{flex:1;height:6px;background:var(--bg-3);border-radius:3px;overflow:hidden}
+.dash-country-bar{height:100%;border-radius:3px;transition:width 0.3s}
+.dash-country-count{font-family:var(--mono);font-size:10px;color:var(--text-3);white-space:nowrap;min-width:40px;text-align:right}
+.dash-country-pct{font-size:10px;color:var(--text-3);min-width:36px;text-align:right}
+
+/* ── Selected option highlight ───────────────────────────────────────────────── */
+.flt-option-selected{background:var(--accent-bg)!important}
+
+/* ── Fixed height table with vertical scroll ─────────────────────────────────── */
+.table-fixed-height{max-height:calc(15 * 37px + 40px);overflow-y:auto}
+.table-fixed-height thead th{position:sticky;top:0;z-index:2;background:var(--bg-2)}
+
+/* ── Row number cell ─────────────────────────────────────────────────────────── */
+.td-num{font-family:var(--mono);font-size:10px;color:var(--text-3);text-align:right;padding-right:8px!important;user-select:none;min-width:36px}
+
+/* ── Page jump input ─────────────────────────────────────────────────────────── */
+.page-jump-input{padding:4px 6px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:center}
+.page-jump-input:focus{border-color:var(--accent-bd)}
+.page-jump-input::-webkit-inner-spin-button,.page-jump-input::-webkit-outer-spin-button{-webkit-appearance:none}
