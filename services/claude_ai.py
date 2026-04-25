@@ -1,21 +1,113 @@
 """
-Claude AI (Haiku) classification service
+Claude AI (Haiku) classification service.
+Reads cache from corpBQ claude_responses.
+Writes new results to corpBQ claude_responses (same format).
 """
+import hashlib
 import httpx
 import json
 import logging
 from typing import Optional
-from config.settings import ANTHROPIC_API_KEY, REQUEST_TIMEOUT
+from config.settings import ANTHROPIC_API_KEY, CORP_PROJECT_ID, CORP_DATASET
 
 logger = logging.getLogger(__name__)
 
-CATEGORIES_17 = [
-    "E-commerce / Retail", "SaaS / Software", "Media / Publishing",
-    "Finance / Banking", "Healthcare", "Education", "Travel / Hospitality",
-    "Real Estate", "B2B Services", "Logistics / Supply Chain",
-    "Food / Restaurant", "Automotive", "Gaming / Entertainment",
-    "Non-profit / NGO", "Government", "Community / Forum", "Other"
+CORP_AI_TABLE = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
+
+# Map our internal fields → corpBQ format
+# corpBQ: category, subcategory, is_ecommerce, category_reasoning, ecommerce_reasoning
+# Our:    ai_category, ai_industry, ai_is_ecommerce
+
+CATEGORIES = [
+    "product_ecom", "service_ecom", "marketplace",
+    "non_transactional", "saas", "media", "finance",
+    "healthcare", "education", "travel", "real_estate",
+    "b2b", "logistics", "food", "automotive", "gaming",
+    "non_profit", "government", "community", "high_risk", "other"
 ]
+
+SUBCATEGORIES = [
+    "fashion_accessories", "electronics", "home_garden", "food_grocery",
+    "beauty_cosmetics", "sports_hobby_mil", "automotive_parts",
+    "industrial_professional", "corporate_b2b", "saas", "news_media",
+    "adult_content", "gambling", "finance_banking", "healthcare_medical",
+    "education_elearning", "travel_hospitality", "real_estate",
+    "entertainment_gaming", "community_forum", "other"
+]
+
+
+def _make_input_hash(domain: str, sw_title: str, sw_description: str) -> str:
+    """Create hash of inputs to detect if re-classification needed."""
+    raw = f"{domain}|{sw_title[:100]}|{sw_description[:200]}"
+    return hashlib.md5(raw.encode()).hexdigest()[:16]
+
+
+def get_corp_ai_cached(domain: str) -> Optional[dict]:
+    """Read AI classification from corpBQ claude_responses."""
+    from core.bigquery import corp_client
+    bq = corp_client()
+    try:
+        rows = list(bq.query(f"""
+            SELECT response_json FROM {CORP_AI_TABLE}
+            WHERE domain = @domain
+            ORDER BY fetched_at DESC LIMIT 1
+        """, job_config=__import__('google.cloud.bigquery', fromlist=['QueryJobConfig', 'ScalarQueryParameter']).QueryJobConfig(
+            query_parameters=[__import__('google.cloud.bigquery', fromlist=['ScalarQueryParameter']).ScalarQueryParameter("domain", "STRING", domain)]
+        )).result())
+        if rows:
+            rj = rows[0]["response_json"]
+            data = rj if isinstance(rj, dict) else json.loads(rj)
+            logger.info(f"Corp AI cache HIT: {domain}")
+            return {
+                "ai_category":     data.get("category", ""),
+                "ai_is_ecommerce": str(data.get("is_ecommerce", "")).lower(),
+                "ai_industry":     data.get("subcategory", ""),
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Corp AI cache read error ({domain}): {e}")
+        return None
+
+
+def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
+    """Save AI result to corpBQ claude_responses in standard format."""
+    from core.bigquery import corp_client
+    from datetime import datetime, timezone
+    bq = corp_client()
+
+    # Convert our format → corpBQ format
+    is_ecom = result.get("ai_is_ecommerce", "")
+    if isinstance(is_ecom, str):
+        is_ecom_bool = is_ecom.lower() in ("yes", "true", "1")
+    else:
+        is_ecom_bool = bool(is_ecom)
+
+    response_json = {
+        "category":            result.get("ai_category", "other"),
+        "subcategory":         result.get("ai_industry", "other"),
+        "is_ecommerce":        is_ecom_bool,
+        "category_reasoning":  result.get("ai_category_reasoning", ""),
+        "ecommerce_reasoning": result.get("ai_ecommerce_reasoning", ""),
+    }
+
+    row = {
+        "domain":        domain,
+        "fetched_at":    datetime.now(timezone.utc).isoformat(),
+        "response_json": json.dumps(response_json),
+        "input_hash":    input_hash or _make_input_hash(domain, "", ""),
+    }
+
+    try:
+        errors = bq.insert_rows_json(
+            f"{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses",
+            [row]
+        )
+        if errors:
+            logger.error(f"Corp AI save error ({domain}): {errors}")
+        else:
+            logger.info(f"Corp AI saved: {domain}")
+    except Exception as e:
+        logger.error(f"Corp AI save exception ({domain}): {e}")
 
 
 async def classify_domain(
@@ -32,37 +124,30 @@ async def classify_domain(
         logger.warning("ANTHROPIC_API_KEY not set")
         return None
 
-    categories_str = "\n".join(f"- {c}" for c in CATEGORIES_17)
-    context_parts = []
-    if sw_title:
-        context_parts.append(f"Site title: {sw_title}")
-    if sw_description:
-        context_parts.append(f"Description: {sw_description}")
-    if sw_category:
-        context_parts.append(f"SimilarWeb category: {sw_category}")
-    if bw_cms:
-        context_parts.append(f"CMS: {bw_cms}")
-    if bw_ecommerce:
-        context_parts.append(f"E-commerce platform: {bw_ecommerce}")
-    if homepage_text:
-        context_parts.append(f"Homepage content (excerpt):\n{homepage_text[:1500]}")
+    cats_str = ", ".join(CATEGORIES)
+    subs_str = ", ".join(SUBCATEGORIES)
 
+    context_parts = []
+    if sw_title:       context_parts.append(f"Title: {sw_title}")
+    if sw_description: context_parts.append(f"Description: {sw_description[:300]}")
+    if sw_category:    context_parts.append(f"SW category: {sw_category}")
+    if bw_cms:         context_parts.append(f"CMS: {bw_cms}")
+    if bw_ecommerce:   context_parts.append(f"E-commerce platform: {bw_ecommerce}")
+    if homepage_text:  context_parts.append(f"Homepage text:\n{homepage_text[:1000]}")
     context = "\n".join(context_parts) or f"Domain: {domain}"
 
-    prompt = f"""Analyze this website and classify it. Domain: {domain}
+    prompt = f"""Classify this website. Domain: {domain}
 
-Available information:
 {context}
 
-Respond ONLY with a JSON object (no markdown, no explanation):
+Respond ONLY with JSON (no markdown):
 {{
-  "category": "<one of the 17 categories below>",
-  "is_ecommerce": "<Yes|No|Unknown>",
-  "industry": "<short industry description, e.g. 'Online Fashion Retail' or 'B2B SaaS (CRM)'>"
-}}
-
-Categories to choose from:
-{categories_str}"""
+  "category": "<one of: {cats_str}>",
+  "subcategory": "<one of: {subs_str}>",
+  "is_ecommerce": true or false,
+  "category_reasoning": "<1 sentence>",
+  "ecommerce_reasoning": "<1 sentence>"
+}}"""
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -75,7 +160,7 @@ Categories to choose from:
                 },
                 json={
                     "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 200,
+                    "max_tokens": 300,
                     "messages": [{"role": "user", "content": prompt}],
                 }
             )
@@ -83,7 +168,7 @@ Categories to choose from:
             data = resp.json()
             text = data["content"][0]["text"].strip()
 
-            # Strip markdown fences if present
+            # Strip markdown fences
             if text.startswith("```"):
                 text = text.split("```")[1]
                 if text.startswith("json"):
@@ -91,10 +176,13 @@ Categories to choose from:
             text = text.strip()
 
             parsed = json.loads(text)
+
             return {
-                "ai_category": parsed.get("category", ""),
-                "ai_is_ecommerce": parsed.get("is_ecommerce", "Unknown"),
-                "ai_industry": parsed.get("industry", ""),
+                "ai_category":              parsed.get("category", "other"),
+                "ai_is_ecommerce":          str(parsed.get("is_ecommerce", False)).lower(),
+                "ai_industry":              parsed.get("subcategory", "other"),
+                "ai_category_reasoning":    parsed.get("category_reasoning", ""),
+                "ai_ecommerce_reasoning":   parsed.get("ecommerce_reasoning", ""),
             }
     except json.JSONDecodeError as e:
         logger.error(f"Claude AI JSON parse error for {domain}: {e}")
@@ -105,13 +193,11 @@ Categories to choose from:
 
 
 async def fetch_homepage_text(domain: str) -> str:
-    """Fetch and parse homepage text for AI classification."""
-    urls_to_try = [f"https://{domain}", f"http://{domain}"]
-    for url in urls_to_try:
+    """Fetch homepage text for AI classification."""
+    for url in [f"https://{domain}", f"http://{domain}"]:
         try:
             async with httpx.AsyncClient(
-                timeout=10,
-                follow_redirects=True,
+                timeout=10, follow_redirects=True,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; DomainIntel/1.0)"}
             ) as client:
                 resp = await client.get(url)
@@ -123,17 +209,10 @@ async def fetch_homepage_text(domain: str) -> str:
 
 
 def _extract_text(html: str) -> str:
-    """Simple text extraction without BeautifulSoup dependency."""
     import re
-    # Remove scripts and styles
     html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    # Extract meta description
     meta = re.findall(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)', html, re.IGNORECASE)
-    meta_text = " ".join(meta)
-    # Extract headings and paragraphs
     tags = re.findall(r'<(?:h[1-3]|p|title)[^>]*>(.*?)</(?:h[1-3]|p|title)>', html, re.DOTALL | re.IGNORECASE)
-    text_parts = [re.sub(r'<[^>]+>', '', t).strip() for t in tags]
-    text_parts = [t for t in text_parts if len(t) > 10]
-    combined = meta_text + " " + " ".join(text_parts)
-    return combined[:2000]
+    text_parts = [re.sub(r'<[^>]+>', '', t).strip() for t in tags if len(re.sub(r'<[^>]+>', '', t).strip()) > 10]
+    return (" ".join(meta) + " " + " ".join(text_parts))[:2000]

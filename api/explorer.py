@@ -115,7 +115,7 @@ async def explore_stats():
         total        = len(profiles)
         with_cms     = sum(1 for p in profiles if p.get("cms_list"))
         with_traffic = sum(1 for p in profiles if (p.get("sw_visits") or 0) > 0)
-        with_ai      = sum(1 for p in profiles if p.get("ai_category"))
+        with_ai      = sum(1 for p in profiles if p.get("ai_category") and str(p.get("ai_category")).strip())
         with_ems     = sum(1 for p in profiles if p.get("ems_list"))
         try:
             from core.bigquery import BQ_JOBS_TABLE
@@ -142,7 +142,7 @@ async def get_field_values(field: str, q: str = ""):
             val = p.get(field)
             if val and str(val).strip():
                 counts[str(val)] += 1
-        items = [{"value": v, "count": c} for v, c in counts.most_common(200000)]
+        items = [{"value": v, "count": c} for v, c in counts.most_common(300)]
         if q:
             items = [i for i in items if q.lower() in i["value"].lower()]
         return {"values": items}
@@ -153,7 +153,7 @@ async def get_field_values(field: str, q: str = ""):
 @router.post("/search")
 async def explore_search(body: dict):
     filters = body.get("filters", {})
-    limit   = min(int(body.get("limit", 100)), 200000)
+    limit   = min(int(body.get("limit", 100)), 500)
     offset  = int(body.get("offset", 0))
     try:
         profiles = await _get_profiles()

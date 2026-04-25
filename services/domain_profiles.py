@@ -34,7 +34,6 @@ PROFILES_SCHEMA = [
     bigquery.SchemaField("osearch_group",         "STRING"),
     bigquery.SchemaField("ems_list",              "STRING"),
     bigquery.SchemaField("bw_vertical",           "STRING"),
-    bigquery.SchemaField("wcms_name",             "STRING"),
     bigquery.SchemaField("ai_category",           "STRING"),
     bigquery.SchemaField("ai_is_ecommerce",       "STRING"),
     bigquery.SchemaField("ai_industry",           "STRING"),
@@ -198,10 +197,11 @@ def sync_domain_profiles() -> dict:
         corp = corp_client()
         our  = client()
 
-        sw_table = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.similarweb_raw_data`"
-        bw_table = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.builtwith_raw_data`"
-        wc_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.whatcms_raw_data`"
-        ai_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{BQ_AI_CACHE}`"
+        sw_table      = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.similarweb_raw_data`"
+        bw_table      = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.builtwith_raw_data`"
+        wc_table      = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.whatcms_raw_data`"
+        ai_table      = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{BQ_AI_CACHE}`"
+        corp_ai_table = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
 
         # Load catalog once
         _sync_status["progress"] = "Завантажуємо каталог..."
@@ -210,16 +210,11 @@ def sync_domain_profiles() -> dict:
 
         # Fetch domain lists
         _sync_status["progress"] = "Отримуємо список доменів..."
-        sw_domains = set(normalize_domain(r["domain"]) for r in corp.query(
-            f"SELECT DISTINCT domain FROM {sw_table}").result())
-        bw_domains = set(normalize_domain(r["domain"]) for r in corp.query(
-            f"SELECT DISTINCT domain FROM {bw_table}").result())
-        wc_domains = set(normalize_domain(r["domain"]) for r in our.query(
-            f"SELECT DISTINCT domain FROM {wc_table}").result())
-        ai_domains = set(normalize_domain(r["domain"]) for r in our.query(
-            f"SELECT DISTINCT domain FROM {ai_table}").result())
-        # Remove empty domains
-        all_domains = {d for d in sw_domains | bw_domains | wc_domains | ai_domains if d}
+        sw_domains      = set(normalize_domain(r["domain"]) for r in corp.query(f"SELECT DISTINCT domain FROM {sw_table}").result())
+        bw_domains      = set(normalize_domain(r["domain"]) for r in corp.query(f"SELECT DISTINCT domain FROM {bw_table}").result())
+        ai_domains      = set(normalize_domain(r["domain"]) for r in our.query(f"SELECT DISTINCT domain FROM {ai_table}").result())
+        corp_ai_domains = set(normalize_domain(r["domain"]) for r in corp.query(f"SELECT DISTINCT domain FROM {corp_ai_table}").result())
+        all_domains = {d for d in sw_domains | bw_domains | ai_domains | corp_ai_domains if d}
         logger.info(f"Unique normalized domains: {len(all_domains)}")
 
         # Fetch latest data per domain (normalize keys)
@@ -274,7 +269,7 @@ def sync_domain_profiles() -> dict:
                 domain,
                 sw_data.get(domain),
                 bw_data.get(domain),
-                wc_data.get(domain),
+                None,
                 ai_data.get(domain, {}),
                 catalog,
                 updated_at,

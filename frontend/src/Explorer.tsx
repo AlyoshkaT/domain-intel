@@ -2,56 +2,63 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import Dashboard from "./Dashboard"
 
 const API = ""
-async function apiFetch(path:string,opts?:RequestInit){
-  const res=await fetch(API+path,opts)
-  if(!res.ok){const e=await res.json().catch(()=>({detail:res.statusText}));throw new Error(e.detail)}
+async function apiFetch(path: string, opts?: RequestInit) {
+  const res = await fetch(API + path, opts)
+  if (!res.ok) { const e = await res.json().catch(() => ({ detail: res.statusText })); throw new Error(e.detail) }
   return res.json()
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-interface FilterValue{value:string;count:number}
-type TextFilterType ="all"|"in"|"contains"|"not_contains"|"empty"|"not_empty"
-type NumFilterType  ="all"|"gt"|"lt"|"between"
-type MultiFilterType="all"|"in"|"not_in"|"empty"|"not_empty"
-interface TextFilter {type:TextFilterType; value:string; selected:string[]}
-interface NumFilter  {type:NumFilterType;  value:string; min:string; max:string}
-interface MultiFilter{type:MultiFilterType;selected:string[];search:string}
-type FilterState={
-  domain:TextFilter; cms_list:MultiFilter; wcms_name:MultiFilter
-  osearch:MultiFilter; ems_list:MultiFilter; ai_category:MultiFilter
-  ai_is_ecommerce:MultiFilter; sw_category:MultiFilter; sw_primary_region:MultiFilter
-  sw_visits:NumFilter; sw_primary_region_pct:NumFilter
-}
-const defaultText =():TextFilter =>({type:"all",value:"",selected:[]})
-const defaultNum  =():NumFilter  =>({type:"all",value:"",min:"",max:""})
-const defaultMulti=():MultiFilter=>({type:"all",selected:[],search:""})
-const defaultFilters=():FilterState=>({
-  domain:defaultText(),cms_list:defaultMulti(),wcms_name:defaultMulti(),
-  osearch:defaultMulti(),ems_list:defaultMulti(),ai_category:defaultMulti(),
-  ai_is_ecommerce:defaultMulti(),sw_category:defaultMulti(),sw_primary_region:defaultMulti(),
-  sw_visits:defaultNum(),sw_primary_region_pct:defaultNum(),
-})
-const MULTI_FIELDS=["cms_list","wcms_name","osearch","ems_list","ai_category","ai_is_ecommerce","sw_category","sw_primary_region"]
+interface FilterValue { value: string; count: number }
+type TextFilterType  = "all" | "in" | "contains" | "not_contains" | "empty" | "not_empty"
+type NumFilterType   = "all" | "gt" | "lt" | "between"
+type MultiFilterType = "all" | "in" | "not_in" | "empty" | "not_empty"
 
-// ─── Domain multi-select filter ───────────────────────────────────────────────
-function DomainFilter({filter,allValues,onChange}:{filter:TextFilter;allValues:FilterValue[];onChange:(f:TextFilter)=>void}){
-  const [open,setOpen]=useState(false)
-  const ref=useRef<HTMLDivElement>(null)
-  useEffect(()=>{
-    const h=(e:MouseEvent)=>{if(ref.current&&!ref.current.contains(e.target as Node))setOpen(false)}
-    document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h)
-  },[])
-  // filtered suggestions
-  const suggestions=allValues.filter(v=>filter.value&&v.value.toLowerCase().includes(filter.value.toLowerCase())).slice(0,15)
-  const toggle=(v:string)=>{
-    const sel=filter.selected.includes(v)?filter.selected.filter(s=>s!==v):[...filter.selected,v]
-    onChange({...filter,selected:sel,type:sel.length>0?"in":filter.type==="in"?"all":filter.type})
+interface TextFilter  { type: TextFilterType;  value: string; selected: string[] }
+interface NumFilter   { type: NumFilterType;   value: string; min: string; max: string }
+interface MultiFilter { type: MultiFilterType; selected: string[]; search: string }
+
+type FilterState = {
+  domain: TextFilter; cms_list: MultiFilter; wcms_name: MultiFilter
+  osearch: MultiFilter; ems_list: MultiFilter; ai_category: MultiFilter
+  ai_is_ecommerce: MultiFilter; sw_category: MultiFilter; sw_primary_region: MultiFilter
+  sw_visits: NumFilter; sw_primary_region_pct: NumFilter
+}
+
+const defaultText  = (): TextFilter  => ({ type: "all", value: "", selected: [] })
+const defaultNum   = (): NumFilter   => ({ type: "all", value: "", min: "", max: "" })
+const defaultMulti = (): MultiFilter => ({ type: "all", selected: [], search: "" })
+const defaultFilters = (): FilterState => ({
+  domain: defaultText(), cms_list: defaultMulti(), wcms_name: defaultMulti(),
+  osearch: defaultMulti(), ems_list: defaultMulti(), ai_category: defaultMulti(),
+  ai_is_ecommerce: defaultMulti(), sw_category: defaultMulti(), sw_primary_region: defaultMulti(),
+  sw_visits: defaultNum(), sw_primary_region_pct: defaultNum(),
+})
+
+const MULTI_FIELDS = ["cms_list","wcms_name","osearch","ems_list","ai_category","ai_is_ecommerce","sw_category","sw_primary_region"]
+
+// ─── Domain filter with multi-select ─────────────────────────────────────────
+function DomainFilter({ filter, allValues, onChange }: {
+  filter: TextFilter; allValues: FilterValue[]; onChange: (f: TextFilter) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h)
+  }, [])
+
+  const suggestions = allValues.filter(v => filter.value && v.value.toLowerCase().includes(filter.value.toLowerCase())).slice(0, 15)
+
+  const toggleDomain = (v: string) => {
+    const sel = filter.selected.includes(v) ? filter.selected.filter(s => s !== v) : [...filter.selected, v]
+    onChange({ ...filter, selected: sel, type: sel.length > 0 ? "in" : "all" })
   }
-  const hasFilter=filter.type!=="all"||filter.selected.length>0||filter.value
-  return(
+
+  return (
     <div className="flt-text" ref={ref}>
       <select className="flt-select-sm" value={filter.type}
-        onChange={e=>onChange({...filter,type:e.target.value as TextFilterType,selected:[],value:""})}>
+        onChange={e => onChange({ ...filter, type: e.target.value as TextFilterType, selected: [], value: "" })}>
         <option value="all">Всі</option>
         <option value="in">Мультивибір</option>
         <option value="contains">Містить</option>
@@ -60,57 +67,59 @@ function DomainFilter({filter,allValues,onChange}:{filter:TextFilter;allValues:F
         <option value="not_empty">Не порожнє</option>
       </select>
 
-      {filter.type==="in"&&(
+      {filter.type === "in" && (
         <div className="flt-dropdown-wrap">
-          <button className={`flt-dropdown-btn ${filter.selected.length>0?"active":""}`} onClick={()=>setOpen(!open)}>
-            <span>{filter.selected.length===0?"Вибрати домени...":`Вибрано: ${filter.selected.length}`}</span>
-            <span className="flt-chevron">{open?"▴":"▾"}</span>
+          <button className={`flt-dropdown-btn ${filter.selected.length > 0 ? "active" : ""}`} onClick={() => setOpen(!open)}>
+            <span>{filter.selected.length === 0 ? "Вибрати домени..." : `Вибрано: ${filter.selected.length}`}</span>
+            <span className="flt-chevron">{open ? "▴" : "▾"}</span>
           </button>
-          {open&&(
+          {open && (
             <div className="flt-dropdown">
-              <input className="flt-search-input" placeholder="Пошук домену..." value={filter.value}
-                onChange={e=>onChange({...filter,value:e.target.value})} autoFocus/>
-              {filter.selected.length>0&&(
-                <div className="flt-clear-sel" onClick={()=>onChange({...filter,selected:[],value:""})}>
+              <input className="flt-search-input" placeholder="Пошук домену..."
+                value={filter.value} onChange={e => onChange({ ...filter, value: e.target.value })} autoFocus />
+              {filter.selected.length > 0 && (
+                <div className="flt-clear-sel" onClick={() => onChange({ ...filter, selected: [], type: "all", value: "" })}>
                   ✕ Скинути вибір ({filter.selected.length})
                 </div>
               )}
               <div className="flt-options">
-                {filter.selected.map(v=>(
+                {filter.selected.map(v => (
                   <label key={v} className="flt-option flt-option-selected">
-                    <input type="checkbox" checked onChange={()=>toggle(v)}/>
+                    <input type="checkbox" checked onChange={() => toggleDomain(v)} />
                     <span className="flt-option-text">{v}</span>
                   </label>
                 ))}
-                {suggestions.filter(v=>!filter.selected.includes(v.value)).map(v=>(
+                {suggestions.filter(v => !filter.selected.includes(v.value)).map(v => (
                   <label key={v.value} className="flt-option">
-                    <input type="checkbox" checked={false} onChange={()=>toggle(v.value)}/>
+                    <input type="checkbox" checked={false} onChange={() => toggleDomain(v.value)} />
                     <span className="flt-option-text">{v.value}</span>
                     <span className="flt-option-count">{v.count}</span>
                   </label>
                 ))}
-                {!filter.value&&suggestions.length===0&&<div className="flt-loading">Введіть домен для пошуку</div>}
+                {!filter.value && <div className="flt-loading">Введіть домен для пошуку</div>}
               </div>
             </div>
           )}
-          {filter.selected.length>0&&(
+          {filter.selected.length > 0 && (
             <div className="flt-selected-tags">
-              {filter.selected.slice(0,2).map(v=><span key={v} className="flt-tag" onClick={()=>toggle(v)}>{v} ✕</span>)}
-              {filter.selected.length>2&&<span className="flt-tag flt-tag-more">+{filter.selected.length-2}</span>}
+              {filter.selected.slice(0, 2).map(v => <span key={v} className="flt-tag" onClick={() => toggleDomain(v)}>{v} ✕</span>)}
+              {filter.selected.length > 2 && <span className="flt-tag flt-tag-more">+{filter.selected.length - 2}</span>}
             </div>
           )}
         </div>
       )}
 
-      {(filter.type==="contains"||filter.type==="not_contains")&&(
-        <div style={{position:"relative"}}>
-          <input className="flt-num-input" placeholder="Текст..." value={filter.value}
-            onChange={e=>{onChange({...filter,value:e.target.value});setOpen(true)}} onFocus={()=>setOpen(true)}/>
-          {open&&filter.value&&suggestions.length>0&&(
-            <div className="flt-dropdown" style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:300}}>
+      {(filter.type === "contains" || filter.type === "not_contains") && (
+        <div style={{ position: "relative" }}>
+          <input className="flt-num-input" placeholder="Текст або домен..."
+            value={filter.value}
+            onChange={e => { onChange({ ...filter, value: e.target.value }); setOpen(true) }}
+            onFocus={() => setOpen(true)} />
+          {open && filter.value && suggestions.length > 0 && (
+            <div className="flt-dropdown" style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 300 }}>
               <div className="flt-options">
-                {suggestions.map(v=>(
-                  <div key={v.value} className="flt-option" onClick={()=>{onChange({...filter,value:v.value});setOpen(false)}}>
+                {suggestions.map(v => (
+                  <div key={v.value} className="flt-option" onClick={() => { onChange({ ...filter, value: v.value }); setOpen(false) }}>
                     <span className="flt-option-text">{v.value}</span>
                     <span className="flt-option-count">{v.count}</span>
                   </div>
@@ -124,43 +133,49 @@ function DomainFilter({filter,allValues,onChange}:{filter:TextFilter;allValues:F
   )
 }
 
-// ─── MultiSelect ──────────────────────────────────────────────────────────────
-function MultiSelect({field,filter,allValues,onChange}:{field:string;filter:MultiFilter;allValues:FilterValue[];onChange:(f:MultiFilter)=>void}){
-  const [open,setOpen]=useState(false)
-  const ref=useRef<HTMLDivElement>(null)
-  useEffect(()=>{
-    const h=(e:MouseEvent)=>{if(ref.current&&!ref.current.contains(e.target as Node))setOpen(false)}
-    document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h)
-  },[])
-  const filtered=allValues.filter(v=>!filter.search||v.value.toLowerCase().includes(filter.search.toLowerCase()))
-  const toggle=(v:string)=>{
-    const sel=filter.selected.includes(v)?filter.selected.filter(s=>s!==v):[...filter.selected,v]
-    onChange({...filter,selected:sel,type:sel.length>0?"in":"all"})
+// ─── Multi-select ─────────────────────────────────────────────────────────────
+function MultiSelect({ field, filter, allValues, onChange }: {
+  field: string; filter: MultiFilter; allValues: FilterValue[]; onChange: (f: MultiFilter) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h)
+  }, [])
+  const filtered = allValues.filter(v => !filter.search || v.value.toLowerCase().includes(filter.search.toLowerCase()))
+  const toggle = (v: string) => {
+    const sel = filter.selected.includes(v) ? filter.selected.filter(s => s !== v) : [...filter.selected, v]
+    onChange({ ...filter, selected: sel, type: sel.length > 0 ? "in" : "all" })
   }
-  return(
+  return (
     <div className="flt-multi" ref={ref}>
-      <select className="flt-select-sm" value={filter.type} onChange={e=>onChange({...filter,type:e.target.value as MultiFilterType,selected:[]})}>
+      <select className="flt-select-sm" value={filter.type}
+        onChange={e => onChange({ ...filter, type: e.target.value as MultiFilterType, selected: [] })}>
         <option value="all">Всі</option><option value="in">Включити</option>
-        <option value="not_in">Виключити</option><option value="empty">Порожнє</option><option value="not_empty">Не порожнє</option>
+        <option value="not_in">Виключити</option><option value="empty">Порожнє</option>
+        <option value="not_empty">Не порожнє</option>
       </select>
-      {(filter.type==="in"||filter.type==="not_in")&&(
+      {(filter.type === "in" || filter.type === "not_in") && (
         <div className="flt-dropdown-wrap">
-          <button className={`flt-dropdown-btn ${filter.selected.length>0?"active":""}`} onClick={()=>setOpen(!open)}>
-            <span>{filter.selected.length===0?`Всі (${allValues.length})`:`Вибрано: ${filter.selected.length}`}</span>
-            <span className="flt-chevron">{open?"▴":"▾"}</span>
+          <button className={`flt-dropdown-btn ${filter.selected.length > 0 ? "active" : ""}`} onClick={() => setOpen(!open)}>
+            <span>{filter.selected.length === 0 ? `Всі (${allValues.length})` : `Вибрано: ${filter.selected.length}`}</span>
+            <span className="flt-chevron">{open ? "▴" : "▾"}</span>
           </button>
-          {open&&(
+          {open && (
             <div className="flt-dropdown">
               <input className="flt-search-input" placeholder="Пошук..." value={filter.search}
-                onChange={e=>onChange({...filter,search:e.target.value})} autoFocus/>
-              {filter.selected.length>0&&(
-                <div className="flt-clear-sel" onClick={()=>onChange({...filter,selected:[],type:"all",search:""})}>✕ Скинути ({filter.selected.length})</div>
+                onChange={e => onChange({ ...filter, search: e.target.value })} autoFocus />
+              {filter.selected.length > 0 && (
+                <div className="flt-clear-sel" onClick={() => onChange({ ...filter, selected: [], type: "all", search: "" })}>
+                  ✕ Скинути ({filter.selected.length})
+                </div>
               )}
               <div className="flt-options">
-                {filtered.length===0&&<div className="flt-loading">Нічого</div>}
-                {filtered.map(v=>(
+                {filtered.length === 0 && <div className="flt-loading">Нічого</div>}
+                {filtered.map(v => (
                   <label key={v.value} className="flt-option">
-                    <input type="checkbox" checked={filter.selected.includes(v.value)} onChange={()=>toggle(v.value)}/>
+                    <input type="checkbox" checked={filter.selected.includes(v.value)} onChange={() => toggle(v.value)} />
                     <span className="flt-option-text">{v.value}</span>
                     <span className="flt-option-count">{v.count}</span>
                   </label>
@@ -170,10 +185,10 @@ function MultiSelect({field,filter,allValues,onChange}:{field:string;filter:Mult
           )}
         </div>
       )}
-      {filter.selected.length>0&&(
+      {filter.selected.length > 0 && (
         <div className="flt-selected-tags">
-          {filter.selected.slice(0,2).map(v=><span key={v} className="flt-tag" onClick={()=>toggle(v)}>{v} ✕</span>)}
-          {filter.selected.length>2&&<span className="flt-tag flt-tag-more">+{filter.selected.length-2}</span>}
+          {filter.selected.slice(0, 2).map(v => <span key={v} className="flt-tag" onClick={() => toggle(v)}>{v} ✕</span>)}
+          {filter.selected.length > 2 && <span className="flt-tag flt-tag-more">+{filter.selected.length - 2}</span>}
         </div>
       )}
     </div>
@@ -181,21 +196,22 @@ function MultiSelect({field,filter,allValues,onChange}:{field:string;filter:Mult
 }
 
 // ─── Numeric filter ───────────────────────────────────────────────────────────
-function NumericFilter({filter,onChange}:{filter:NumFilter;onChange:(f:NumFilter)=>void}){
-  return(
+function NumericFilter({ filter, onChange }: { filter: NumFilter; onChange: (f: NumFilter) => void }) {
+  return (
     <div className="flt-num">
-      <select className="flt-select-sm" value={filter.type} onChange={e=>onChange({...filter,type:e.target.value as NumFilterType})}>
+      <select className="flt-select-sm" value={filter.type} onChange={e => onChange({ ...filter, type: e.target.value as NumFilterType })}>
         <option value="all">Всі</option><option value="gt">Більше</option>
         <option value="lt">Менше</option><option value="between">Від — До</option>
       </select>
-      {(filter.type==="gt"||filter.type==="lt")&&(
-        <input className="flt-num-input" type="number" placeholder="Значення" value={filter.value} onChange={e=>onChange({...filter,value:e.target.value})}/>
+      {(filter.type === "gt" || filter.type === "lt") && (
+        <input className="flt-num-input" type="number" placeholder="Значення"
+          value={filter.value} onChange={e => onChange({ ...filter, value: e.target.value })} />
       )}
-      {filter.type==="between"&&(
+      {filter.type === "between" && (
         <div className="flt-between">
-          <input className="flt-num-input" type="number" placeholder="Від" value={filter.min} onChange={e=>onChange({...filter,min:e.target.value})}/>
+          <input className="flt-num-input" type="number" placeholder="Від" value={filter.min} onChange={e => onChange({ ...filter, min: e.target.value })} />
           <span className="flt-between-sep">—</span>
-          <input className="flt-num-input" type="number" placeholder="До" value={filter.max} onChange={e=>onChange({...filter,max:e.target.value})}/>
+          <input className="flt-num-input" type="number" placeholder="До" value={filter.max} onChange={e => onChange({ ...filter, max: e.target.value })} />
         </div>
       )}
     </div>
@@ -203,269 +219,305 @@ function NumericFilter({filter,onChange}:{filter:NumFilter;onChange:(f:NumFilter
 }
 
 // ─── Sync button ──────────────────────────────────────────────────────────────
-function SyncButton({onSync}:{onSync:()=>void}){
-  const [status,setStatus]=useState<any>({})
-  const [syncing,setSyncing]=useState(false)
-  const load=useCallback(async()=>{try{const s=await apiFetch("/api/explore/sync/status");setStatus(s);if(!s.running)setSyncing(false)}catch{}},[])
-  useEffect(()=>{load();const iv=setInterval(load,2000);return()=>clearInterval(iv)},[load])
-  const isRunning=syncing||status.running
-  return(
-    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3}}>
-      <div style={{display:"flex",alignItems:"center",gap:6}}>
-        {status.last_sync&&!isRunning&&(
-          <span style={{fontSize:10,color:"var(--text-3)"}}>
+function SyncButton({ onSync }: { onSync: () => void }) {
+  const [status, setStatus] = useState<any>({})
+  const [syncing, setSyncing] = useState(false)
+  const load = useCallback(async () => {
+    try { const s = await apiFetch("/api/explore/sync/status"); setStatus(s); if (!s.running) setSyncing(false) } catch {}
+  }, [])
+  useEffect(() => { load(); const iv = setInterval(load, 2000); return () => clearInterval(iv) }, [load])
+  const isRunning = syncing || status.running
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {status.last_sync && !isRunning && (
+          <span style={{ fontSize: 10, color: "var(--text-3)" }}>
             {new Date(status.last_sync).toLocaleString("uk-UA")} · {status.total_domains?.toLocaleString()} доменів
           </span>
         )}
-        <button className="flt-reset-btn" onClick={async()=>{setSyncing(true);await apiFetch("/api/explore/refresh",{method:"POST"});setTimeout(onSync,5000)}} disabled={isRunning}>
-          {isRunning?"⏳":"↻"} {isRunning?"Синхронізація...":"Синхронізувати БД"}
+        <button className="flt-reset-btn" disabled={isRunning}
+          onClick={async () => { setSyncing(true); await apiFetch("/api/explore/refresh", { method: "POST" }); setTimeout(onSync, 5000) }}>
+          {isRunning ? "⏳" : "↻"} {isRunning ? "Синхронізація..." : "Синхронізувати БД"}
         </button>
       </div>
-      {isRunning&&status.progress&&<span style={{fontSize:10,color:"var(--accent)",fontFamily:"var(--mono)"}}>{status.progress}</span>}
-      {status.error&&<span style={{fontSize:10,color:"var(--red)"}}>❌ {status.error.slice(0,80)}</span>}
+      {isRunning && status.progress && <span style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--mono)" }}>{status.progress}</span>}
+      {status.error && <span style={{ fontSize: 10, color: "var(--red)" }}>❌ {status.error.slice(0, 80)}</span>}
     </div>
   )
 }
 
 // ─── Filter panel ─────────────────────────────────────────────────────────────
-function FilterPanel({filters,fieldValues,onChange,onSearch,loading,activeCount}:{
-  filters:FilterState;fieldValues:Record<string,FilterValue[]>
-  onChange:(f:FilterState)=>void;onSearch:()=>void;loading:boolean;activeCount:number
-}){
-  const upd=(key:keyof FilterState,val:any)=>onChange({...filters,[key]:val})
-  const sections=[
-    {key:"domain",         label:"Domain",     type:"domain"},
-    {key:"sw_visits",      label:"Traffic",    type:"num"},
-    {key:"cms_list",       label:"CMS",        type:"multi"},
-    {key:"wcms_name",      label:"WhatCMS",    type:"multi"},
-    {key:"osearch",        label:"oSearch",    type:"multi"},
-    {key:"ems_list",       label:"EMS",        type:"multi"},
-    {key:"ai_category",    label:"AI Category",type:"multi"},
-    {key:"ai_is_ecommerce",label:"AI Ecomm",   type:"multi"},
-    {key:"sw_category",    label:"Category SW",type:"multi"},
-    {key:"sw_primary_region",label:"Region",   type:"multi"},
-    {key:"sw_primary_region_pct",label:"Region %",type:"num"},
+function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, activeCount }: {
+  filters: FilterState; fieldValues: Record<string, FilterValue[]>
+  onChange: (f: FilterState) => void; onSearch: () => void; loading: boolean; activeCount: number
+}) {
+  const upd = (key: keyof FilterState, val: any) => onChange({ ...filters, [key]: val })
+  const sections = [
+    { key: "domain",                 label: "Domain",      type: "domain" },
+    { key: "sw_visits",              label: "Traffic",     type: "num"    },
+    { key: "cms_list",               label: "CMS",         type: "multi"  },
+    { key: "wcms_name",              label: "WhatCMS",     type: "multi"  },
+    { key: "osearch",                label: "oSearch",     type: "multi"  },
+    { key: "ems_list",               label: "EMS",         type: "multi"  },
+    { key: "ai_category",            label: "AI Category", type: "multi"  },
+    { key: "ai_is_ecommerce",        label: "AI Ecomm",    type: "multi"  },
+    { key: "sw_category",            label: "Category SW", type: "multi"  },
+    { key: "sw_primary_region",      label: "Region",      type: "multi"  },
+    { key: "sw_primary_region_pct",  label: "Region %",    type: "num"    },
   ] as const
-  return(
+  return (
     <div className="filter-panel">
       <div className="filter-panel-header">
         <span className="filter-panel-title">Фільтри</span>
-        <button className="flt-reset-btn" onClick={()=>onChange(defaultFilters())}>Скинути</button>
+        <button className="flt-reset-btn" onClick={() => onChange(defaultFilters())}>Скинути</button>
       </div>
-      {sections.map(s=>(
+      {sections.map(s => (
         <div key={s.key} className="filter-section">
           <div className="filter-section-label">{s.label}</div>
-          {s.type==="domain"&&<DomainFilter filter={filters.domain} allValues={fieldValues.domain||[]} onChange={v=>upd("domain",v)}/>}
-          {s.type==="num"&&<NumericFilter filter={filters[s.key] as NumFilter} onChange={v=>upd(s.key,v)}/>}
-          {s.type==="multi"&&<MultiSelect field={s.key} filter={filters[s.key] as MultiFilter} allValues={fieldValues[s.key]||[]} onChange={v=>upd(s.key,v)}/>}
+          {s.type === "domain" && <DomainFilter filter={filters.domain} allValues={fieldValues.domain || []} onChange={v => upd("domain", v)} />}
+          {s.type === "num"    && <NumericFilter filter={filters[s.key] as NumFilter} onChange={v => upd(s.key, v)} />}
+          {s.type === "multi"  && <MultiSelect field={s.key} filter={filters[s.key] as MultiFilter} allValues={fieldValues[s.key] || []} onChange={v => upd(s.key, v)} />}
         </div>
       ))}
       <button className="btn-primary explorer-search-btn" onClick={onSearch} disabled={loading}>
-        {loading?<span className="spinner"/>:"🔍"}
-        {loading?"Пошук...":"Застосувати"}
-        {activeCount>0&&<span className="flt-count-badge">{activeCount}</span>}
+        {loading ? <span className="spinner" /> : "🔍"}
+        {loading ? "Пошук..." : "Застосувати"}
+        {activeCount > 0 && <span className="flt-count-badge">{activeCount}</span>}
       </button>
     </div>
   )
 }
 
-function cell(v?:string|null){return v&&v.trim()?v:"—"}
+function cell(v?: string | null) { return v && v.trim() ? v : "—" }
 
-interface ExploreResult{
-  domain:string;sw_visits?:number;cms_list?:string;wcms_name?:string
-  osearch?:string;ems_list?:string;ai_category?:string;ai_is_ecommerce?:string
-  ai_industry?:string;sw_category?:string;sw_subcategory?:string
-  sw_description?:string;sw_title?:string;company_name?:string
-  sw_primary_region?:string;sw_primary_region_pct?:number
+interface ExploreResult {
+  domain: string; sw_visits?: number; cms_list?: string; wcms_name?: string
+  osearch?: string; ems_list?: string; ai_category?: string; ai_is_ecommerce?: string
+  ai_industry?: string; sw_category?: string; sw_subcategory?: string
+  sw_description?: string; sw_title?: string; company_name?: string
+  sw_primary_region?: string; sw_primary_region_pct?: number
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
-export default function ExplorerPage(){
-  const [filters,setFilters]=useState<FilterState>(defaultFilters())
-  const [fieldValues,setFieldValues]=useState<Record<string,FilterValue[]>>({})
-  const [allResults,setAllResults]=useState<ExploreResult[]>([])
-  const [results,setResults]=useState<ExploreResult[]>([])
-  const [total,setTotal]=useState(0)
-  const [loading,setLoading]=useState(false)
-  const [stats,setStats]=useState<any>({})
-  const [offset,setOffset]=useState(0)
-  const PAGE=100
-  // removed
+// ─── Main Explorer ─────────────────────────────────────────────────────────────
+export default function ExplorerPage() {
+  const [filters, setFilters] = useState<FilterState>(defaultFilters())
+  const [fieldValues, setFieldValues] = useState<Record<string, FilterValue[]>>({})
+  const [allResults, setAllResults] = useState<ExploreResult[]>([])
+  const [results, setResults] = useState<ExploreResult[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [stats, setStats] = useState<any>({})
+  const [offset, setOffset] = useState(0)
+  const [jumpPage, setJumpPage] = useState("")
+  const PAGE = 100
 
-  useEffect(()=>{
-    apiFetch("/api/explore/stats").then(setStats).catch(()=>{})
-    Promise.all([...MULTI_FIELDS,"domain"].map(async field=>{
-      try{const d=await apiFetch(`/api/explore/values/${field}`);return[field,d.values||[]] as [string,FilterValue[]]}
-      catch{return[field,[]] as [string,FilterValue[]]}
-    })).then(entries=>setFieldValues(Object.fromEntries(entries)))
-    doSearch(defaultFilters(),0)
-  },[])
+  // All profiles in memory for reactive filter counting
+  const [baseProfiles, setBaseProfiles] = useState<ExploreResult[]>([])
 
-  const buildPayload=(f:FilterState,off:number,limit=PAGE)=>{
-    const af:any={}
+  // Compute available filter values from currently filtered profiles
+  const computeFieldValues = useCallback((filtered: ExploreResult[]) => {
+    const counts: Record<string, Map<string, number>> = {}
+    const fields = [...MULTI_FIELDS, "domain"]
+    fields.forEach(f => { counts[f] = new Map() })
+
+    for (const p of filtered) {
+      for (const field of fields) {
+        const val = (p as any)[field]
+        if (val && String(val).trim()) {
+          counts[field].set(String(val), (counts[field].get(String(val)) || 0) + 1)
+        }
+      }
+    }
+
+    const newValues: Record<string, FilterValue[]> = {}
+    for (const field of fields) {
+      newValues[field] = [...counts[field].entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([value, count]) => ({ value, count }))
+    }
+    setFieldValues(newValues)
+  }, [])
+
+  useEffect(() => {
+    apiFetch("/api/explore/stats").then(setStats).catch(() => {})
+    doSearch(defaultFilters(), 0)
+  }, [])
+
+  // Recompute filter values when allResults change (reactive)
+  useEffect(() => {
+    if (allResults.length > 0) {
+      computeFieldValues(allResults)
+      if (baseProfiles.length === 0) setBaseProfiles(allResults)
+    }
+  }, [allResults])
+
+  const buildPayload = (f: FilterState, off: number, limit = PAGE) => {
+    const af: any = {}
     // Domain
-    const df=f.domain
-    if(df.type==="in"&&df.selected.length>0) af.domain={type:"in",values:df.selected}
-    else if((df.type==="contains"||df.type==="not_contains")&&df.value) af.domain={type:df.type,value:df.value}
-    else if(df.type==="empty"||df.type==="not_empty") af.domain={type:df.type}
+    if (f.domain.type === "in" && f.domain.selected.length > 0)
+      af.domain = { type: "in", values: f.domain.selected }
+    else if ((f.domain.type === "contains" || f.domain.type === "not_contains") && f.domain.value)
+      af.domain = { type: f.domain.type, value: f.domain.value }
+    else if (f.domain.type === "empty" || f.domain.type === "not_empty")
+      af.domain = { type: f.domain.type }
     // Multi
-    for(const field of MULTI_FIELDS){
-      const flt=f[field as keyof FilterState] as MultiFilter
-      if(flt.type==="empty"||flt.type==="not_empty") af[field]={type:flt.type}
-      else if((flt.type==="in"||flt.type==="not_in")&&flt.selected.length>0) af[field]={type:flt.type,values:flt.selected}
+    for (const field of MULTI_FIELDS) {
+      const flt = f[field as keyof FilterState] as MultiFilter
+      if (flt.type === "empty" || flt.type === "not_empty") af[field] = { type: flt.type }
+      else if ((flt.type === "in" || flt.type === "not_in") && flt.selected.length > 0)
+        af[field] = { type: flt.type, values: flt.selected }
     }
     // Numeric
-    for(const field of["sw_visits","sw_primary_region_pct"] as (keyof FilterState)[]){
-      const flt=f[field] as NumFilter
-      if(flt.type==="gt"&&flt.value) af[field]={type:"gt",value:parseFloat(flt.value)}
-      else if(flt.type==="lt"&&flt.value) af[field]={type:"lt",value:parseFloat(flt.value)}
-      else if(flt.type==="between"&&flt.min&&flt.max) af[field]={type:"between",min:parseFloat(flt.min),max:parseFloat(flt.max)}
+    for (const field of ["sw_visits", "sw_primary_region_pct"] as (keyof FilterState)[]) {
+      const flt = f[field] as NumFilter
+      if (flt.type === "gt" && flt.value) af[field] = { type: "gt", value: parseFloat(flt.value) }
+      else if (flt.type === "lt" && flt.value) af[field] = { type: "lt", value: parseFloat(flt.value) }
+      else if (flt.type === "between" && flt.min && flt.max)
+        af[field] = { type: "between", min: parseFloat(flt.min), max: parseFloat(flt.max) }
     }
-    return{filters:af,limit,offset:off}
+    return { filters: af, limit, offset: off }
   }
 
-  const doSearch=async(f:FilterState,off:number)=>{
+  const doSearch = async (f: FilterState, off: number) => {
     setLoading(true)
-    try{
-      const[allData,pageData]=await Promise.all([
-        apiFetch("/api/explore/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(buildPayload(f,0,200000))}),
-        apiFetch("/api/explore/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(buildPayload(f,off,PAGE))}),
+    try {
+      const [allData, pageData] = await Promise.all([
+        apiFetch("/api/explore/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildPayload(f, 0, 200000)) }),
+        apiFetch("/api/explore/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildPayload(f, off, PAGE)) }),
       ])
-      setAllResults(allData.results||[]);setResults(pageData.results||[]);setTotal(pageData.total||0)
-    }catch{setAllResults([]);setResults([]);setTotal(0)}
-    finally{setLoading(false)}
+      setAllResults(allData.results || [])
+      setResults(pageData.results || [])
+      setTotal(pageData.total || 0)
+    } catch { setAllResults([]); setResults([]); setTotal(0) }
+    finally { setLoading(false) }
   }
 
-  const handleSearch=()=>{setOffset(0);doSearch(filters,0)}
-  const handlePrev=()=>{const o=Math.max(0,offset-PAGE);setOffset(o);doSearch(filters,o)}
-  const handleNext=()=>{const o=offset+PAGE;setOffset(o);doSearch(filters,o)}
-  const [jumpPage,setJumpPage]=useState("")
-  const handleJump=()=>{
-    const p=parseInt(jumpPage)
-    if(!isNaN(p)&&p>0){
-      const o=Math.floor((p-1)/PAGE)*PAGE
-      setOffset(o);doSearch(filters,o);setJumpPage("")
+  const handleSearch = () => { setOffset(0); doSearch(filters, 0) }
+  const handlePrev = () => { const o = Math.max(0, offset - PAGE); setOffset(o); doSearch(filters, o) }
+  const handleNext = () => { const o = offset + PAGE; setOffset(o); doSearch(filters, o) }
+  const handleJump = () => {
+    const row = parseInt(jumpPage)
+    if (!isNaN(row) && row > 0) {
+      const o = Math.floor((row - 1) / PAGE) * PAGE
+      setOffset(o); doSearch(filters, o); setJumpPage("")
     }
   }
 
-  // CSV export (client-side from allResults)
-  const exportCSV=()=>{
-    const cols=["domain","sw_visits","cms_list","wcms_name","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name"]
-    const rows=allResults.map(r=>cols.map(h=>{const v=(r as any)[h];return v!=null?`"${String(v).replace(/"/g,'""')}"`:""}).join(","))
-    const csv=[cols.join(","),...rows].join("\n")
-    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"}))
-    a.download=`explorer_${new Date().toISOString().slice(0,10)}.csv`;a.click()
+  const exportCSV = () => {
+    const cols = ["domain","sw_visits","cms_list","wcms_name","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name"]
+    const rows = allResults.map(r => cols.map(h => { const v = (r as any)[h]; return v != null ? `"${String(v).replace(/"/g, '""')}"` : "" }).join(","))
+    const csv = [cols.join(","), ...rows].join("\n")
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }))
+    a.download = `explorer_${new Date().toISOString().slice(0, 10)}.csv`; a.click()
   }
 
-  // XLSX export (server-side)
-  const exportXLSX=async()=>{
-    try{
-      const res=await fetch("/api/explore/export/xlsx",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({results:allResults})})
-      if(!res.ok)throw new Error("Export failed")
-      const blob=await res.blob()
-      const a=document.createElement("a");a.href=URL.createObjectURL(blob)
-      a.download=`explorer_${new Date().toISOString().slice(0,10)}.xlsx`;a.click()
-    }catch(e){alert("XLSX export error")}
+  const exportXLSX = async () => {
+    try {
+      const res = await fetch("/api/explore/export/xlsx", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ results: allResults }) })
+      if (!res.ok) throw new Error("Export failed")
+      const blob = await res.blob()
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob)
+      a.download = `explorer_${new Date().toISOString().slice(0, 10)}.xlsx`; a.click()
+    } catch { alert("XLSX export error") }
   }
 
-  const activeCount=Object.values(filters).filter((f:any)=>
-    (f.type&&f.type!=="all")||(f.selected&&f.selected.length>0)||(f.value&&f.value.trim())
+  const activeCount = Object.values(filters).filter((f: any) =>
+    (f.type && f.type !== "all") || (f.selected && f.selected.length > 0) || (f.value && f.value.trim())
   ).length
 
-  // removed
-
-  return(
+  return (
     <div className="explorer-layout">
       <aside className="explorer-sidebar">
         <FilterPanel filters={filters} fieldValues={fieldValues} onChange={setFilters}
-          onSearch={handleSearch} loading={loading} activeCount={activeCount}/>
+          onSearch={handleSearch} loading={loading} activeCount={activeCount} />
       </aside>
 
       <main className="explorer-main">
         {/* Stats */}
-        <div className="stats-grid" style={{marginBottom:12}}>
+        <div className="stats-grid" style={{ marginBottom: 12 }}>
           {[
-            {label:"Доменів",    value:stats.total_domains},
-            {label:"Job-ів",     value:stats.total_jobs},
-            {label:"З CMS",      value:stats.with_cms},
-            {label:"З трафіком", value:stats.with_traffic},
-            {label:"З AI",       value:stats.with_ai},
-            {label:"З EMS",      value:stats.with_ems},
-          ].map(s=>(
+            { label: "Доменів",    value: stats.total_domains },
+            { label: "З трафіком", value: stats.with_traffic },
+            { label: "З CMS",      value: stats.with_cms },
+            { label: "З EMS",      value: stats.with_ems },
+            { label: "З AI",       value: stats.with_ai },
+            { label: "Job-ів",     value: stats.total_jobs },
+          ].map(s => (
             <div key={s.label} className="stat-card">
               <div className="stat-label">{s.label}</div>
-              <div className="stat-value">{s.value?.toLocaleString()||"—"}</div>
+              <div className="stat-value">{s.value?.toLocaleString() || "—"}</div>
             </div>
           ))}
         </div>
 
-        {/* Dashboards — react to filters */}
-        {allResults.length>0&&<Dashboard profiles={allResults}/>}
+        {/* Dashboards */}
+        {allResults.length > 0 && <Dashboard profiles={allResults} />}
 
         {/* Results header */}
-        <div className="explorer-results-header" style={{marginTop:16}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span className="explorer-total">{loading?"Завантаження...":`Знайдено: ${total.toLocaleString()} доменів`}</span>
-            <SyncButton onSync={()=>doSearch(filters,0)}/>
+        <div className="explorer-results-header" style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="explorer-total">
+              {loading ? "Завантаження..." : `Знайдено: ${total.toLocaleString()} доменів`}
+            </span>
+            <SyncButton onSync={() => doSearch(filters, 0)} />
           </div>
-          <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            {allResults.length>0&&(
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {allResults.length > 0 && (
               <>
                 <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
                 <button className="btn-export" onClick={exportXLSX}>↓ XLSX</button>
               </>
             )}
-            {total>PAGE&&(
+            {total > PAGE && (
               <div className="pagination">
-                <button className="page-btn" onClick={handlePrev} disabled={offset===0||loading}>←</button>
-                <span className="page-info">{offset+1}–{Math.min(offset+PAGE,total)} / {total.toLocaleString()}</span>
-                <button className="page-btn" onClick={handleNext} disabled={offset+PAGE>=total||loading}>→</button>
-                <span style={{color:"var(--text-3)",fontSize:11}}>...</span>
+                <button className="page-btn" onClick={handlePrev} disabled={offset === 0 || loading}>←</button>
+                <span className="page-info">{offset + 1}–{Math.min(offset + PAGE, total)} / {total.toLocaleString()}</span>
+                <button className="page-btn" onClick={handleNext} disabled={offset + PAGE >= total || loading}>→</button>
+                <span style={{ color: "var(--text-3)", fontSize: 11 }}>…</span>
                 <input className="page-jump-input" type="number" placeholder="№" value={jumpPage}
-                  onChange={e=>setJumpPage(e.target.value)}
-                  onKeyDown={e=>e.key==="Enter"&&handleJump()}
-                  style={{width:52}}/>
-                <button className="page-btn" onClick={handleJump} disabled={!jumpPage}>→</button>
+                  onChange={e => setJumpPage(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleJump()} />
+                <button className="page-btn" onClick={handleJump} disabled={!jumpPage}>↵</button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Table — 15 visible rows with scroll slider */}
-        {loading&&<div className="loading-center"><span className="spinner-lg"/></div>}
-        {!loading&&results.length>0&&(
-          <div style={{marginTop:8}}>
-            <div className="table-wrap table-fixed-height">
-              <table className="results-table">
-                <thead><tr>
-                  <th style={{width:40}}>#</th>
+        {/* Table with fixed height and vertical scroll */}
+        {loading && <div className="loading-center"><span className="spinner-lg" /></div>}
+        {!loading && results.length > 0 && (
+          <div className="table-wrap table-fixed-height" style={{ marginTop: 8 }}>
+            <table className="results-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 40 }}>#</th>
                   <th>Domain</th><th>Traffic</th><th>CMS</th><th>WhatCMS</th>
                   <th>oSearch</th><th>EMS</th><th>AI Category</th><th>AI Ecomm</th>
                   <th>AI Industry</th><th>Category SW</th><th>Subcategory</th>
                   <th>Description</th><th>Region</th><th>Region %</th>
-                </tr></thead>
-                <tbody>
-                  {results.map((r,i)=>(
-                    <tr key={`${r.domain}-${i}`}>
-                      <td className="td-num">{offset+i+1}</td>
-                      <td className="td-domain"><a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a></td>
-                      <td className="td-traffic">{r.sw_visits?r.sw_visits.toLocaleString("en-US"):"—"}</td>
-                      <td>{cell(r.cms_list)}</td><td>{cell(r.wcms_name)}</td>
-                      <td>{cell(r.osearch)}</td><td>{cell(r.ems_list)}</td>
-                      <td>{cell(r.ai_category)}</td><td>{cell(r.ai_is_ecommerce)}</td>
-                      <td>{cell(r.ai_industry)}</td><td>{cell(r.sw_category)}</td>
-                      <td>{cell(r.sw_subcategory)}</td>
-                      <td className="td-desc" title={r.sw_description||""}>{cell(r.sw_description)}</td>
-                      <td>{cell(r.sw_primary_region)}</td>
-                      <td>{r.sw_primary_region_pct!=null?`${r.sw_primary_region_pct}%`:"—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((r, i) => (
+                  <tr key={`${r.domain}-${i}`}>
+                    <td className="td-num">{offset + i + 1}</td>
+                    <td className="td-domain"><a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a></td>
+                    <td className="td-traffic">{r.sw_visits ? r.sw_visits.toLocaleString("en-US") : "—"}</td>
+                    <td>{cell(r.cms_list)}</td><td>{cell(r.wcms_name)}</td>
+                    <td>{cell(r.osearch)}</td><td>{cell(r.ems_list)}</td>
+                    <td>{cell(r.ai_category)}</td><td>{cell(r.ai_is_ecommerce)}</td>
+                    <td>{cell(r.ai_industry)}</td><td>{cell(r.sw_category)}</td>
+                    <td>{cell(r.sw_subcategory)}</td>
+                    <td className="td-desc" title={r.sw_description || ""}>{cell(r.sw_description)}</td>
+                    <td>{cell(r.sw_primary_region)}</td>
+                    <td>{r.sw_primary_region_pct != null ? `${r.sw_primary_region_pct}%` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
-        {!loading&&results.length===0&&<div className="empty-state">Нічого не знайдено.</div>}
+        {!loading && results.length === 0 && <div className="empty-state">Нічого не знайдено.</div>}
       </main>
     </div>
   )
