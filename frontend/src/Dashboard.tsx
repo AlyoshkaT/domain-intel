@@ -155,16 +155,16 @@ export default function Dashboard({ profiles }: { profiles: Profile[] }) {
 
   return (
     <div>
-      {/* Row 1: Country Map | Traffic Groups | CMS | EMS | Onsite Search */}
-      <div className="dashboard">
-        <CountryBars data={charts.countryData} />
+      {/* Row 1: Traffic Groups | CMS | EMS | Onsite Search — 4 per row */}
+      <div className="dashboard dashboard-4">
         <Donut data={charts.trafficData} title="Traffic Groups" />
         <Donut data={charts.cmsData}     title="CMS" />
         <Donut data={charts.emsData}     title="EMS" />
         <Donut data={charts.searchData}  title="Onsite Search" />
       </div>
-      {/* Row 2: Category SW | Subcategory SW */}
-      <div className="dashboard" style={{ marginTop: 0 }}>
+      {/* Row 2: Country Map | Category SW | Subcategory SW | (empty) */}
+      <div className="dashboard dashboard-4">
+        <CountryBars data={charts.countryData} />
         <Donut data={charts.catData} title="Category SW" />
         <Donut data={charts.subData} title="Subcategory SW" />
       </div>
