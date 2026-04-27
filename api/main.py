@@ -260,11 +260,26 @@ async def get_sheets_url(job_id: str):
 
 # ─── Serve frontend ───────────────────────────────────────────────────────────
 import os
-frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
-if os.path.exists(frontend_dist):
-    from fastapi.responses import FileResponse
-    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
+from fastapi.responses import FileResponse
 
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        return FileResponse(os.path.join(frontend_dist, "index.html"))
+frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+assets_dir = os.path.join(frontend_dist, "assets")
+index_html = os.path.join(frontend_dist, "index.html")
+
+if os.path.exists(assets_dir):
+    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+@app.get("/")
+async def serve_root():
+    if os.path.exists(index_html):
+        return FileResponse(index_html)
+    return {"status": "api-only"}
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    if full_path.startswith("api/"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Not Found")
+    if os.path.exists(index_html):
+        return FileResponse(index_html)
+    return {"status": "api-only", "path": full_path}
