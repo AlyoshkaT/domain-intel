@@ -74,7 +74,9 @@ except Exception as e:
 # ─── Health ───────────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "frontend_dist": frontend_dist, "index_exists": os.path.exists(index_html)}
+    import subprocess
+    ls = subprocess.run(["ls", "/app"], capture_output=True, text=True)
+    return {"status": "ok", "frontend_dist": frontend_dist, "index_exists": os.path.exists(index_html), "app_ls": ls.stdout}
 
 
 # ─── Credits ──────────────────────────────────────────────────────────────────
