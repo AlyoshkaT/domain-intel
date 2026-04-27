@@ -262,7 +262,11 @@ async def get_sheets_url(job_id: str):
 import os
 from fastapi.responses import FileResponse
 
-frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+# Try multiple paths for Railway vs local
+_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+frontend_dist = os.path.join(_base, "frontend", "dist")
+if not os.path.exists(frontend_dist):
+    frontend_dist = os.path.join(os.getcwd(), "frontend", "dist")
 assets_dir = os.path.join(frontend_dist, "assets")
 index_html = os.path.join(frontend_dist, "index.html")
 
