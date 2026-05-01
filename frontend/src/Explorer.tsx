@@ -256,7 +256,6 @@ function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, active
     { key: "domain",                 label: "Domain",      type: "domain" },
     { key: "sw_visits",              label: "Traffic",     type: "num"    },
     { key: "cms_list",               label: "CMS",         type: "multi"  },
-    { key: "wcms_name",              label: "WhatCMS",     type: "multi"  },
     { key: "osearch",                label: "oSearch",     type: "multi"  },
     { key: "ems_list",               label: "EMS",         type: "multi"  },
     { key: "ai_category",            label: "AI Category", type: "multi"  },
@@ -491,7 +490,7 @@ export default function ExplorerPage() {
               <thead>
                 <tr>
                   <th style={{ width: 40 }}>#</th>
-                  <th>Domain</th><th>Traffic</th><th>CMS</th><th>WhatCMS</th>
+                  <th>Domain</th><th>Traffic</th><th>CMS</th>
                   <th>oSearch</th><th>EMS</th><th>AI Category</th><th>AI Ecomm</th>
                   <th>AI Industry</th><th>Category SW</th><th>Subcategory</th>
                   <th>Description</th><th>Region</th><th>Region %</th>
@@ -503,7 +502,7 @@ export default function ExplorerPage() {
                     <td className="td-num">{offset + i + 1}</td>
                     <td className="td-domain"><a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a></td>
                     <td className="td-traffic">{r.sw_visits ? r.sw_visits.toLocaleString("en-US") : "—"}</td>
-                    <td>{cell(r.cms_list)}</td><td>{cell(r.wcms_name)}</td>
+                    <td>{cell(r.cms_list)}</td>
                     <td>{cell(r.osearch)}</td><td>{cell(r.ems_list)}</td>
                     <td>{cell(r.ai_category)}</td><td>{cell(r.ai_is_ecommerce)}</td>
                     <td>{cell(r.ai_industry)}</td><td>{cell(r.sw_category)}</td>

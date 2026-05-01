@@ -36,9 +36,11 @@ def _build_where(filters: dict) -> tuple[str, list]:
     for field, flt in filters.items():
         ftype = flt.get("type")
         if ftype == "contains" and flt.get("value"):
-            conditions.append(f"LOWER({field}) LIKE LOWER({p(field,'STRING',f'%{flt[\"value\"]}%')})")
+            val = flt["value"]
+            conditions.append(f"LOWER({field}) LIKE LOWER({p(field, 'STRING', f'%{val}%')})")
         elif ftype == "not_contains" and flt.get("value"):
-            conditions.append(f"(LOWER({field}) NOT LIKE LOWER({p(field,'STRING',f'%{flt[\"value\"]}%')}) OR {field} IS NULL)")
+            val = flt["value"]
+            conditions.append(f"(LOWER({field}) NOT LIKE LOWER({p(field, 'STRING', f'%{val}%')}) OR {field} IS NULL)")
         elif ftype == "empty":
             conditions.append(f"({field} IS NULL OR {field} = '')")
         elif ftype == "not_empty":

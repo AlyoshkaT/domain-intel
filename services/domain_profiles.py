@@ -162,7 +162,8 @@ def _build_profile(domain: str, sw_raw, bw_raw, wc_raw,
     sw = _parse_sw(_safe_json(sw_raw))
     bw = _parse_bw(_safe_json(bw_raw), catalog)
     wc = _parse_wc(_safe_json(wc_raw))
-    return {
+    _SCHEMA = {"domain","updated_at","sw_visits","sw_category","sw_subcategory","sw_description","sw_title","sw_primary_region","sw_primary_region_pct","company_name","cms_list","osearch","osearch_group","ems_list","bw_vertical","ai_category","ai_is_ecommerce","ai_industry"}
+    row = {
         "domain":                domain,
         "updated_at":            updated_at,
         "sw_visits":             sw.get("sw_visits"),
@@ -183,6 +184,7 @@ def _build_profile(domain: str, sw_raw, bw_raw, wc_raw,
         "ai_is_ecommerce":       ai_rec.get("ai_is_ecommerce", "") or "",
         "ai_industry":           ai_rec.get("ai_industry", "") or "",
     }
+    return {k: v for k, v in row.items() if k in _SCHEMA}
 
 
 def sync_domain_profiles() -> dict:
@@ -259,6 +261,26 @@ def sync_domain_profiles() -> dict:
             if key:
                 ai_data[key] = dict(r)
 
+        # Corp AI (claude_responses) — priority, overwrites our ai_cache
+        _sync_status["progress"] = "Завантажуємо Corp AI (claude_responses)..."
+        logger.info("Fetching corp AI...")
+        for r in corp.query(f"""
+            SELECT domain, response_json FROM {corp_ai_table}
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+        """).result():
+            key = normalize_domain(r["domain"])
+            if not key:
+                continue
+            rj = r["response_json"]
+            data = rj if isinstance(rj, dict) else _safe_json(rj)
+            if data:
+                ai_data[key] = {
+                    "ai_category":     data.get("category", ""),
+                    "ai_is_ecommerce": str(data.get("is_ecommerce", "")).lower(),
+                    "ai_industry":     data.get("subcategory", ""),
+                }
+        logger.info(f"AI data total: {len(ai_data)} domains")
+
         # Build profiles in parallel
         _sync_status["progress"] = f"Обробляємо {len(all_domains):,} доменів (8 потоків)..."
         updated_at = datetime.now(timezone.utc).isoformat()
@@ -291,33 +313,27 @@ def sync_domain_profiles() -> dict:
 
         logger.info(f"Built {len(rows)} profiles in {time.time()-t0:.0f}s")
 
-        # Write via temp table → CREATE OR REPLACE
+        # Write using load_table_from_file (reliable, no streaming buffer issues)
         _sync_status["progress"] = f"Записуємо {len(rows):,} профілів..."
-        tmp_ref = f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{PROFILES_TEMP}"
-        tmp_obj = bigquery.Table(tmp_ref, schema=PROFILES_SCHEMA)
-        try:
-            our.delete_table(tmp_ref)
-        except Exception:
-            pass
-        our.create_table(tmp_obj)
+        import tempfile, json as _json, os as _os
 
-        BATCH = 1000
-        for i in range(0, len(rows), BATCH):
-            our.insert_rows_json(tmp_ref, rows[i:i+BATCH])
-            if i % 20000 == 0:
-                pct = int(i / len(rows) * 100)
-                _sync_status["progress"] = f"Запис: {i:,}/{len(rows):,} ({pct}%)"
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
+            for row in rows:
+                f.write(_json.dumps(row, default=str) + "\n")
+            tmp_file = f.name
 
-        _sync_status["progress"] = "Фіналізуємо таблицю..."
-        time.sleep(15)  # wait streaming buffer
-        our.query(f"""
-            CREATE OR REPLACE TABLE `{table_ref(PROFILES_TABLE)}`
-            AS SELECT * FROM `{tmp_ref}`
-        """).result()
-        try:
-            our.delete_table(tmp_ref)
-        except Exception:
-            pass
+        job_config = bigquery.LoadJobConfig(
+            schema=PROFILES_SCHEMA,
+            write_disposition="WRITE_TRUNCATE",
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        )
+        with open(tmp_file, "rb") as f:
+            load_job = our.load_table_from_file(
+                f, table_ref(PROFILES_TABLE), job_config=job_config
+            )
+        _sync_status["progress"] = "Очікуємо завантаження..."
+        load_job.result()
+        _os.unlink(tmp_file)
 
         elapsed = time.time() - t0
         _sync_status["last_sync"] = updated_at
