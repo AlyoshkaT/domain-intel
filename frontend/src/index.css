@@ -275,10 +275,10 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .flt-count-badge{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.25);font-size:11px;font-weight:600;margin-left:4px}
 
 /* ── Stats grid ──────────────────────────────────────────────────────────────── */
-.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
-.stat-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px;box-shadow:var(--shadow)}
-.stat-label{font-size:10px;color:var(--text-3);font-weight:500;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:5px}
-.stat-value{font-size:20px;font-weight:600;color:var(--text);font-family:var(--mono);letter-spacing:-0.02em}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;align-content:start}
+.stat-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:8px 12px;box-shadow:var(--shadow)}
+.stat-label{font-size:10px;color:var(--text-3);font-weight:500;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px}
+.stat-value{font-size:17px;font-weight:600;color:var(--text);font-family:var(--mono);letter-spacing:-0.02em}
 
 /* ── Sheets button ───────────────────────────────────────────────────────────── */
 .btn-sheets{display:inline-flex;align-items:center;gap:4px}
@@ -379,8 +379,9 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 
 /* ── Dashboard legend table (no borders, spreadsheet-friendly) ───────────────── */
 .dash-legend-table{border-collapse:collapse;min-width:0;flex:1}
-.dash-legend-table td{padding:2px 4px;font-size:11px;border:none;background:transparent}
+.dash-legend-table td{padding:2px 3px;font-size:11px;border:none;background:transparent;vertical-align:middle}
 .dash-legend-row .dash-legend-label{color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px}
+.dash-legend-row .dash-legend-sep{color:var(--text-3);padding:2px 2px;font-size:10px}
 .dash-legend-row .dash-legend-count{font-family:var(--mono);font-size:10px;color:var(--text-3);white-space:nowrap;text-align:right}
 .dash-legend-row .dash-legend-pct{font-size:10px;color:var(--text-3);white-space:nowrap;min-width:38px;text-align:right}
 
@@ -417,3 +418,19 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .force-refresh-card{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px;flex-shrink:0;min-width:150px;display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow)}
 .force-refresh-label{font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em}
 .force-refresh-row{display:flex;align-items:center;gap:0}
+
+/* ── Technologies legend + chart interaction ─────────────────────────────────── */
+.tech-legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:12px}
+.tech-legend-item{display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:var(--radius);border:1px solid transparent;transition:all 0.15s;user-select:none}
+.tech-legend-item:hover{background:var(--bg-3);border-color:var(--border)}
+.tech-legend-item.highlighted{background:var(--accent-bg);border-color:var(--accent-bd)}
+.tech-legend-item.legend-dim{opacity:0.3}
+.tech-legend-item.dimmed{opacity:0.35}
+.tech-legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;display:inline-block}
+.tech-legend-name{color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
+.tech-legend-count{font-family:var(--mono);font-size:10px;color:var(--text-3);white-space:nowrap;margin-left:2px}
+
+/* ── Technologies filter row ─────────────────────────────────────────────────── */
+.tech-filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.tech-filter-group{display:flex;flex-direction:column;gap:4px}
+.tech-filter-label{font-size:10px;color:var(--text-3);font-weight:500;text-transform:uppercase;letter-spacing:0.04em}

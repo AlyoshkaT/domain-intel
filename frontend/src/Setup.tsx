@@ -59,9 +59,10 @@ function CatalogSection() {
     } catch (e: any) { setMsg("Помилка: " + e.message) }
   }
 
-  const items: string[] = tab === "osearch"
+  const items: string[] = (tab === "osearch"
     ? catalog.osearch.map(o => o.technology)
     : catalog[tab] as string[]
+  ).slice().sort((a, b) => a.localeCompare(b, "uk"))
 
   return (
     <div className="card">

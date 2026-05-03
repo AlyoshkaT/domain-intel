@@ -401,7 +401,7 @@ function ResultsPage({ jobId, onBack }: { jobId: string; onBack: () => void }) {
 type View = "new" | "jobs" | "results" | "explorer" | "technologies" | "setup"
 
 export default function App() {
-  const [view, setView] = useState<View>("jobs")
+  const [view, setView] = useState<View>("new")
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [techDomains, setTechDomains] = useState<string[]>([])
   const [dark, setDark] = useState(() => {

@@ -457,7 +457,7 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
 
       <main className="explorer-main">
         {/* Stats + Force Refresh */}
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "stretch", gap: 10, marginBottom: 12 }}>
           <div className="stats-grid" style={{ flex: 1, margin: 0 }}>
             {[
               { label: "Доменів",    value: stats.total_domains },

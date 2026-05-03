@@ -75,8 +75,9 @@ function Donut({ data, title }: { data: Slice[]; title: string }) {
           <tbody>
             {data.map((item, i) => (
               <tr key={i} className="dash-legend-row">
-                <td style={{width:14,paddingRight:4}}><span className="dash-legend-dot" style={{ background: item.color }} /></td>
+                <td style={{width:14,paddingRight:4,verticalAlign:"middle"}}><span className="dash-legend-dot" style={{ background: item.color }} /></td>
                 <td className="dash-legend-label">{item.label}</td>
+                <td className="dash-legend-sep">–</td>
                 <td className="dash-legend-count">{item.count.toLocaleString()}</td>
                 <td className="dash-legend-pct">{((item.count / total) * 100).toFixed(1)}%</td>
               </tr>
