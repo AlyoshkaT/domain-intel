@@ -170,7 +170,7 @@ async def create_job_endpoint(
         raise HTTPException(status_code=400, detail="No valid domains found in file")
 
     services_list = json.loads(services)
-    valid_services = ["similarweb", "builtwith", "whatcms", "ai"]
+    valid_services = ["similarweb", "builtwith", "ai"]
     services_list = [s for s in services_list if s in valid_services]
     if not services_list:
         raise HTTPException(status_code=400, detail="No valid services selected")

@@ -74,7 +74,6 @@ async def process_domain(
         "bw_vertical": None, "bw_industry": None, "bw_technologies": None,
         "bw_cms_raw": None, "bw_ecommerce": None, "bw_email_marketing": None,
         "ai_category": None, "ai_is_ecommerce": None, "ai_industry": None,
-        "wcms_name": None, "wcms_confidence": None, "osearch_parse": None,
     }
 
     try:

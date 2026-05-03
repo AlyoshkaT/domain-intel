@@ -58,9 +58,10 @@ def get_corp_ai_cached(domain: str) -> Optional[dict]:
             rj = rows[0]["response_json"]
             data = rj if isinstance(rj, dict) else json.loads(rj)
             logger.info(f"Corp AI cache HIT: {domain}")
+            is_ecom = data.get("is_ecommerce")
             return {
                 "ai_category":     data.get("category", ""),
-                "ai_is_ecommerce": str(data.get("is_ecommerce", "")).lower(),
+                "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
                 "ai_industry":     data.get("subcategory", ""),
             }
         return None
@@ -159,7 +160,7 @@ Respond ONLY with JSON (no markdown):
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": "claude-haiku-4-5",
                     "max_tokens": 300,
                     "messages": [{"role": "user", "content": prompt}],
                 }
@@ -177,9 +178,10 @@ Respond ONLY with JSON (no markdown):
 
             parsed = json.loads(text)
 
+            is_ecom = parsed.get("is_ecommerce", False)
             return {
                 "ai_category":              parsed.get("category", "other"),
-                "ai_is_ecommerce":          str(parsed.get("is_ecommerce", False)).lower(),
+                "ai_is_ecommerce":          "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
                 "ai_industry":              parsed.get("subcategory", "other"),
                 "ai_category_reasoning":    parsed.get("category_reasoning", ""),
                 "ai_ecommerce_reasoning":   parsed.get("ecommerce_reasoning", ""),

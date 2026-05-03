@@ -23,7 +23,6 @@ EXPORT_COLUMNS = [
     ("domain",               "Domain"),
     ("sw_visits",            "Traffic"),
     ("cms_list",             "CMS"),
-    ("wcms_name",            "WhatCMS"),
     ("osearch_group",        "oSearch Group"),
     ("osearch",              "oSearch"),
     ("ems_list",             "EMS"),

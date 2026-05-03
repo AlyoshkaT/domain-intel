@@ -15,12 +15,11 @@ from config.settings import (
     GCP_PROJECT_ID, BIGQUERY_DATASET, BIGQUERY_LOCATION,
     GOOGLE_APPLICATION_CREDENTIALS,
     GOOGLE_CORP_CREDENTIALS, CORP_PROJECT_ID, CORP_DATASET,
-    BQ_BUILTWITH_CACHE, BQ_SIMILARWEB_CACHE, BQ_WHATCMS_CACHE,
+    BQ_BUILTWITH_CACHE, BQ_SIMILARWEB_CACHE,
     BQ_JOBS_TABLE, BQ_RESULTS_TABLE
 )
 
 logger = logging.getLogger(__name__)
-BQ_AI_CACHE = "ai_cache"
 
 
 def _make_client(env_var: str, file_path: str, project_id: str) -> bigquery.Client:
@@ -88,8 +87,6 @@ RESULTS_SCHEMA = [
     bigquery.SchemaField("status", "STRING"),
     bigquery.SchemaField("sw_visits", "FLOAT"),
     bigquery.SchemaField("cms_list", "STRING"),
-    bigquery.SchemaField("wcms_name", "STRING"),
-    bigquery.SchemaField("wcms_confidence", "FLOAT"),
     bigquery.SchemaField("osearch_group", "STRING"),
     bigquery.SchemaField("osearch", "STRING"),
     bigquery.SchemaField("ems_list", "STRING"),
@@ -117,23 +114,9 @@ RESULTS_SCHEMA = [
 
 def ensure_tables_exist():
     bq = client()
-    cache_schema = [
-        bigquery.SchemaField("domain", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("fetched_at", "TIMESTAMP"),
-        bigquery.SchemaField("response_json", "STRING"),
-    ]
-    ai_cache_schema = [
-        bigquery.SchemaField("domain", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("fetched_at", "TIMESTAMP"),
-        bigquery.SchemaField("ai_category", "STRING"),
-        bigquery.SchemaField("ai_is_ecommerce", "STRING"),
-        bigquery.SchemaField("ai_industry", "STRING"),
-    ]
     tables_to_create = {
         BQ_JOBS_TABLE: JOBS_SCHEMA,
         BQ_RESULTS_TABLE: RESULTS_SCHEMA,
-        BQ_WHATCMS_CACHE: cache_schema,
-        BQ_AI_CACHE: ai_cache_schema,
     }
     for table_name, schema in tables_to_create.items():
         table_ref_obj = bigquery.Table(f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{table_name}", schema=schema)
@@ -191,48 +174,6 @@ def save_cache(table: str, domain: str, data: dict):
             logger.info(f"Cache saved: {table} / {domain}")
     except Exception as e:
         logger.error(f"Cache write exception ({table}, {domain}): {e}")
-
-
-def get_ai_cached(domain: str, ignore_ttl: bool = False) -> Optional[dict]:
-    bq = client()
-    ttl_clause = "AND fetched_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY)" if not ignore_ttl else ""
-    try:
-        rows = list(bq.query(f"""
-            SELECT ai_category, ai_is_ecommerce, ai_industry
-            FROM `{table_ref(BQ_AI_CACHE)}`
-            WHERE domain = @domain {ttl_clause}
-            ORDER BY fetched_at DESC LIMIT 1
-        """, job_config=bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("domain", "STRING", domain)]
-        )).result())
-        if rows:
-            logger.info(f"AI cache HIT: {domain}")
-            return dict(rows[0])
-        return None
-    except Exception as e:
-        logger.error(f"AI cache read error ({domain}): {e}")
-        return None
-
-
-def save_ai_cache(domain: str, ai_category: str, ai_is_ecommerce: str, ai_industry: str):
-    bq = client()
-    fetched_at = datetime.now(timezone.utc).isoformat()
-    try:
-        params = [
-            bigquery.ScalarQueryParameter("domain", "STRING", domain),
-            bigquery.ScalarQueryParameter("fetched_at", "TIMESTAMP", fetched_at),
-            bigquery.ScalarQueryParameter("ai_category", "STRING", ai_category or ""),
-            bigquery.ScalarQueryParameter("ai_is_ecommerce", "STRING", ai_is_ecommerce or ""),
-            bigquery.ScalarQueryParameter("ai_industry", "STRING", ai_industry or ""),
-        ]
-        bq.query(f"""
-            INSERT INTO `{table_ref(BQ_AI_CACHE)}`
-            (domain, fetched_at, ai_category, ai_is_ecommerce, ai_industry)
-            VALUES (@domain, @fetched_at, @ai_category, @ai_is_ecommerce, @ai_industry)
-        """, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
-        logger.info(f"AI cache saved: {domain}")
-    except Exception as e:
-        logger.error(f"AI cache save error ({domain}): {e}")
 
 
 def create_job(job_id: str, total_domains: int, services: list[str], filename: str):

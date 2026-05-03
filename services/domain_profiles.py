@@ -10,7 +10,7 @@ from typing import Optional
 
 from google.cloud import bigquery
 
-from core.bigquery import client, corp_client, table_ref, BQ_AI_CACHE
+from core.bigquery import client, corp_client, table_ref
 from config.settings import CORP_PROJECT_ID, CORP_DATASET, GCP_PROJECT_ID, BIGQUERY_DATASET
 
 logger = logging.getLogger(__name__)
@@ -141,29 +141,12 @@ def _parse_bw(data: dict | None, catalog: dict) -> dict:
         return {}
 
 
-def _parse_wc(data: dict | None) -> dict:
-    if not data:
-        return {}
-    try:
-        results = data.get("results", [])
-        if results:
-            cms = next(
-                (r for r in results if any(c in ["CMS","E-commerce"] for c in r.get("categories",[]))),
-                results[0]
-            )
-            return {"wcms_name": cms.get("name", "")}
-        return {"wcms_name": data.get("result", {}).get("name", "")}
-    except Exception:
-        return {}
-
-
-def _build_profile(domain: str, sw_raw, bw_raw, wc_raw,
+def _build_profile(domain: str, sw_raw, bw_raw,
                    ai_rec: dict, catalog: dict, updated_at: str) -> dict:
     sw = _parse_sw(_safe_json(sw_raw))
     bw = _parse_bw(_safe_json(bw_raw), catalog)
-    wc = _parse_wc(_safe_json(wc_raw))
     _SCHEMA = {"domain","updated_at","sw_visits","sw_category","sw_subcategory","sw_description","sw_title","sw_primary_region","sw_primary_region_pct","company_name","cms_list","osearch","osearch_group","ems_list","bw_vertical","ai_category","ai_is_ecommerce","ai_industry"}
-    row = {
+    return {k: v for k, v in {
         "domain":                domain,
         "updated_at":            updated_at,
         "sw_visits":             sw.get("sw_visits"),
@@ -179,12 +162,10 @@ def _build_profile(domain: str, sw_raw, bw_raw, wc_raw,
         "osearch_group":         bw.get("osearch_group", ""),
         "ems_list":              bw.get("ems_list", ""),
         "bw_vertical":           bw.get("bw_vertical", ""),
-        "wcms_name":             wc.get("wcms_name", ""),
         "ai_category":           ai_rec.get("ai_category", "") or "",
         "ai_is_ecommerce":       ai_rec.get("ai_is_ecommerce", "") or "",
         "ai_industry":           ai_rec.get("ai_industry", "") or "",
-    }
-    return {k: v for k, v in row.items() if k in _SCHEMA}
+    }.items() if k in _SCHEMA}
 
 
 def sync_domain_profiles() -> dict:
@@ -201,8 +182,6 @@ def sync_domain_profiles() -> dict:
 
         sw_table      = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.similarweb_raw_data`"
         bw_table      = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.builtwith_raw_data`"
-        wc_table      = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.whatcms_raw_data`"
-        ai_table      = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{BQ_AI_CACHE}`"
         corp_ai_table = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
 
         # Load catalog once
@@ -214,9 +193,8 @@ def sync_domain_profiles() -> dict:
         _sync_status["progress"] = "Отримуємо список доменів..."
         sw_domains      = set(normalize_domain(r["domain"]) for r in corp.query(f"SELECT DISTINCT domain FROM {sw_table}").result())
         bw_domains      = set(normalize_domain(r["domain"]) for r in corp.query(f"SELECT DISTINCT domain FROM {bw_table}").result())
-        ai_domains      = set(normalize_domain(r["domain"]) for r in our.query(f"SELECT DISTINCT domain FROM {ai_table}").result())
         corp_ai_domains = set(normalize_domain(r["domain"]) for r in corp.query(f"SELECT DISTINCT domain FROM {corp_ai_table}").result())
-        all_domains = {d for d in sw_domains | bw_domains | ai_domains | corp_ai_domains if d}
+        all_domains = {d for d in sw_domains | bw_domains | corp_ai_domains if d}
         logger.info(f"Unique normalized domains: {len(all_domains)}")
 
         # Fetch latest data per domain (normalize keys)
@@ -242,27 +220,9 @@ def sync_domain_profiles() -> dict:
             if key:
                 bw_data[key] = r["response_json"]
 
-        _sync_status["progress"] = "Завантажуємо WC + AI..."
-        wc_data: dict[str, any] = {}
-        for r in our.query(f"""
-            SELECT domain, response_json FROM {wc_table}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """).result():
-            key = normalize_domain(r["domain"])
-            if key:
-                wc_data[key] = r["response_json"]
-
-        ai_data: dict[str, dict] = {}
-        for r in our.query(f"""
-            SELECT domain, ai_category, ai_is_ecommerce, ai_industry FROM {ai_table}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """).result():
-            key = normalize_domain(r["domain"])
-            if key:
-                ai_data[key] = dict(r)
-
-        # Corp AI (claude_responses) — priority, overwrites our ai_cache
+        # Corp AI (claude_responses)
         _sync_status["progress"] = "Завантажуємо Corp AI (claude_responses)..."
+        ai_data: dict[str, dict] = {}
         logger.info("Fetching corp AI...")
         for r in corp.query(f"""
             SELECT domain, response_json FROM {corp_ai_table}
@@ -274,9 +234,10 @@ def sync_domain_profiles() -> dict:
             rj = r["response_json"]
             data = rj if isinstance(rj, dict) else _safe_json(rj)
             if data:
+                is_ecom = data.get("is_ecommerce")
                 ai_data[key] = {
                     "ai_category":     data.get("category", ""),
-                    "ai_is_ecommerce": str(data.get("is_ecommerce", "")).lower(),
+                    "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
                     "ai_industry":     data.get("subcategory", ""),
                 }
         logger.info(f"AI data total: {len(ai_data)} domains")
@@ -291,7 +252,6 @@ def sync_domain_profiles() -> dict:
                 domain,
                 sw_data.get(domain),
                 bw_data.get(domain),
-                None,
                 ai_data.get(domain, {}),
                 catalog,
                 updated_at,

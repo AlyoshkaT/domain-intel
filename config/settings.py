@@ -13,7 +13,6 @@ GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 # BQ Tables - Cache
 BQ_BUILTWITH_CACHE = os.getenv("BUILTWITH_RAW_TABLE", "builtwith_raw_data")
 BQ_SIMILARWEB_CACHE = os.getenv("SIMILARWEB_RAW_TABLE", "similarweb_raw_data")
-BQ_WHATCMS_CACHE = os.getenv("WHATCMS_CORP_TABLE", "whatcms_raw_data")
 
 # BQ Tables - App
 BQ_JOBS_TABLE = "analysis_jobs"
@@ -23,14 +22,12 @@ BQ_RESULTS_TABLE = "analysis_results"
 SIMILARWEB_RAPIDAPI_KEY = os.getenv("SIMILARWEB_RAPIDAPI_KEY", "")
 BUILTWITH_API_KEY = os.getenv("BUILTWITH_API_KEY", "")
 BUILTWITH_RAPIDAPI_KEY = os.getenv("BUILTWITH_RAPIDAPI_KEY", "")
-WHATCMS_API_KEY = os.getenv("WHATCMS_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # Rate limits
 DELAY_BETWEEN_DOMAINS = float(os.getenv("DELAY_BETWEEN_DOMAINS", "0"))
 DELAY_BETWEEN_API_CALLS = int(os.getenv("DELAY_BETWEEN_API_CALLS", "300"))  # ms
 RATE_LIMIT_WAIT = int(os.getenv("RATE_LIMIT_WAIT", "10"))  # seconds after 429
-WHATCMS_MAX_RETRIES = int(os.getenv("WHATCMS_MAX_RETRIES", "2"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "12"))
 
 # Cache TTL

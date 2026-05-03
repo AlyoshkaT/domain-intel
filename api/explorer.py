@@ -13,7 +13,7 @@ from core.bigquery import client, table_ref
 router = APIRouter(prefix="/api/explore")
 PROFILES_TABLE = "domain_profiles"
 FILTERABLE_FIELDS = [
-    "domain","cms_list","wcms_name","osearch","ems_list",
+    "domain","cms_list","osearch","ems_list",
     "ai_category","ai_is_ecommerce","sw_category","sw_primary_region",
 ]
 
