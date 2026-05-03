@@ -456,20 +456,40 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
       </aside>
 
       <main className="explorer-main">
-        {/* Stats */}
-        <div className="stats-grid" style={{ marginBottom: 12 }}>
-          {[
-            { label: "Доменів",    value: stats.total_domains },
-            { label: "З трафіком", value: stats.with_traffic },
-            { label: "З CMS",      value: stats.with_cms },
-            { label: "З EMS",      value: stats.with_ems },
-            { label: "З AI",       value: stats.with_ai },
-          ].map(s => (
-            <div key={s.label} className="stat-card">
-              <div className="stat-label">{s.label}</div>
-              <div className="stat-value">{s.value?.toLocaleString() || "—"}</div>
+        {/* Stats + Force Refresh */}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
+          <div className="stats-grid" style={{ flex: 1, margin: 0 }}>
+            {[
+              { label: "Доменів",    value: stats.total_domains },
+              { label: "З трафіком", value: stats.with_traffic },
+              { label: "З CMS",      value: stats.with_cms },
+              { label: "З EMS",      value: stats.with_ems },
+              { label: "З AI",       value: stats.with_ai },
+            ].map(s => (
+              <div key={s.label} className="stat-card">
+                <div className="stat-label">{s.label}</div>
+                <div className="stat-value">{s.value?.toLocaleString() || "—"}</div>
+              </div>
+            ))}
+          </div>
+          {allResults.length > 0 && (
+            <div className="force-refresh-card">
+              <div className="force-refresh-label">↻ Оновити КЕШ</div>
+              <div className="force-refresh-row">
+                {[{id:"builtwith",label:"BW"},{id:"similarweb",label:"SW"},{id:"ai",label:"AI"}].map(s => (
+                  <button key={s.id}
+                    className={`gran-btn${refreshServices.includes(s.id) ? " active" : ""}`}
+                    onClick={() => toggleRefreshService(s.id)}>{s.label}</button>
+                ))}
+              </div>
+              <button className="btn-export" style={{ marginTop: 8, width: "100%", justifyContent: "center" }}
+                onClick={handleForceRefresh}
+                disabled={refreshing || refreshServices.length === 0}>
+                {refreshing ? "⏳" : "↻"} {allResults.length.toLocaleString()} дом.
+              </button>
+              {refreshMsg && <div className="setup-msg" style={{ marginTop: 4, fontSize: 11 }}>{refreshMsg}</div>}
             </div>
-          ))}
+          )}
         </div>
 
         {/* Dashboards */}
@@ -510,32 +530,6 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
             )}
           </div>
         </div>
-
-        {/* Force cache refresh */}
-        {allResults.length > 0 && (
-          <div className="force-refresh-card">
-            <div className="force-refresh-label">Примусово оновити КЕШ для вибраного сегменту:</div>
-            <div className="force-refresh-row">
-              {[
-                { id: "builtwith", label: "BW" },
-                { id: "similarweb", label: "SW" },
-                { id: "ai", label: "AI" },
-              ].map(s => (
-                <button key={s.id}
-                  className={`gran-btn${refreshServices.includes(s.id) ? " active" : ""}`}
-                  onClick={() => toggleRefreshService(s.id)}>
-                  {s.label}
-                </button>
-              ))}
-              <button className="btn-export" style={{ marginLeft: 8 }}
-                onClick={handleForceRefresh}
-                disabled={refreshing || refreshServices.length === 0 || allResults.length === 0}>
-                {refreshing ? "⏳" : "↻"} Оновити ({allResults.length.toLocaleString()} доменів)
-              </button>
-            </div>
-            {refreshMsg && <div className="setup-msg" style={{ marginTop: 6 }}>{refreshMsg}</div>}
-          </div>
-        )}
 
         {/* Table with fixed height and vertical scroll */}
         {loading && <div className="loading-center"><span className="spinner-lg" /></div>}
