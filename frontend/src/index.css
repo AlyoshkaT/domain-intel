@@ -93,7 +93,6 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .manual-domains::placeholder{color:var(--text-3)}
 .domain-count-hint{font-size:11px;color:var(--text-3);font-family:var(--mono);margin-top:5px;text-align:right}
 
-.force-refresh-row{margin-bottom:14px}
 .force-toggle{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius);text-align:left;width:100%;transition:all 0.15s}
 .force-toggle:hover{border-color:var(--border-2)}
 .force-toggle.active{border-color:rgba(217,119,6,0.3);background:var(--amber-bg)}
@@ -415,9 +414,8 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .btn-danger:disabled{opacity:0.4;cursor:not-allowed}
 
 /* ── Force refresh cache card (Explorer top-right) ───────────────────────────── */
-.force-refresh-card{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px;flex-shrink:0;min-width:150px;display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow)}
-.force-refresh-label{font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em}
-.force-refresh-row{display:flex;align-items:center;gap:0}
+.force-refresh-card{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:8px 12px;flex-shrink:0;display:flex;flex-direction:row;align-items:center;gap:8px;box-shadow:var(--shadow);white-space:nowrap}
+.force-refresh-label{font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em;flex-shrink:0}
 
 /* ── Technologies legend + chart interaction ─────────────────────────────────── */
 .tech-legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:12px}

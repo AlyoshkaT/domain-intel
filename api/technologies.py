@@ -1,15 +1,12 @@
 """
 Technologies API — aggregate BW technology data with time series.
 """
-import io
 import json
 import logging
 import re
 from datetime import datetime, timezone
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
 from google.cloud import bigquery as bq
-import pandas as pd
 
 from core.bigquery import corp_client
 from config.settings import CORP_PROJECT_ID, CORP_DATASET
@@ -181,9 +178,12 @@ async def aggregate_technologies(body: dict):
 
 @router.post("/export/xlsx")
 async def export_technologies_xlsx(body: dict):
+    import io
+    import pandas as pd
+    from fastapi import HTTPException
+    from fastapi.responses import StreamingResponse
     rows = body.get("rows", [])
     if not rows:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="No rows to export")
     df = pd.DataFrame(rows)
     stream = io.BytesIO()

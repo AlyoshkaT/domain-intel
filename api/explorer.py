@@ -1,7 +1,9 @@
 """
 BQ Explorer API — queries domain_profiles directly in BQ.
-No in-memory cache to save RAM on Railway.
+Search results cached in memory (5 min TTL) to speed up repeat queries.
 """
+import hashlib
+import json
 import time
 from fastapi import APIRouter, BackgroundTasks
 from google.cloud import bigquery as bq
@@ -15,10 +17,36 @@ FILTERABLE_FIELDS = [
     "ai_category","ai_is_ecommerce","sw_category","sw_primary_region",
 ]
 
-# Small cache for field values only (lightweight)
+# Cache for field values (lightweight)
 _values_cache: dict = {}
 _values_cache_ts: float = 0
 CACHE_TTL = 300
+
+# Cache for search results (larger, 5-min TTL, max 30 entries)
+_search_cache: dict[str, dict] = {}
+_SEARCH_CACHE_TTL = 300
+_SEARCH_CACHE_MAX = 30
+
+
+def _make_cache_key(body: dict) -> str:
+    """Stable hash of request body for cache keying."""
+    serialized = json.dumps(body, sort_keys=True, default=str)
+    return hashlib.md5(serialized.encode()).hexdigest()
+
+
+def _search_cache_get(key: str):
+    entry = _search_cache.get(key)
+    if entry and (time.time() - entry["ts"]) < _SEARCH_CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def _search_cache_set(key: str, data: dict):
+    # Evict oldest entries if over limit
+    if len(_search_cache) >= _SEARCH_CACHE_MAX:
+        oldest = min(_search_cache, key=lambda k: _search_cache[k]["ts"])
+        del _search_cache[oldest]
+    _search_cache[key] = {"data": data, "ts": time.time()}
 
 
 def _build_where(filters: dict) -> tuple[str, list]:
@@ -120,6 +148,12 @@ async def explore_search(body: dict):
     limit = min(int(body.get("limit", 100)), 200000)
     offset = int(body.get("offset", 0))
 
+    # Check cache first
+    ck = _make_cache_key({"filters": filters, "limit": limit, "offset": offset})
+    cached = _search_cache_get(ck)
+    if cached is not None:
+        return cached
+
     where, params = _build_where(filters)
     job_cfg = bq.QueryJobConfig(query_parameters=params)
 
@@ -146,7 +180,9 @@ async def explore_search(body: dict):
             job_config=job_cfg
         ).result())
 
-        return {"total": total, "results": [dict(r) for r in data_rows]}
+        result = {"total": total, "results": [dict(r) for r in data_rows]}
+        _search_cache_set(ck, result)
+        return result
     except Exception as e:
         return {"total": 0, "results": [], "error": str(e)}
 

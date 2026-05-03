@@ -474,20 +474,20 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
           </div>
           {allResults.length > 0 && (
             <div className="force-refresh-card">
-              <div className="force-refresh-label">↻ Оновити КЕШ</div>
-              <div className="force-refresh-row">
+              <span className="force-refresh-label">↻ КЕШ:</span>
+              <div className="gran-btns">
                 {[{id:"builtwith",label:"BW"},{id:"similarweb",label:"SW"},{id:"ai",label:"AI"}].map(s => (
                   <button key={s.id}
                     className={`gran-btn${refreshServices.includes(s.id) ? " active" : ""}`}
                     onClick={() => toggleRefreshService(s.id)}>{s.label}</button>
                 ))}
               </div>
-              <button className="btn-export" style={{ marginTop: 8, width: "100%", justifyContent: "center" }}
+              <button className="btn-export"
                 onClick={handleForceRefresh}
                 disabled={refreshing || refreshServices.length === 0}>
-                {refreshing ? "⏳" : "↻"} {allResults.length.toLocaleString()} дом.
+                {refreshing ? "⏳" : "↻"} {allResults.length.toLocaleString()}
               </button>
-              {refreshMsg && <div className="setup-msg" style={{ marginTop: 4, fontSize: 11 }}>{refreshMsg}</div>}
+              {refreshMsg && <div className="setup-msg" style={{ fontSize: 10 }}>{refreshMsg}</div>}
             </div>
           )}
         </div>
