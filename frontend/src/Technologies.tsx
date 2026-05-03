@@ -13,6 +13,17 @@ interface AggResult { periods: string[]; series: Series[]; table: TableRow[]; un
 
 const COLORS = ["#6366f1","#22c55e","#f59e0b","#ef4444","#3b82f6","#a855f7","#14b8a6","#f97316","#ec4899","#64748b","#84cc16","#06b6d4","#8b5cf6","#d97706","#059669"]
 
+function yTicks(maxVal: number, n = 5): number[] {
+  if (maxVal <= 0) return [0]
+  const ticks: number[] = []
+  const seen = new Set<number>()
+  for (let i = 0; i < n; i++) {
+    const v = Math.round(maxVal * i / (n - 1))
+    if (!seen.has(v)) { seen.add(v); ticks.push(v) }
+  }
+  return ticks
+}
+
 function LineChart({ periods, series, hovered, onHover }: {
   periods: string[]; series: Series[]
   hovered: string|null; onHover: (n: string|null) => void
@@ -24,13 +35,14 @@ function LineChart({ periods, series, hovered, onHover }: {
   const yScale = (v: number) => plotH - (v/maxVal)*plotH
   const path = (data: number[]) => data.map((v,i)=>`${i===0?"M":"L"} ${PL+i*xStep} ${PT+yScale(v)}`).join(" ")
   const labelStep = Math.ceil(periods.length/12)
+  const ticks = yTicks(maxVal)
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:H,overflow:"visible"}}>
-      {[0,0.25,0.5,0.75,1].map(frac=>{
-        const y=PT+plotH*(1-frac)
-        return <g key={frac}>
+      {ticks.map(val=>{
+        const y=PT+plotH*(1-val/maxVal)
+        return <g key={val}>
           <line x1={PL} y1={y} x2={W-PR} y2={y} stroke="var(--border)" strokeWidth={1}/>
-          <text x={PL-6} y={y+4} textAnchor="end" fontSize={10} fill="var(--text-3)">{Math.round(maxVal*frac)}</text>
+          <text x={PL-6} y={y+4} textAnchor="end" fontSize={10} fill="var(--text-3)">{val}</text>
         </g>
       })}
       {series.map((s,i)=>{
