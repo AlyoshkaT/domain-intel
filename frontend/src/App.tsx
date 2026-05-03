@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import ExplorerPage from "./Explorer"
+import TechnologiesPage from "./Technologies"
+import SetupPage from "./Setup"
 import "./index.css"
 
 const API = ""
@@ -396,11 +398,12 @@ function ResultsPage({ jobId, onBack }: { jobId: string; onBack: () => void }) {
 }
 
 // ─── App ───────────────────────────────────────────────────────────────────────
-type View = "new" | "jobs" | "results" | "explorer"
+type View = "new" | "jobs" | "results" | "explorer" | "technologies" | "setup"
 
 export default function App() {
   const [view, setView] = useState<View>("jobs")
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
+  const [techDomains, setTechDomains] = useState<string[]>([])
   const [dark, setDark] = useState(() => {
     const s = localStorage.getItem("theme")
     if (s) return s === "dark"
@@ -426,16 +429,20 @@ export default function App() {
           <button className={`nav-link ${view === "new" ? "active" : ""}`} onClick={() => setView("new")}>+ Новий</button>
           <button className={`nav-link ${view === "jobs" ? "active" : ""}`} onClick={() => setView("jobs")}>Job-и</button>
           <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>Explorer</button>
+          <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => setView("technologies")}>Technologies</button>
+          <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>Setup</button>
         </div>
         <div className="nav-right">
           <button className="theme-toggle" onClick={() => setDark(!dark)} title="Змінити тему">{dark ? "☀" : "☾"}</button>
         </div>
       </nav>
       <main className="main">
+        {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => setView("explorer")} />}
+        {view === "setup" && <SetupPage />}
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} />}
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} />}
         {view === "results" && selectedJobId && <ResultsPage jobId={selectedJobId} onBack={() => setView("jobs")} />}
-        {view === "explorer" && <ExplorerPage />}
+        {view === "explorer" && <ExplorerPage onViewTechnologies={(domains: string[]) => { setTechDomains(domains); setView("technologies") }} />}
       </main>
     </div>
   )

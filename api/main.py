@@ -70,6 +70,18 @@ try:
 except Exception as e:
     logger.warning(f"Explorer router not loaded: {e}")
 
+try:
+    from api.technologies import router as tech_router
+    app.include_router(tech_router)
+except Exception as e:
+    logger.warning(f"Technologies router not loaded: {e}")
+
+try:
+    from api.setup import router as setup_router
+    app.include_router(setup_router)
+except Exception as e:
+    logger.warning(f"Setup router not loaded: {e}")
+
 
 # ─── Health ───────────────────────────────────────────────────────────────────
 @app.get("/api/health")

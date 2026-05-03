@@ -1,14 +1,19 @@
 """
 Simple authentication middleware.
-Users defined in .env as AUTH_USERS=user1:pass1,user2:pass2
+Priority: AUTH_USERS env var → BQ app_users table → allow all.
 """
 import base64
 import os
-from fastapi import Request, HTTPException
+import time
+from fastapi import Request
 from fastapi.responses import Response
 
-def get_auth_users() -> dict[str, str]:
-    """Parse AUTH_USERS from env: 'user1:pass1,user2:pass2'"""
+_bq_users_cache: dict[str, str] = {}
+_bq_users_cached_at: float = 0
+_BQ_CACHE_TTL = 60  # seconds
+
+
+def _load_env_users() -> dict[str, str]:
     raw = os.getenv("AUTH_USERS", "")
     if not raw:
         return {}
@@ -21,15 +26,40 @@ def get_auth_users() -> dict[str, str]:
     return users
 
 
+def _load_bq_users() -> dict[str, str]:
+    global _bq_users_cache, _bq_users_cached_at
+    now = time.time()
+    if now - _bq_users_cached_at < _BQ_CACHE_TTL:
+        return _bq_users_cache
+    try:
+        from core.bigquery import get_bq_users_for_auth
+        users = get_bq_users_for_auth()
+        _bq_users_cache = users
+        _bq_users_cached_at = now
+        return users
+    except Exception:
+        return _bq_users_cache
+
+
+def get_auth_users() -> dict[str, str]:
+    env_users = _load_env_users()
+    if env_users:
+        return env_users
+    return _load_bq_users()
+
+
+def invalidate_users_cache():
+    global _bq_users_cached_at
+    _bq_users_cached_at = 0
+
+
 async def auth_middleware(request: Request, call_next):
-    """Basic Auth middleware. Skips if AUTH_USERS not set."""
-    users = get_auth_users()
-    if not users:
-        # Auth disabled — allow all
+    """Basic Auth middleware. Skips if no users configured."""
+    if request.url.path in ["/api/health"]:
         return await call_next(request)
 
-    # Allow health check without auth
-    if request.url.path in ["/api/health"]:
+    users = get_auth_users()
+    if not users:
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
@@ -44,13 +74,11 @@ async def auth_middleware(request: Request, call_next):
         decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
         username, password = decoded.split(":", 1)
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        return Response(content="Unauthorized", status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Domain Intel"'})
 
     if users.get(username) != password:
-        return Response(
-            content="Unauthorized",
-            status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="Domain Intel"'}
-        )
+        return Response(content="Unauthorized", status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Domain Intel"'})
 
     return await call_next(request)

@@ -71,16 +71,18 @@ function Donut({ data, title }: { data: Slice[]; title: string }) {
           <text x={cx} y={cy - 4} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--text)">{total.toLocaleString()}</text>
           <text x={cx} y={cy + 11} textAnchor="middle" fontSize={8} fill="var(--text-3)">доменів</text>
         </svg>
-        <div className="dash-legend">
-          {data.map((item, i) => (
-            <div key={i} className="dash-legend-item">
-              <span className="dash-legend-dot" style={{ background: item.color }} />
-              <span className="dash-legend-label">{item.label}</span>
-              <span className="dash-legend-count">{item.count.toLocaleString()}</span>
-              <span className="dash-legend-pct">{((item.count / total) * 100).toFixed(1)}%</span>
-            </div>
-          ))}
-        </div>
+        <table className="dash-legend-table">
+          <tbody>
+            {data.map((item, i) => (
+              <tr key={i} className="dash-legend-row">
+                <td style={{width:14,paddingRight:4}}><span className="dash-legend-dot" style={{ background: item.color }} /></td>
+                <td className="dash-legend-label">{item.label}</td>
+                <td className="dash-legend-count">{item.count.toLocaleString()}</td>
+                <td className="dash-legend-pct">{((item.count / total) * 100).toFixed(1)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )

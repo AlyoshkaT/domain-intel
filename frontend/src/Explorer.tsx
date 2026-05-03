@@ -298,7 +298,7 @@ interface ExploreResult {
 }
 
 // ─── Main Explorer ─────────────────────────────────────────────────────────────
-export default function ExplorerPage() {
+export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologies?: (domains: string[]) => void }) {
   const [filters, setFilters] = useState<FilterState>(defaultFilters())
   const [fieldValues, setFieldValues] = useState<Record<string, FilterValue[]>>({})
   const [allResults, setAllResults] = useState<ExploreResult[]>([])
@@ -424,6 +424,30 @@ export default function ExplorerPage() {
     (f.type && f.type !== "all") || (f.selected && f.selected.length > 0) || (f.value && f.value.trim())
   ).length
 
+  const [refreshServices, setRefreshServices] = useState<string[]>([])
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState("")
+
+  const toggleRefreshService = (s: string) =>
+    setRefreshServices(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s])
+
+  const handleForceRefresh = async () => {
+    if (!refreshServices.length || !allResults.length) return
+    setRefreshing(true); setRefreshMsg("")
+    try {
+      const domains = allResults.map(r => r.domain).join("\n")
+      const file = new File([domains], "domains_refresh.txt", { type: "text/plain" })
+      const fd = new FormData()
+      fd.append("file", file)
+      fd.append("services", JSON.stringify(refreshServices))
+      fd.append("force_refresh", "true")
+      const res = await fetch("/api/jobs", { method: "POST", body: fd })
+      if (!res.ok) throw new Error("Failed")
+      setRefreshMsg(`Запущено оновлення ${allResults.length.toLocaleString()} доменів (${refreshServices.join(", ")})`)
+    } catch { setRefreshMsg("Помилка запуску") }
+    finally { setRefreshing(false) }
+  }
+
   return (
     <div className="explorer-layout">
       <aside className="explorer-sidebar">
@@ -465,6 +489,12 @@ export default function ExplorerPage() {
               <>
                 <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
                 <button className="btn-export" onClick={exportXLSX}>↓ XLSX</button>
+                {onViewTechnologies && allResults.length > 0 && (
+                  <button className="btn-export" style={{background:"var(--accent)",color:"white",borderColor:"var(--accent)"}}
+                    onClick={() => onViewTechnologies(allResults.map(r => r.domain))}>
+                    📊 Технології →
+                  </button>
+                )}
               </>
             )}
             {total > PAGE && (
@@ -481,6 +511,32 @@ export default function ExplorerPage() {
             )}
           </div>
         </div>
+
+        {/* Force cache refresh */}
+        {allResults.length > 0 && (
+          <div className="force-refresh-card">
+            <div className="force-refresh-label">Примусово оновити КЕШ для вибраного сегменту:</div>
+            <div className="force-refresh-row">
+              {[
+                { id: "builtwith", label: "BW" },
+                { id: "similarweb", label: "SW" },
+                { id: "ai", label: "AI" },
+              ].map(s => (
+                <button key={s.id}
+                  className={`gran-btn${refreshServices.includes(s.id) ? " active" : ""}`}
+                  onClick={() => toggleRefreshService(s.id)}>
+                  {s.label}
+                </button>
+              ))}
+              <button className="btn-export" style={{ marginLeft: 8 }}
+                onClick={handleForceRefresh}
+                disabled={refreshing || refreshServices.length === 0 || allResults.length === 0}>
+                {refreshing ? "⏳" : "↻"} Оновити ({allResults.length.toLocaleString()} доменів)
+              </button>
+            </div>
+            {refreshMsg && <div className="setup-msg" style={{ marginTop: 6 }}>{refreshMsg}</div>}
+          </div>
+        )}
 
         {/* Table with fixed height and vertical scroll */}
         {loading && <div className="loading-center"><span className="spinner-lg" /></div>}

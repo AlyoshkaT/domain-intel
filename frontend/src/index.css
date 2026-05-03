@@ -363,3 +363,57 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .job-status-text{font-size:12px;color:var(--text-2)}
 .job-status-services{display:flex;gap:4px}
 .progress-banner{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:12px}
+
+/* ── Granularity buttons (Technologies) ──────────────────────────────────────── */
+.gran-btns{display:flex;gap:0}
+.gran-btn{padding:5px 13px;font-size:12px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);cursor:pointer;transition:all 0.15s;white-space:nowrap}
+.gran-btn:first-child{border-radius:var(--radius) 0 0 var(--radius)}
+.gran-btn:last-child{border-radius:0 var(--radius) var(--radius) 0}
+.gran-btn:not(:first-child){border-left:none}
+.gran-btn:hover{color:var(--text);background:var(--bg-3)}
+.gran-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+
+/* ── Date picker wrapper (Technologies) ──────────────────────────────────────── */
+.date-picker-wrap{position:relative;display:flex;align-items:center}
+.date-picker-wrap .date-input{padding-right:8px;min-width:130px}
+
+/* ── Dashboard legend table (no borders, spreadsheet-friendly) ───────────────── */
+.dash-legend-table{border-collapse:collapse;min-width:0;flex:1}
+.dash-legend-table td{padding:2px 4px;font-size:11px;border:none;background:transparent}
+.dash-legend-row .dash-legend-label{color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px}
+.dash-legend-row .dash-legend-count{font-family:var(--mono);font-size:10px;color:var(--text-3);white-space:nowrap;text-align:right}
+.dash-legend-row .dash-legend-pct{font-size:10px;color:var(--text-3);white-space:nowrap;min-width:38px;text-align:right}
+
+/* ── Setup page ──────────────────────────────────────────────────────────────── */
+.setup-section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.setup-tabs{display:flex;gap:0;margin-bottom:12px}
+.setup-tab{padding:7px 18px;font-size:13px;font-weight:500;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);cursor:pointer;transition:all 0.15s}
+.setup-tab:first-child{border-radius:var(--radius) 0 0 var(--radius)}
+.setup-tab:last-child{border-radius:0 var(--radius) var(--radius) 0}
+.setup-tab:not(:first-child){border-left:none}
+.setup-tab:hover{color:var(--text)}
+.setup-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.setup-tab-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;margin-left:6px;background:rgba(255,255,255,0.25);border-radius:9px;font-size:10px;padding:0 4px}
+.setup-tab:not(.active) .setup-tab-count{background:var(--bg-3);color:var(--text-3)}
+.setup-add-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.setup-catalog-list{max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-2)}
+.setup-catalog-item{display:flex;align-items:center;padding:7px 10px;border-bottom:1px solid var(--border);gap:8px}
+.setup-catalog-item:last-child{border-bottom:none}
+.setup-catalog-name{flex:1;font-size:13px;color:var(--text)}
+.setup-catalog-group{font-size:11px;color:var(--text-3);font-family:var(--mono)}
+.setup-remove-btn{padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--text-3);cursor:pointer;font-size:12px;transition:all 0.15s;flex-shrink:0}
+.setup-remove-btn:hover{border-color:var(--red);color:var(--red);background:var(--red-bg)}
+.setup-msg{font-size:12px;color:var(--accent);padding:6px 0}
+.setup-users-grid{margin-bottom:8px}
+.setup-permissions-legend{margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:5px}
+.setup-perm-row{display:flex;align-items:center;gap:8px;font-size:12px}
+
+/* ── Danger button ───────────────────────────────────────────────────────────── */
+.btn-danger{padding:7px 16px;background:var(--red-bg);border:1px solid var(--red);border-radius:var(--radius);font-size:13px;font-weight:500;color:var(--red);cursor:pointer;transition:all 0.15s}
+.btn-danger:hover:not(:disabled){background:var(--red);color:#fff}
+.btn-danger:disabled{opacity:0.4;cursor:not-allowed}
+
+/* ── Force refresh cache block (Explorer) ────────────────────────────────────── */
+.force-refresh-card{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-top:12px;margin-bottom:4px}
+.force-refresh-label{font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:8px}
+.force-refresh-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}

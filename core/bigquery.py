@@ -310,3 +310,135 @@ def get_results(job_id: str) -> list[dict]:
         f"SELECT * FROM `{table_ref(BQ_RESULTS_TABLE)}` WHERE job_id = @job_id ORDER BY processed_at DESC",
         job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("job_id", "STRING", job_id)])
     ).result()]
+
+
+# ── App Settings ──────────────────────────────────────────────────────────────
+
+_SETTINGS_SCHEMA = [
+    bigquery.SchemaField("key", "STRING"),
+    bigquery.SchemaField("value", "STRING"),
+    bigquery.SchemaField("updated_at", "TIMESTAMP"),
+]
+
+_settings_cache: dict[str, str] = {}
+_settings_cached_at: float = 0
+_SETTINGS_TTL = 30  # seconds in-memory cache
+
+
+def _ensure_settings_table():
+    bq = client()
+    tbl = bigquery.Table(table_ref("app_settings"), schema=_SETTINGS_SCHEMA)
+    try:
+        bq.get_table(tbl)
+    except Exception:
+        bq.create_table(tbl)
+        logger.info("Created table app_settings")
+
+
+def get_setting(key: str, default: str = "") -> str:
+    global _settings_cache, _settings_cached_at
+    now = time.time()
+    if now - _settings_cached_at < _SETTINGS_TTL and key in _settings_cache:
+        return _settings_cache[key]
+    try:
+        bq = client()
+        rows = list(bq.query(
+            f"SELECT key, value FROM `{table_ref('app_settings')}`"
+        ).result())
+        _settings_cache = {r["key"]: r["value"] for r in rows}
+        _settings_cached_at = now
+        return _settings_cache.get(key, default)
+    except Exception:
+        return _settings_cache.get(key, default)
+
+
+def set_setting(key: str, value: str):
+    global _settings_cache, _settings_cached_at
+    _ensure_settings_table()
+    bq = client()
+    bq.query(
+        f"DELETE FROM `{table_ref('app_settings')}` WHERE key = @key",
+        job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("key", "STRING", key)])
+    ).result()
+    errors = bq.insert_rows_json(table_ref("app_settings"), [{
+        "key": key, "value": value,
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }])
+    if errors:
+        logger.error(f"set_setting errors: {errors}")
+    _settings_cache[key] = value
+    _settings_cached_at = 0  # invalidate cache
+
+
+def get_cache_ttl() -> int:
+    """Returns cache TTL in days (default 90)."""
+    return int(get_setting("cache_ttl_days", "90"))
+
+
+# ── App Users ─────────────────────────────────────────────────────────────────
+
+_USERS_SCHEMA = [
+    bigquery.SchemaField("username", "STRING"),
+    bigquery.SchemaField("password", "STRING"),
+    bigquery.SchemaField("permissions", "STRING"),
+    bigquery.SchemaField("created_at", "TIMESTAMP"),
+]
+
+
+def _ensure_users_table():
+    bq = client()
+    tbl = bigquery.Table(table_ref("app_users"), schema=_USERS_SCHEMA)
+    try:
+        bq.get_table(tbl)
+    except Exception:
+        bq.create_table(tbl)
+        logger.info("Created table app_users")
+
+
+def get_users() -> list[dict]:
+    try:
+        bq = client()
+        rows = list(bq.query(
+            f"SELECT username, permissions, created_at FROM `{table_ref('app_users')}` ORDER BY created_at"
+        ).result())
+        return [{"username": r["username"], "permissions": r["permissions"],
+                 "created_at": str(r["created_at"])} for r in rows]
+    except Exception as e:
+        logger.error(f"get_users error: {e}")
+        return []
+
+
+def get_bq_users_for_auth() -> dict[str, str]:
+    """Returns {username: password} for auth middleware."""
+    try:
+        bq = client()
+        rows = list(bq.query(
+            f"SELECT username, password FROM `{table_ref('app_users')}`"
+        ).result())
+        return {r["username"]: r["password"] for r in rows}
+    except Exception:
+        return {}
+
+
+def add_user(username: str, password: str, permissions: str):
+    _ensure_users_table()
+    bq = client()
+    bq.query(
+        f"DELETE FROM `{table_ref('app_users')}` WHERE username = @u",
+        job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("u", "STRING", username)])
+    ).result()
+    errors = bq.insert_rows_json(table_ref("app_users"), [{
+        "username": username, "password": password,
+        "permissions": permissions,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }])
+    if errors:
+        logger.error(f"add_user errors: {errors}")
+
+
+def remove_user(username: str):
+    bq = client()
+    bq.query(
+        f"DELETE FROM `{table_ref('app_users')}` WHERE username = @u",
+        job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("u", "STRING", username)])
+    ).result()
