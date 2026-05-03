@@ -1,6 +1,4 @@
-// Dashboard.tsx — Charts reacting to Explorer filters
-// Row 1: Country Map | Traffic Groups | CMS | EMS | Onsite Search
-// Row 2: Category SW | Subcategory SW
+// Dashboard.tsx — Charts reacting to Explorer filters, all clickable → filter
 import { useMemo } from "react"
 
 interface Profile {
@@ -8,7 +6,7 @@ interface Profile {
   sw_primary_region?: string; cms_list?: string; ems_list?: string; osearch?: string
 }
 
-const TRAFFIC_GROUPS = [
+export const TRAFFIC_GROUPS = [
   { label: "SuperVIP >25M", min: 25_000_000, color: "#6366f1" },
   { label: "VIP >5M",       min: 5_000_000,  color: "#818cf8" },
   { label: "Large >2.5M",   min: 2_500_000,  color: "#22c55e" },
@@ -40,7 +38,11 @@ function topN(map: Map<string, number>, n: number): Slice[] {
   return top
 }
 
-function Donut({ data, title }: { data: Slice[]; title: string }) {
+type OnFilter = (field: string, label: string) => void
+
+function Donut({ data, title, field, onFilter }: {
+  data: Slice[]; title: string; field?: string; onFilter?: OnFilter
+}) {
   const total = data.reduce((s, d) => s + d.count, 0)
   if (!total) return null
   const sz = 120, cx = 60, cy = 60, r = 44, ir = 26
@@ -58,14 +60,24 @@ function Donut({ data, title }: { data: Slice[]; title: string }) {
     start = end
     return s
   })
+
+  const clickable = !!field && !!onFilter
+  const handleClick = (label: string) => {
+    if (clickable && label !== "Інші") onFilter!(field!, label)
+  }
+
   return (
     <div className="dash-chart">
-      <div className="dash-chart-title">{title}</div>
+      <div className="dash-chart-title">{title}{clickable && <span className="dash-filter-hint"> ↗ фільтр</span>}</div>
       <div className="dash-chart-body">
         <svg width={sz} height={sz} style={{ flexShrink: 0 }}>
           {slices.map((s, i) => (
-            <path key={i} d={s.d} fill={s.color} stroke="var(--bg)" strokeWidth={1.5}>
-              <title>{s.label}: {s.count.toLocaleString()} ({(s.pct * 100).toFixed(1)}%)</title>
+            <path key={i} d={s.d} fill={s.color} stroke="var(--bg)" strokeWidth={1.5}
+              style={{ cursor: clickable && s.label !== "Інші" ? "pointer" : "default", transition: "opacity 0.15s" }}
+              onClick={() => handleClick(s.label)}
+              onMouseEnter={e => { if (clickable && s.label !== "Інші") (e.target as SVGPathElement).style.opacity = "0.75" }}
+              onMouseLeave={e => { (e.target as SVGPathElement).style.opacity = "1" }}>
+              <title>{s.label}: {s.count.toLocaleString()} ({(s.pct * 100).toFixed(1)}%){clickable && s.label !== "Інші" ? " — натисніть для фільтру" : ""}</title>
             </path>
           ))}
           <text x={cx} y={cy - 4} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--text)">{total.toLocaleString()}</text>
@@ -74,7 +86,8 @@ function Donut({ data, title }: { data: Slice[]; title: string }) {
         <table className="dash-legend-table">
           <tbody>
             {data.map((item, i) => (
-              <tr key={i} className="dash-legend-row">
+              <tr key={i} className={`dash-legend-row${clickable && item.label !== "Інші" ? " dash-row-clickable" : ""}`}
+                onClick={() => handleClick(item.label)}>
                 <td style={{width:14,paddingRight:4,verticalAlign:"middle"}}><span className="dash-legend-dot" style={{ background: item.color }} /></td>
                 <td className="dash-legend-label">{item.label}</td>
                 <td className="dash-legend-sep">–</td>
@@ -89,31 +102,36 @@ function Donut({ data, title }: { data: Slice[]; title: string }) {
   )
 }
 
-function CountryBars({ data }: { data: Slice[] }) {
+function CountryBars({ data, onFilter }: { data: Slice[]; onFilter?: OnFilter }) {
   if (!data.length) return null
   const max = data[0]?.count || 1
   const total = data.reduce((s, d) => s + d.count, 0)
   return (
     <div className="dash-chart">
-      <div className="dash-chart-title">Country Map</div>
+      <div className="dash-chart-title">Country Map{onFilter && <span className="dash-filter-hint"> ↗ фільтр</span>}</div>
       <div className="dash-country-list">
-        {data.slice(0, 12).map((item, i) => (
-          <div key={i} className="dash-country-row">
-            <span className="dash-country-flag">{flag(item.label)}</span>
-            <span className="dash-country-code">{item.label}</span>
-            <div className="dash-country-bar-wrap">
-              <div className="dash-country-bar" style={{ width: `${(item.count / max) * 100}%`, background: item.color }} />
+        {data.slice(0, 12).map((item, i) => {
+          const clickable = !!onFilter && item.label !== "(без регіону)"
+          return (
+            <div key={i} className={`dash-country-row${clickable ? " dash-row-clickable" : ""}`}
+              onClick={() => clickable && onFilter!("sw_primary_region", item.label)}
+              title={clickable ? "Натисніть для фільтру" : undefined}>
+              <span className="dash-country-flag">{flag(item.label)}</span>
+              <span className="dash-country-code">{item.label}</span>
+              <div className="dash-country-bar-wrap">
+                <div className="dash-country-bar" style={{ width: `${(item.count / max) * 100}%`, background: item.color }} />
+              </div>
+              <span className="dash-country-count">{item.count.toLocaleString()}</span>
+              <span className="dash-country-pct">{((item.count / total) * 100).toFixed(1)}%</span>
             </div>
-            <span className="dash-country-count">{item.count.toLocaleString()}</span>
-            <span className="dash-country-pct">{((item.count / total) * 100).toFixed(1)}%</span>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
 }
 
-export default function Dashboard({ profiles }: { profiles: Profile[] }) {
+export default function Dashboard({ profiles, onFilter }: { profiles: Profile[]; onFilter?: OnFilter }) {
   const charts = useMemo(() => {
     const trafficMap = new Map<string, number>()
     TRAFFIC_GROUPS.forEach(g => trafficMap.set(g.label, 0))
@@ -158,18 +176,16 @@ export default function Dashboard({ profiles }: { profiles: Profile[] }) {
 
   return (
     <div>
-      {/* Row 1: Traffic Groups | CMS | EMS | Onsite Search — 4 per row */}
       <div className="dashboard dashboard-4">
-        <Donut data={charts.trafficData} title="Traffic Groups" />
-        <Donut data={charts.cmsData}     title="CMS" />
-        <Donut data={charts.emsData}     title="EMS" />
-        <Donut data={charts.searchData}  title="Onsite Search" />
+        <Donut data={charts.trafficData} title="Traffic Groups" field="sw_visits"   onFilter={onFilter} />
+        <Donut data={charts.cmsData}     title="CMS"            field="cms_list"    onFilter={onFilter} />
+        <Donut data={charts.emsData}     title="EMS"            field="ems_list"    onFilter={onFilter} />
+        <Donut data={charts.searchData}  title="Onsite Search"  field="osearch"     onFilter={onFilter} />
       </div>
-      {/* Row 2: Country Map | Category SW | Subcategory SW | (empty) */}
       <div className="dashboard dashboard-4">
-        <CountryBars data={charts.countryData} />
-        <Donut data={charts.catData} title="Category SW" />
-        <Donut data={charts.subData} title="Subcategory SW" />
+        <CountryBars data={charts.countryData} onFilter={onFilter} />
+        <Donut data={charts.catData} title="Category SW" field="sw_category" onFilter={onFilter} />
+        <Donut data={charts.subData} title="Subcategory SW" /> {/* not in FilterState */}
       </div>
     </div>
   )

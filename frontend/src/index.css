@@ -383,6 +383,12 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .dash-legend-row .dash-legend-sep{color:var(--text-3);padding:2px 2px;font-size:10px}
 .dash-legend-row .dash-legend-count{font-family:var(--mono);font-size:10px;color:var(--text-3);white-space:nowrap;text-align:right}
 .dash-legend-row .dash-legend-pct{font-size:10px;color:var(--text-3);white-space:nowrap;min-width:38px;text-align:right}
+.dash-row-clickable{cursor:pointer;transition:background 0.1s}
+.dash-row-clickable:hover{background:var(--accent-bg)}
+.dash-row-clickable:hover .dash-legend-label{color:var(--accent)}
+.dash-country-row.dash-row-clickable:hover{background:var(--accent-bg);border-radius:4px}
+.dash-country-row.dash-row-clickable:hover .dash-country-code{color:var(--accent)}
+.dash-filter-hint{font-size:9px;color:var(--accent);font-weight:400;text-transform:none;letter-spacing:0;margin-left:4px;opacity:0.7}
 
 /* ── Setup page ──────────────────────────────────────────────────────────────── */
 .setup-section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}

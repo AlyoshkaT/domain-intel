@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import Dashboard from "./Dashboard"
+import Dashboard, { TRAFFIC_GROUPS } from "./Dashboard"
 
 const API = ""
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -19,7 +19,7 @@ interface NumFilter   { type: NumFilterType;   value: string; min: string; max: 
 interface MultiFilter { type: MultiFilterType; selected: string[]; search: string }
 
 type FilterState = {
-  domain: TextFilter; cms_list: MultiFilter; wcms_name: MultiFilter
+  domain: TextFilter; cms_list: MultiFilter
   osearch: MultiFilter; ems_list: MultiFilter; ai_category: MultiFilter
   ai_is_ecommerce: MultiFilter; sw_category: MultiFilter; sw_primary_region: MultiFilter
   sw_visits: NumFilter; sw_primary_region_pct: NumFilter
@@ -29,13 +29,13 @@ const defaultText  = (): TextFilter  => ({ type: "all", value: "", selected: [] 
 const defaultNum   = (): NumFilter   => ({ type: "all", value: "", min: "", max: "" })
 const defaultMulti = (): MultiFilter => ({ type: "all", selected: [], search: "" })
 const defaultFilters = (): FilterState => ({
-  domain: defaultText(), cms_list: defaultMulti(), wcms_name: defaultMulti(),
+  domain: defaultText(), cms_list: defaultMulti(),
   osearch: defaultMulti(), ems_list: defaultMulti(), ai_category: defaultMulti(),
   ai_is_ecommerce: defaultMulti(), sw_category: defaultMulti(), sw_primary_region: defaultMulti(),
   sw_visits: defaultNum(), sw_primary_region_pct: defaultNum(),
 })
 
-const MULTI_FIELDS = ["cms_list","wcms_name","osearch","ems_list","ai_category","ai_is_ecommerce","sw_category","sw_primary_region"]
+const MULTI_FIELDS = ["cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","sw_category","sw_primary_region"]
 
 // ─── Domain filter with multi-select ─────────────────────────────────────────
 function DomainFilter({ filter, allValues, onChange }: {
@@ -431,6 +431,41 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
   const toggleRefreshService = (s: string) =>
     setRefreshServices(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s])
 
+  // ─── Dashboard → filter ───────────────────────────────────────────────────
+  const handleDashboardFilter = useCallback((field: string, label: string) => {
+    const next = { ...filters }
+
+    if (field === "sw_visits") {
+      // Traffic groups → numeric filter
+      if (label === "(порожнє)") return
+      const group = TRAFFIC_GROUPS.find(g => g.label === label)
+      if (!group) return
+      const idx = TRAFFIC_GROUPS.indexOf(group)
+      const nextGroup = TRAFFIC_GROUPS[idx - 1] // higher threshold group
+      if (label === "Nano <10k") {
+        next.sw_visits = { type: "lt", value: "10000", min: "", max: "" }
+      } else if (!nextGroup) {
+        next.sw_visits = { type: "gt", value: String(group.min), min: "", max: "" }
+      } else {
+        next.sw_visits = { type: "between", value: "", min: String(group.min), max: String(nextGroup.min) }
+      }
+    } else if (label === "(порожнє)") {
+      const cur = next[field as keyof FilterState] as MultiFilter
+      next[field as keyof FilterState] = { ...cur, type: "empty", selected: [] } as any
+    } else {
+      // Multi-select toggle
+      const cur = next[field as keyof FilterState] as MultiFilter
+      const sel = cur.selected.includes(label)
+        ? cur.selected.filter(s => s !== label)
+        : [...cur.selected, label]
+      next[field as keyof FilterState] = { ...cur, selected: sel, type: sel.length > 0 ? "in" : "all" } as any
+    }
+
+    setFilters(next)
+    setOffset(0)
+    doSearch(next, 0)
+  }, [filters, doSearch])
+
   const handleForceRefresh = async () => {
     if (!refreshServices.length || !allResults.length) return
     setRefreshing(true); setRefreshMsg("")
@@ -495,7 +530,7 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
         </div>
 
         {/* Dashboards */}
-        {allResults.length > 0 && <Dashboard profiles={allResults} />}
+        {allResults.length > 0 && <Dashboard profiles={allResults} onFilter={handleDashboardFilter} />}
 
         {/* Results header */}
         <div className="explorer-results-header" style={{ marginTop: 16 }}>
