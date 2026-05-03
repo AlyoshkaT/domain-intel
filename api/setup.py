@@ -143,10 +143,4 @@ async def clear_job_history():
     bq.query(
         f"DELETE FROM `{table_ref('analysis_jobs')}` WHERE status NOT IN ('running','pending')"
     ).result()
-    bq.query(
-        f"""DELETE FROM `{table_ref('analysis_results')}` ar
-            WHERE NOT EXISTS (
-                SELECT 1 FROM `{table_ref('analysis_jobs')}` j WHERE j.job_id = ar.job_id
-            )"""
-    ).result()
     return {"ok": True}

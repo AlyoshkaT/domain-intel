@@ -464,7 +464,6 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
             { label: "З CMS",      value: stats.with_cms },
             { label: "З EMS",      value: stats.with_ems },
             { label: "З AI",       value: stats.with_ai },
-            { label: "Job-ів",     value: stats.total_jobs },
           ].map(s => (
             <div key={s.label} className="stat-card">
               <div className="stat-label">{s.label}</div>
