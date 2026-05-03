@@ -457,7 +457,7 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
 
       <main className="explorer-main">
         {/* Stats + Force Refresh */}
-        <div style={{ display: "flex", alignItems: "stretch", gap: 10, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "stretch", gap: 8, marginBottom: 12 }}>
           <div className="stats-grid" style={{ flex: 1, margin: 0 }}>
             {[
               { label: "Доменів",    value: stats.total_domains },
@@ -473,21 +473,23 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
             ))}
           </div>
           {allResults.length > 0 && (
-            <div className="force-refresh-card">
-              <span className="force-refresh-label">↻ КЕШ:</span>
-              <div className="gran-btns">
-                {[{id:"builtwith",label:"BW"},{id:"similarweb",label:"SW"},{id:"ai",label:"AI"}].map(s => (
-                  <button key={s.id}
-                    className={`gran-btn${refreshServices.includes(s.id) ? " active" : ""}`}
-                    onClick={() => toggleRefreshService(s.id)}>{s.label}</button>
-                ))}
+            <div className="stat-card force-refresh-card">
+              <div className="stat-label">↻ Оновити КЕШ</div>
+              <div className="force-refresh-row">
+                <div className="gran-btns">
+                  {[{id:"builtwith",label:"BW"},{id:"similarweb",label:"SW"},{id:"ai",label:"AI"}].map(s => (
+                    <button key={s.id}
+                      className={`gran-btn${refreshServices.includes(s.id) ? " active" : ""}`}
+                      onClick={() => toggleRefreshService(s.id)}>{s.label}</button>
+                  ))}
+                </div>
+                <button className="btn-export"
+                  onClick={handleForceRefresh}
+                  disabled={refreshing || refreshServices.length === 0}>
+                  {refreshing ? "⏳" : "↻"} {allResults.length.toLocaleString()}
+                </button>
               </div>
-              <button className="btn-export"
-                onClick={handleForceRefresh}
-                disabled={refreshing || refreshServices.length === 0}>
-                {refreshing ? "⏳" : "↻"} {allResults.length.toLocaleString()}
-              </button>
-              {refreshMsg && <div className="setup-msg" style={{ fontSize: 10 }}>{refreshMsg}</div>}
+              {refreshMsg && <div style={{ fontSize: 10, color: "var(--accent)", marginTop: 2 }}>{refreshMsg}</div>}
             </div>
           )}
         </div>

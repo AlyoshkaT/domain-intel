@@ -414,8 +414,8 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .btn-danger:disabled{opacity:0.4;cursor:not-allowed}
 
 /* ── Force refresh cache card (Explorer top-right) ───────────────────────────── */
-.force-refresh-card{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:8px 12px;flex-shrink:0;display:flex;flex-direction:row;align-items:center;gap:8px;box-shadow:var(--shadow);white-space:nowrap}
-.force-refresh-label{font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em;flex-shrink:0}
+.force-refresh-card{flex-shrink:0;min-width:220px;display:flex;flex-direction:column;justify-content:space-between}
+.force-refresh-row{display:flex;align-items:center;gap:6px;margin-top:4px}
 
 /* ── Technologies legend + chart interaction ─────────────────────────────────── */
 .tech-legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:12px}
