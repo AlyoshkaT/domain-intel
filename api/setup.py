@@ -47,8 +47,11 @@ async def add_catalog_entry(entry: CatalogEntry):
 
 @router.delete("/catalog")
 async def remove_catalog_entry(sheet: str, technology: str):
+    from config.settings import GOOGLE_SHEETS_CATALOG_ID
     from core.bigquery import client, table_ref
     from google.cloud import bigquery
+
+    # 1. Delete from BQ
     bq = client()
     bq.query(
         f"DELETE FROM `{table_ref('technology_catalog')}` WHERE sheet = @s AND technology = @t",
@@ -57,6 +60,30 @@ async def remove_catalog_entry(sheet: str, technology: str):
             bigquery.ScalarQueryParameter("t", "STRING", technology),
         ])
     ).result()
+
+    # 2. Delete from GSheet (find row and clear it)
+    if GOOGLE_SHEETS_CATALOG_ID:
+        try:
+            from services.sheets_client import sheets_client
+            tab_map = {"cms": "CMS", "osearch": "OSearch", "ems": "EMS"}
+            tab = tab_map.get(sheet)
+            if tab:
+                sh = sheets_client(write=True).spreadsheets()
+                values = sh.values().get(
+                    spreadsheetId=GOOGLE_SHEETS_CATALOG_ID,
+                    range=f"{tab}!A:A"
+                ).execute().get("values", [])
+                for i, row in enumerate(values):
+                    if row and row[0].strip().lower() == technology.strip().lower():
+                        sh.values().clear(
+                            spreadsheetId=GOOGLE_SHEETS_CATALOG_ID,
+                            range=f"{tab}!A{i+1}:B{i+1}"
+                        ).execute()
+                        break
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"GSheet delete warning: {e}")
+
     return {"ok": True}
 
 
