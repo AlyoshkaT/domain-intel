@@ -27,6 +27,11 @@ _search_cache: dict[str, dict] = {}
 _SEARCH_CACHE_TTL = 300
 _SEARCH_CACHE_MAX = 30
 
+# Cache for full profiles list (for in-memory client filtering)
+_profiles_cache: list = []
+_profiles_cache_ts: float = 0
+_PROFILES_CACHE_TTL = 300  # 5 min
+
 
 def _make_cache_key(body: dict) -> str:
     """Stable hash of request body for cache keying."""
@@ -88,6 +93,41 @@ def _build_where(filters: dict) -> tuple[str, list]:
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     return where, params
+
+
+@router.get("/profiles")
+async def get_all_profiles():
+    """Return ALL profiles for client-side in-memory filtering.
+    Cached in Python memory for 5 min to avoid repeated BQ scans."""
+    global _profiles_cache, _profiles_cache_ts
+    now = time.time()
+    if _profiles_cache and (now - _profiles_cache_ts) < _PROFILES_CACHE_TTL:
+        return {"profiles": _profiles_cache, "total": len(_profiles_cache)}
+    try:
+        bq_client = client()
+        rows = list(bq_client.query(f"""
+            SELECT domain, sw_visits, cms_list, osearch, osearch_group,
+                   ems_list, ai_category, ai_is_ecommerce, ai_industry,
+                   sw_category, sw_subcategory, sw_description, sw_title,
+                   company_name, sw_primary_region, sw_primary_region_pct
+            FROM `{table_ref(PROFILES_TABLE)}`
+            ORDER BY sw_visits DESC NULLS LAST
+        """).result())
+        _profiles_cache = [
+            {k: (float(v) if hasattr(v, 'is_integer') else v)
+             for k, v in dict(r).items()}
+            for r in rows
+        ]
+        _profiles_cache_ts = now
+        return {"profiles": _profiles_cache, "total": len(_profiles_cache)}
+    except Exception as e:
+        return {"profiles": [], "total": 0, "error": str(e)}
+
+
+def invalidate_profiles_cache():
+    """Call this after domain_profiles sync to force fresh load."""
+    global _profiles_cache_ts
+    _profiles_cache_ts = 0
 
 
 @router.get("/stats")
@@ -192,6 +232,7 @@ async def refresh_profiles(background_tasks: BackgroundTasks):
     def do_sync():
         from services.domain_profiles import sync_domain_profiles
         sync_domain_profiles()
+        invalidate_profiles_cache()  # force fresh load after sync
 
     background_tasks.add_task(do_sync)
     return {"status": "sync_started"}

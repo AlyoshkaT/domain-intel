@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import Dashboard, { TRAFFIC_GROUPS } from "./Dashboard"
 
 const API = ""
@@ -36,6 +36,66 @@ const defaultFilters = (): FilterState => ({
 })
 
 const MULTI_FIELDS = ["cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","sw_category","sw_primary_region"]
+
+interface ExploreResult {
+  domain: string; sw_visits?: number; cms_list?: string; wcms_name?: string
+  osearch?: string; osearch_group?: string; ems_list?: string; ai_category?: string; ai_is_ecommerce?: string
+  ai_industry?: string; sw_category?: string; sw_subcategory?: string
+  sw_description?: string; sw_title?: string; company_name?: string
+  sw_primary_region?: string; sw_primary_region_pct?: number
+}
+
+// ─── Module-level profile cache (survives component re-mounts / navigation) ──
+let _cachedProfiles: ExploreResult[] | null = null
+let _cachedProfilesTs = 0
+const PROFILES_CACHE_TTL = 5 * 60 * 1000 // 5 min client-side cache
+
+// ─── In-memory filter (mirrors BQ WHERE logic) ────────────────────────────────
+function filterProfiles(f: FilterState, profiles: ExploreResult[]): ExploreResult[] {
+  return profiles.filter(p => {
+    // Domain
+    const dom = p.domain || ""
+    if (f.domain.type === "in" && f.domain.selected.length > 0) {
+      if (!f.domain.selected.includes(dom)) return false
+    } else if (f.domain.type === "contains" && f.domain.value) {
+      if (!dom.toLowerCase().includes(f.domain.value.toLowerCase())) return false
+    } else if (f.domain.type === "not_contains" && f.domain.value) {
+      if (dom.toLowerCase().includes(f.domain.value.toLowerCase())) return false
+    } else if (f.domain.type === "empty") { if (dom) return false
+    } else if (f.domain.type === "not_empty") { if (!dom) return false }
+
+    // Multi fields
+    for (const field of MULTI_FIELDS) {
+      const flt = f[field as keyof FilterState] as MultiFilter
+      if (flt.type === "all") continue
+      const val = String((p as any)[field] ?? "").trim()
+      if (flt.type === "empty") { if (val) return false }
+      else if (flt.type === "not_empty") { if (!val) return false }
+      else if (flt.type === "in" && flt.selected.length > 0) { if (!flt.selected.includes(val)) return false }
+      else if (flt.type === "not_in" && flt.selected.length > 0) { if (flt.selected.includes(val)) return false }
+    }
+
+    // sw_visits
+    const vis = p.sw_visits
+    const fv = f.sw_visits
+    if (fv.type === "gt" && fv.value) { if (vis == null || vis <= parseFloat(fv.value)) return false }
+    else if (fv.type === "lt" && fv.value) { if (vis == null || vis >= parseFloat(fv.value)) return false }
+    else if (fv.type === "between" && fv.min && fv.max) {
+      if (vis == null || vis < parseFloat(fv.min) || vis > parseFloat(fv.max)) return false
+    }
+
+    // sw_primary_region_pct
+    const pct = p.sw_primary_region_pct
+    const fp = f.sw_primary_region_pct
+    if (fp.type === "gt" && fp.value) { if (pct == null || pct <= parseFloat(fp.value)) return false }
+    else if (fp.type === "lt" && fp.value) { if (pct == null || pct >= parseFloat(fp.value)) return false }
+    else if (fp.type === "between" && fp.min && fp.max) {
+      if (pct == null || pct < parseFloat(fp.min) || pct > parseFloat(fp.max)) return false
+    }
+
+    return true
+  })
+}
 
 // ─── Domain filter with multi-select ─────────────────────────────────────────
 function DomainFilter({ filter, allValues, onChange }: {
@@ -280,7 +340,7 @@ function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, active
       ))}
       <button className="btn-primary explorer-search-btn" onClick={onSearch} disabled={loading}>
         {loading ? <span className="spinner" /> : "🔍"}
-        {loading ? "Пошук..." : "Застосувати"}
+        {loading ? "Завантаження..." : "Застосувати"}
         {activeCount > 0 && <span className="flt-count-badge">{activeCount}</span>}
       </button>
     </div>
@@ -289,130 +349,99 @@ function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, active
 
 function cell(v?: string | null) { return v && v.trim() ? v : "—" }
 
-interface ExploreResult {
-  domain: string; sw_visits?: number; cms_list?: string; wcms_name?: string
-  osearch?: string; ems_list?: string; ai_category?: string; ai_is_ecommerce?: string
-  ai_industry?: string; sw_category?: string; sw_subcategory?: string
-  sw_description?: string; sw_title?: string; company_name?: string
-  sw_primary_region?: string; sw_primary_region_pct?: number
-}
-
 // ─── Main Explorer ─────────────────────────────────────────────────────────────
-export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: { onViewTechnologies?: (domains: string[]) => void; onNavigateToJobs?: () => void }) {
+export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
+  onViewTechnologies?: (domains: string[]) => void; onNavigateToJobs?: () => void
+}) {
   const [filters, setFilters] = useState<FilterState>(defaultFilters())
-  const [fieldValues, setFieldValues] = useState<Record<string, FilterValue[]>>({})
-  const [allResults, setAllResults] = useState<ExploreResult[]>([])
-  const [results, setResults] = useState<ExploreResult[]>([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(false)
-  const [stats, setStats] = useState<any>({})
+  const [allProfiles, setAllProfiles] = useState<ExploreResult[]>(_cachedProfiles || [])
+  const [filteredProfiles, setFilteredProfiles] = useState<ExploreResult[]>(_cachedProfiles || [])
+  const [loading, setLoading] = useState(!_cachedProfiles)
   const [offset, setOffset] = useState(0)
   const [jumpPage, setJumpPage] = useState("")
   const PAGE = 100
 
-  // All profiles in memory for reactive filter counting
-  const [baseProfiles, setBaseProfiles] = useState<ExploreResult[]>([])
+  // ── Stats computed directly from loaded profiles (no extra BQ query) ────────
+  const stats = useMemo(() => ({
+    total_domains: allProfiles.length,
+    with_traffic:  allProfiles.filter(p => p.sw_visits && p.sw_visits > 0).length,
+    with_cms:      allProfiles.filter(p => p.cms_list).length,
+    with_ems:      allProfiles.filter(p => p.ems_list).length,
+    with_ai:       allProfiles.filter(p => p.ai_category).length,
+  }), [allProfiles])
 
-  // Compute available filter values from currently filtered profiles
-  const computeFieldValues = useCallback((filtered: ExploreResult[]) => {
-    const counts: Record<string, Map<string, number>> = {}
+  // ── Field values for filter dropdowns (cascading — from current filtered set)
+  const fieldValues = useMemo(() => {
     const fields = [...MULTI_FIELDS, "domain"]
+    const counts: Record<string, Map<string, number>> = {}
     fields.forEach(f => { counts[f] = new Map() })
-
-    for (const p of filtered) {
+    for (const p of filteredProfiles) {
       for (const field of fields) {
         const val = (p as any)[field]
-        if (val && String(val).trim()) {
+        if (val && String(val).trim())
           counts[field].set(String(val), (counts[field].get(String(val)) || 0) + 1)
-        }
       }
     }
+    const result: Record<string, FilterValue[]> = {}
+    for (const field of fields)
+      result[field] = [...counts[field].entries()].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, count }))
+    return result
+  }, [filteredProfiles])
 
-    const newValues: Record<string, FilterValue[]> = {}
-    for (const field of fields) {
-      newValues[field] = [...counts[field].entries()]
-        .sort((a, b) => b[1] - a[1])
-        .map(([value, count]) => ({ value, count }))
+  // ── Load all profiles once → everything is in-memory after that ─────────────
+  const loadProfiles = useCallback(async () => {
+    const now = Date.now()
+    if (_cachedProfiles && now - _cachedProfilesTs < PROFILES_CACHE_TTL) {
+      setAllProfiles(_cachedProfiles); setFilteredProfiles(_cachedProfiles); setLoading(false); return
     }
-    setFieldValues(newValues)
-  }, [])
-
-  useEffect(() => {
-    apiFetch("/api/explore/stats").then(setStats).catch(() => {})
-    doSearch(defaultFilters(), 0)
-  }, [])
-
-  // Recompute filter values when allResults change (reactive)
-  useEffect(() => {
-    if (allResults.length > 0) {
-      computeFieldValues(allResults)
-      if (baseProfiles.length === 0) setBaseProfiles(allResults)
-    }
-  }, [allResults])
-
-  const buildPayload = (f: FilterState, off: number, limit = PAGE) => {
-    const af: any = {}
-    // Domain
-    if (f.domain.type === "in" && f.domain.selected.length > 0)
-      af.domain = { type: "in", values: f.domain.selected }
-    else if ((f.domain.type === "contains" || f.domain.type === "not_contains") && f.domain.value)
-      af.domain = { type: f.domain.type, value: f.domain.value }
-    else if (f.domain.type === "empty" || f.domain.type === "not_empty")
-      af.domain = { type: f.domain.type }
-    // Multi
-    for (const field of MULTI_FIELDS) {
-      const flt = f[field as keyof FilterState] as MultiFilter
-      if (flt.type === "empty" || flt.type === "not_empty") af[field] = { type: flt.type }
-      else if ((flt.type === "in" || flt.type === "not_in") && flt.selected.length > 0)
-        af[field] = { type: flt.type, values: flt.selected }
-    }
-    // Numeric
-    for (const field of ["sw_visits", "sw_primary_region_pct"] as (keyof FilterState)[]) {
-      const flt = f[field] as NumFilter
-      if (flt.type === "gt" && flt.value) af[field] = { type: "gt", value: parseFloat(flt.value) }
-      else if (flt.type === "lt" && flt.value) af[field] = { type: "lt", value: parseFloat(flt.value) }
-      else if (flt.type === "between" && flt.min && flt.max)
-        af[field] = { type: "between", min: parseFloat(flt.min), max: parseFloat(flt.max) }
-    }
-    return { filters: af, limit, offset: off }
-  }
-
-  const doSearch = async (f: FilterState, off: number) => {
     setLoading(true)
     try {
-      const [allData, pageData] = await Promise.all([
-        apiFetch("/api/explore/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildPayload(f, 0, 200000)) }),
-        apiFetch("/api/explore/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildPayload(f, off, PAGE)) }),
-      ])
-      setAllResults(allData.results || [])
-      setResults(pageData.results || [])
-      setTotal(pageData.total || 0)
-    } catch { setAllResults([]); setResults([]); setTotal(0) }
+      const data = await apiFetch("/api/explore/profiles")
+      const profiles: ExploreResult[] = data.profiles || []
+      _cachedProfiles = profiles; _cachedProfilesTs = Date.now()
+      setAllProfiles(profiles); setFilteredProfiles(profiles)
+    } catch (e) { console.error("Failed to load profiles", e) }
     finally { setLoading(false) }
-  }
+  }, [])
 
-  const handleSearch = () => { setOffset(0); doSearch(filters, 0) }
-  const handlePrev = () => { const o = Math.max(0, offset - PAGE); setOffset(o); doSearch(filters, o) }
-  const handleNext = () => { const o = offset + PAGE; setOffset(o); doSearch(filters, o) }
+  useEffect(() => { loadProfiles() }, [loadProfiles])
+
+  // ── Apply filters in-memory (instant, no BQ) ─────────────────────────────
+  const applyFilters = useCallback((f: FilterState, profiles: ExploreResult[]) => {
+    setFilteredProfiles(filterProfiles(f, profiles))
+    setOffset(0)
+  }, [])
+
+  const handleSearch = () => applyFilters(filters, allProfiles)
+
+  // ── Pagination — pure in-memory slice ─────────────────────────────────────
+  const total = filteredProfiles.length
+  const pageResults = useMemo(() => filteredProfiles.slice(offset, offset + PAGE), [filteredProfiles, offset])
+  const handlePrev = () => setOffset(o => Math.max(0, o - PAGE))
+  const handleNext = () => setOffset(o => o + PAGE)
   const handleJump = () => {
     const row = parseInt(jumpPage)
-    if (!isNaN(row) && row > 0) {
-      const o = Math.floor((row - 1) / PAGE) * PAGE
-      setOffset(o); doSearch(filters, o); setJumpPage("")
-    }
+    if (!isNaN(row) && row > 0) { setOffset(Math.floor((row - 1) / PAGE) * PAGE); setJumpPage("") }
   }
 
+  // ── Export ─────────────────────────────────────────────────────────────────
   const exportCSV = () => {
-    const cols = ["domain","sw_visits","cms_list","wcms_name","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name"]
-    const rows = allResults.map(r => cols.map(h => { const v = (r as any)[h]; return v != null ? `"${String(v).replace(/"/g, '""')}"` : "" }).join(","))
+    const cols = ["domain","sw_visits","cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name"]
+    const rows = filteredProfiles.map(r => cols.map(h => {
+      const v = (r as any)[h]; return v != null ? `"${String(v).replace(/"/g, '""')}"` : ""
+    }).join(","))
     const csv = [cols.join(","), ...rows].join("\n")
-    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }))
+    const a = document.createElement("a")
+    a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }))
     a.download = `explorer_${new Date().toISOString().slice(0, 10)}.csv`; a.click()
   }
 
   const exportXLSX = async () => {
     try {
-      const res = await fetch("/api/explore/export/xlsx", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ results: allResults }) })
+      const res = await fetch("/api/explore/export/xlsx", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ results: filteredProfiles })
+      })
       if (!res.ok) throw new Error("Export failed")
       const blob = await res.blob()
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob)
@@ -428,16 +457,15 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
   const [sheetsUrl, setSheetsUrl] = useState("")
 
   const exportToSheets = async () => {
-    if (!allResults.length) return
+    if (!filteredProfiles.length) return
     setSheetsExporting(true); setSheetsUrl("")
     try {
       const label = `${total.toLocaleString()} domains`
       const res = await fetch("/api/explore/export/sheets", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ results: allResults, label })
+        body: JSON.stringify({ results: filteredProfiles, label })
       })
       if (!res.ok) throw new Error("Export failed")
-      // Poll for URL (max 45s)
       let found = false
       for (let i = 0; i < 15; i++) {
         await new Promise(r => setTimeout(r, 3000))
@@ -458,57 +486,50 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
   const toggleRefreshService = (s: string) =>
     setRefreshServices(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s])
 
-  // ─── Dashboard → filter ───────────────────────────────────────────────────
+  // ── Dashboard → filter click (instant, in-memory) ─────────────────────────
   const handleDashboardFilter = useCallback((field: string, label: string) => {
     const next = { ...filters }
-
     if (field === "sw_visits") {
-      // Traffic groups → numeric filter
       if (label === "(порожнє)") return
       const group = TRAFFIC_GROUPS.find(g => g.label === label)
       if (!group) return
       const idx = TRAFFIC_GROUPS.indexOf(group)
-      const nextGroup = TRAFFIC_GROUPS[idx - 1] // higher threshold group
-      if (label === "Nano <10k") {
-        next.sw_visits = { type: "lt", value: "10000", min: "", max: "" }
-      } else if (!nextGroup) {
-        next.sw_visits = { type: "gt", value: String(group.min), min: "", max: "" }
-      } else {
-        next.sw_visits = { type: "between", value: "", min: String(group.min), max: String(nextGroup.min) }
-      }
+      const nextGroup = TRAFFIC_GROUPS[idx - 1]
+      if (label === "Nano <10k") next.sw_visits = { type: "lt", value: "10000", min: "", max: "" }
+      else if (!nextGroup) next.sw_visits = { type: "gt", value: String(group.min), min: "", max: "" }
+      else next.sw_visits = { type: "between", value: "", min: String(group.min), max: String(nextGroup.min) }
     } else if (label === "(порожнє)") {
       const cur = next[field as keyof FilterState] as MultiFilter
       next[field as keyof FilterState] = { ...cur, type: "empty", selected: [] } as any
     } else {
-      // Multi-select toggle
       const cur = next[field as keyof FilterState] as MultiFilter
-      const sel = cur.selected.includes(label)
-        ? cur.selected.filter(s => s !== label)
-        : [...cur.selected, label]
+      const sel = cur.selected.includes(label) ? cur.selected.filter(s => s !== label) : [...cur.selected, label]
       next[field as keyof FilterState] = { ...cur, selected: sel, type: sel.length > 0 ? "in" : "all" } as any
     }
-
     setFilters(next)
-    setOffset(0)
-    doSearch(next, 0)
-  }, [filters, doSearch])
+    applyFilters(next, allProfiles)
+  }, [filters, allProfiles, applyFilters])
 
   const handleForceRefresh = async () => {
-    if (!refreshServices.length || !allResults.length) return
+    if (!refreshServices.length || !filteredProfiles.length) return
     setRefreshing(true); setRefreshMsg("")
     try {
-      const domains = allResults.map(r => r.domain).join("\n")
+      const domains = filteredProfiles.map(r => r.domain).join("\n")
       const file = new File([domains], "domains_refresh.txt", { type: "text/plain" })
       const fd = new FormData()
-      fd.append("file", file)
-      fd.append("services", JSON.stringify(refreshServices))
-      fd.append("force_refresh", "true")
+      fd.append("file", file); fd.append("services", JSON.stringify(refreshServices)); fd.append("force_refresh", "true")
       const res = await fetch("/api/jobs", { method: "POST", body: fd })
       if (!res.ok) throw new Error("Failed")
-      setRefreshMsg(`Запущено оновлення ${allResults.length.toLocaleString()} доменів (${refreshServices.join(", ")})`)
+      setRefreshMsg(`Запущено оновлення ${filteredProfiles.length.toLocaleString()} доменів (${refreshServices.join(", ")})`)
       setTimeout(() => { if (onNavigateToJobs) onNavigateToJobs() }, 1500)
     } catch { setRefreshMsg("Помилка запуску") }
     finally { setRefreshing(false) }
+  }
+
+  // ── Sync button: reload profiles from BQ ──────────────────────────────────
+  const handleSync = async () => {
+    _cachedProfiles = null; _cachedProfilesTs = 0
+    await loadProfiles()
   }
 
   return (
@@ -531,11 +552,11 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
             ].map(s => (
               <div key={s.label} className="stat-card">
                 <div className="stat-label">{s.label}</div>
-                <div className="stat-value">{s.value?.toLocaleString() || "—"}</div>
+                <div className="stat-value">{s.value ? s.value.toLocaleString() : "—"}</div>
               </div>
             ))}
           </div>
-          {allResults.length > 0 && (
+          {filteredProfiles.length > 0 && (
             <div className="stat-card force-refresh-card">
               <div className="stat-label">↻ Оновити КЕШ</div>
               <div className="force-refresh-row">
@@ -546,10 +567,9 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
                       onClick={() => toggleRefreshService(s.id)}>{s.label}</button>
                   ))}
                 </div>
-                <button className="btn-export"
-                  onClick={handleForceRefresh}
+                <button className="btn-export" onClick={handleForceRefresh}
                   disabled={refreshing || refreshServices.length === 0}>
-                  {refreshing ? "⏳" : "↻"} {allResults.length.toLocaleString()}
+                  {refreshing ? "⏳" : "↻"} {filteredProfiles.length.toLocaleString()}
                 </button>
               </div>
               {refreshMsg && <div style={{ fontSize: 10, color: "var(--accent)", marginTop: 2 }}>{refreshMsg}</div>}
@@ -557,19 +577,24 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
           )}
         </div>
 
-        {/* Dashboards */}
-        {allResults.length > 0 && <Dashboard profiles={allResults} onFilter={handleDashboardFilter} />}
+        {/* Loading spinner */}
+        {loading && <div className="loading-center" style={{ minHeight: 200 }}><span className="spinner-lg" /></div>}
+
+        {/* Dashboard — renders as soon as profiles loaded */}
+        {!loading && filteredProfiles.length > 0 && (
+          <Dashboard profiles={filteredProfiles} onFilter={handleDashboardFilter} />
+        )}
 
         {/* Results header */}
         <div className="explorer-results-header" style={{ marginTop: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span className="explorer-total">
-              {loading ? "Завантаження..." : `Знайдено: ${total.toLocaleString()} доменів`}
+              {loading ? "Завантаження даних..." : `Знайдено: ${total.toLocaleString()} доменів`}
             </span>
-            <SyncButton onSync={() => doSearch(filters, 0)} />
+            <SyncButton onSync={handleSync} />
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            {allResults.length > 0 && (
+            {!loading && filteredProfiles.length > 0 && (
               <>
                 <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
                 <button className="btn-export" onClick={exportXLSX}>↓ XLSX</button>
@@ -577,11 +602,14 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
                   style={{background:"#0f9d58",color:"white",borderColor:"#0f9d58"}}>
                   {sheetsExporting ? "⏳ Sheets..." : "↗ Sheets"}
                 </button>
-                {sheetsUrl && <a href={sheetsUrl} target="_blank" rel="noopener"
-                  style={{fontSize:11,color:"#0f9d58",textDecoration:"none"}}>✓ Відкрити →</a>}
-                {onViewTechnologies && allResults.length > 0 && (
-                  <button className="btn-export" style={{background:"var(--accent)",color:"white",borderColor:"var(--accent)"}}
-                    onClick={() => onViewTechnologies(allResults.map(r => r.domain))}>
+                {sheetsUrl && (
+                  <a href={sheetsUrl} target="_blank" rel="noopener"
+                    style={{fontSize:11,color:"#0f9d58",textDecoration:"none"}}>✓ Відкрити →</a>
+                )}
+                {onViewTechnologies && (
+                  <button className="btn-export"
+                    style={{background:"var(--accent)",color:"white",borderColor:"var(--accent)"}}
+                    onClick={() => onViewTechnologies(filteredProfiles.map(r => r.domain))}>
                     📊 Технології →
                   </button>
                 )}
@@ -589,9 +617,9 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
             )}
             {total > PAGE && (
               <div className="pagination">
-                <button className="page-btn" onClick={handlePrev} disabled={offset === 0 || loading}>←</button>
+                <button className="page-btn" onClick={handlePrev} disabled={offset === 0}>←</button>
                 <span className="page-info">{offset + 1}–{Math.min(offset + PAGE, total)} / {total.toLocaleString()}</span>
-                <button className="page-btn" onClick={handleNext} disabled={offset + PAGE >= total || loading}>→</button>
+                <button className="page-btn" onClick={handleNext} disabled={offset + PAGE >= total}>→</button>
                 <span style={{ color: "var(--text-3)", fontSize: 11 }}>…</span>
                 <input className="page-jump-input" type="number" placeholder="№" value={jumpPage}
                   onChange={e => setJumpPage(e.target.value)}
@@ -602,9 +630,8 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
           </div>
         </div>
 
-        {/* Table with fixed height and vertical scroll */}
-        {loading && <div className="loading-center"><span className="spinner-lg" /></div>}
-        {!loading && results.length > 0 && (
+        {/* Table */}
+        {!loading && pageResults.length > 0 && (
           <div className="table-wrap table-fixed-height" style={{ marginTop: 8 }}>
             <table className="results-table">
               <thead>
@@ -617,7 +644,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
                 </tr>
               </thead>
               <tbody>
-                {results.map((r, i) => (
+                {pageResults.map((r, i) => (
                   <tr key={`${r.domain}-${i}`}>
                     <td className="td-num">{offset + i + 1}</td>
                     <td className="td-domain"><a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a></td>
@@ -636,7 +663,9 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
             </table>
           </div>
         )}
-        {!loading && results.length === 0 && <div className="empty-state">Нічого не знайдено.</div>}
+        {!loading && pageResults.length === 0 && (
+          <div className="empty-state">Нічого не знайдено.</div>
+        )}
       </main>
     </div>
   )
