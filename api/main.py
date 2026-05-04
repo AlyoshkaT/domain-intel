@@ -286,7 +286,12 @@ frontend_dist = next((p for p in _candidates if os.path.exists(p)), _candidates[
 assets_dir = os.path.join(frontend_dist, "assets")
 index_html = os.path.join(frontend_dist, "index.html")
 import logging as _log
-_log.getLogger(__name__).info(f"Frontend dist: {frontend_dist} (exists: {os.path.exists(frontend_dist)})")
+_flog = _log.getLogger(__name__)
+_flog.info(f"CWD: {os.getcwd()}")
+_flog.info(f"__file__: {os.path.abspath(__file__)}")
+for _c in _candidates:
+    _flog.info(f"  candidate: {_c} → exists={os.path.exists(_c)}")
+_flog.info(f"Frontend dist selected: {frontend_dist} (index.html exists: {os.path.exists(index_html)})")
 
 if os.path.exists(assets_dir):
     app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
