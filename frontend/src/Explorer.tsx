@@ -298,7 +298,7 @@ interface ExploreResult {
 }
 
 // ─── Main Explorer ─────────────────────────────────────────────────────────────
-export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologies?: (domains: string[]) => void }) {
+export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: { onViewTechnologies?: (domains: string[]) => void; onNavigateToJobs?: () => void }) {
   const [filters, setFilters] = useState<FilterState>(defaultFilters())
   const [fieldValues, setFieldValues] = useState<Record<string, FilterValue[]>>({})
   const [allResults, setAllResults] = useState<ExploreResult[]>([])
@@ -479,6 +479,7 @@ export default function ExplorerPage({ onViewTechnologies }: { onViewTechnologie
       const res = await fetch("/api/jobs", { method: "POST", body: fd })
       if (!res.ok) throw new Error("Failed")
       setRefreshMsg(`Запущено оновлення ${allResults.length.toLocaleString()} доменів (${refreshServices.join(", ")})`)
+      setTimeout(() => { if (onNavigateToJobs) onNavigateToJobs() }, 1500)
     } catch { setRefreshMsg("Помилка запуску") }
     finally { setRefreshing(false) }
   }
