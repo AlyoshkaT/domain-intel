@@ -176,6 +176,25 @@ async def aggregate_technologies(body: dict):
         return {"error": str(e), "periods": [], "series": [], "table": []}
 
 
+@router.post("/catalog/add")
+async def add_technology_endpoint(body: dict):
+    """Add a new technology to Google Sheet + BQ catalog."""
+    from fastapi import HTTPException
+    from services.technology_catalog import add_technology
+    sheet = body.get("sheet", "").strip()
+    technology = body.get("technology", "").strip()
+    group_name = body.get("group_name", "").strip()
+    if not sheet or not technology:
+        raise HTTPException(status_code=400, detail="sheet and technology are required")
+    try:
+        added = add_technology(sheet, technology, group_name)
+        return {"added": added, "technology": technology, "sheet": sheet}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/export/xlsx")
 async def export_technologies_xlsx(body: dict):
     import io

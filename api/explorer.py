@@ -234,10 +234,11 @@ async def explore_export_sheets(body: dict, background_tasks: BackgroundTasks):
     if not results:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="No results")
+    label = body.get("label", f"{len(results)} domains")
     def do_export():
         global _explore_sheet_url
-        from services.sheets_export import export_job_to_sheets
-        url = export_job_to_sheets("explorer", "Explorer results", results)
+        from services.sheets_export import export_explorer_to_sheets
+        url = export_explorer_to_sheets(label, results)
         if url:
             _explore_sheet_url = url
     background_tasks.add_task(do_export)
