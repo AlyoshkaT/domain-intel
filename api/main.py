@@ -7,7 +7,6 @@ import logging
 import csv
 from contextlib import asynccontextmanager
 
-import pandas as pd
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -129,6 +128,7 @@ async def catalog_status():
 def _parse_domains_from_file(content: bytes, filename: str) -> list[str]:
     domains = []
     if filename.endswith(".xlsx") or filename.endswith(".xls"):
+        import pandas as pd
         df = pd.read_excel(io.BytesIO(content), header=None)
         for col in df.columns:
             for val in df[col].dropna():
@@ -208,6 +208,7 @@ async def export_csv(job_id: str):
     results = get_results(job_id)
     if not results:
         raise HTTPException(status_code=404, detail="No results found")
+    import pandas as pd
     df = pd.DataFrame(results)
     stream = io.StringIO()
     df.to_csv(stream, index=False)
@@ -223,6 +224,7 @@ async def export_xlsx(job_id: str):
     results = get_results(job_id)
     if not results:
         raise HTTPException(status_code=404, detail="No results found")
+    import pandas as pd
     df = pd.DataFrame(results)
     # Remove timezone from datetime columns
     for col in df.columns:
