@@ -42,32 +42,53 @@ def _make_input_hash(domain: str, sw_title: str, sw_description: str) -> str:
     return hashlib.md5(raw.encode()).hexdigest()[:16]
 
 
+def _parse_ai_row(data: dict) -> Optional[dict]:
+    """Convert corpBQ response_json dict → our ai_ keys. Returns None if invalid."""
+    if "category" not in data:
+        logger.warning(f"Corp AI cache: invalid JSON (missing 'category'), skipping")
+        return None
+    is_ecom = data.get("is_ecommerce")
+    return {
+        "ai_category":     data.get("category", ""),
+        "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
+        "ai_industry":     data.get("subcategory", ""),
+    }
+
+
 def get_corp_ai_cached(domain: str) -> Optional[dict]:
     """Read AI classification from corpBQ claude_responses."""
+    # Fast path: use in-memory prefetch cache if available (populated at job start)
+    from core.bigquery import _prefetch_cache
+    ai_key = "claude_responses"
+    if ai_key in _prefetch_cache and domain in _prefetch_cache[ai_key]:
+        raw = _prefetch_cache[ai_key][domain]
+        if raw is None:
+            logger.debug(f"Prefetch AI MISS: {domain}")
+            return None
+        data = raw if isinstance(raw, dict) else json.loads(raw)
+        result = _parse_ai_row(data)
+        if result:
+            logger.debug(f"Prefetch AI HIT: {domain}")
+        return result
+
+    # Slow path: individual BQ query
     from core.bigquery import corp_client
+    import google.cloud.bigquery as gcbq
     bq = corp_client()
     try:
-        rows = list(bq.query(f"""
-            SELECT response_json FROM {CORP_AI_TABLE}
-            WHERE domain = @domain
-            ORDER BY fetched_at DESC LIMIT 1
-        """, job_config=__import__('google.cloud.bigquery', fromlist=['QueryJobConfig', 'ScalarQueryParameter']).QueryJobConfig(
-            query_parameters=[__import__('google.cloud.bigquery', fromlist=['ScalarQueryParameter']).ScalarQueryParameter("domain", "STRING", domain)]
-        )).result())
+        rows = list(bq.query(
+            f"SELECT response_json FROM {CORP_AI_TABLE} WHERE domain = @domain ORDER BY fetched_at DESC LIMIT 1",
+            job_config=gcbq.QueryJobConfig(
+                query_parameters=[gcbq.ScalarQueryParameter("domain", "STRING", domain)]
+            )
+        ).result())
         if rows:
             rj = rows[0]["response_json"]
             data = rj if isinstance(rj, dict) else json.loads(rj)
-            # Skip malformed/test rows (must have standard keys)
-            if "category" not in data:
-                logger.warning(f"Corp AI cache: invalid JSON for {domain}, skipping")
-                return None
-            logger.info(f"Corp AI cache HIT: {domain}")
-            is_ecom = data.get("is_ecommerce")
-            return {
-                "ai_category":     data.get("category", ""),
-                "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
-                "ai_industry":     data.get("subcategory", ""),
-            }
+            result = _parse_ai_row(data)
+            if result:
+                logger.info(f"Corp AI cache HIT: {domain}")
+            return result
         return None
     except Exception as e:
         logger.error(f"Corp AI cache read error ({domain}): {e}")

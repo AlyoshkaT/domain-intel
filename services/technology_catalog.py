@@ -91,15 +91,28 @@ def sync_catalog() -> dict:
             ems_count += 1
     counts["ems"] = ems_count
 
-    # Save to BQ
+    # Save to BQ — use load job (WRITE_TRUNCATE) instead of streaming insert,
+    # so DML DELETE works immediately (streaming buffer blocks DML DELETE).
     bq_client = client()
-    bq_client.query(f"DELETE FROM `{table_ref(CATALOG_TABLE)}` WHERE TRUE").result()
-
-    batch_size = 500
-    for i in range(0, len(rows_to_insert), batch_size):
-        errors = bq_client.insert_rows_json(table_ref(CATALOG_TABLE), rows_to_insert[i:i + batch_size])
-        if errors:
-            logger.error(f"Catalog insert errors: {errors}")
+    tbl_ref = table_ref(CATALOG_TABLE)
+    job_cfg = bq.LoadJobConfig(
+        schema=[
+            bq.SchemaField("sheet", "STRING"),
+            bq.SchemaField("technology", "STRING"),
+            bq.SchemaField("group_name", "STRING"),
+        ],
+        write_disposition=bq.WriteDisposition.WRITE_TRUNCATE,
+        source_format=bq.SourceFormat.NEWLINE_DELIMITED_JSON,
+    )
+    import json as _json
+    ndjson = "\n".join(_json.dumps(r) for r in rows_to_insert).encode()
+    import io as _io
+    job = bq_client.load_table_from_file(
+        _io.BytesIO(ndjson), tbl_ref, job_config=job_cfg
+    )
+    job.result()  # wait for completion
+    if job.errors:
+        logger.error(f"Catalog load job errors: {job.errors}")
 
     logger.info(f"Catalog synced: {counts}")
     return counts
@@ -141,12 +154,21 @@ def add_technology(sheet: str, technology: str, group_name: str = "") -> bool:
     ).execute()
     logger.info(f"Added to GSheet {tab_name}: {technology}")
 
-    # 3. Add to BQ catalog
-    errors = bq_client.insert_rows_json(table_ref(CATALOG_TABLE), [{
-        "sheet": sheet, "technology": technology, "group_name": group_name
-    }])
-    if errors:
-        logger.error(f"BQ catalog insert error: {errors}")
+    # 3. Add to BQ catalog via DML INSERT (not streaming — so DELETE works immediately)
+    try:
+        bq_client.query(
+            f"INSERT INTO `{table_ref(CATALOG_TABLE)}` (sheet, technology, group_name) "
+            f"VALUES (@sheet, @tech, @grp)",
+            job_config=bq.QueryJobConfig(
+                query_parameters=[
+                    bq.ScalarQueryParameter("sheet", "STRING", sheet),
+                    bq.ScalarQueryParameter("tech", "STRING", technology),
+                    bq.ScalarQueryParameter("grp", "STRING", group_name),
+                ]
+            )
+        ).result()
+    except Exception as e:
+        logger.error(f"BQ catalog insert error: {e}")
         return False
 
     return True

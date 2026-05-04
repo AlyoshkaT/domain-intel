@@ -10,7 +10,8 @@ from typing import Optional
 from config.settings import BATCH_CONCURRENCY, DELAY_BETWEEN_DOMAINS
 from processing.pipeline import process_domain
 from core.bigquery import (
-    create_job, update_job, get_job, save_result
+    create_job, update_job, get_job, save_result,
+    prefetch_corp_cache, clear_prefetch_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,20 @@ async def run_batch_job(job_id: str, domains: list[str], services: list[str], fo
 
     logger.info(f"Job {job_id} started: {total} domains, services={services}")
     await _update_job_safe(job_id, status="running", total_domains=total)
+
+    # Batch-prefetch all corp BQ cache in 3 queries (SW + BW + AI)
+    # This avoids N×3 individual BQ queries (~2-5s each) during processing.
+    if not force_refresh:
+        try:
+            from config.settings import BQ_SIMILARWEB_CACHE, BQ_BUILTWITH_CACHE
+            tables = [BQ_SIMILARWEB_CACHE, BQ_BUILTWITH_CACHE]
+            # AI cache is in a different corp table (claude_responses)
+            from config.settings import CORP_PROJECT_ID, CORP_DATASET
+            ai_table = "claude_responses"  # short name for prefetch
+            tables.append(ai_table)
+            prefetch_corp_cache(domains, tables)
+        except Exception as e:
+            logger.warning(f"Prefetch failed (will fall back to per-domain queries): {e}")
 
     semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
 
@@ -67,6 +82,7 @@ async def run_batch_job(job_id: str, domains: list[str], services: list[str], fo
         failed_domains=failed,
     )
     logger.info(f"Job {job_id} finished: {processed} ok, {failed} failed")
+    clear_prefetch_cache()
 
     # Auto-export to admin Google Sheets folder
     try:

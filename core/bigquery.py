@@ -134,9 +134,82 @@ def ensure_tables_exist():
             logger.warning(f"Corp table {table_name} not found: {e}")
 
 
+# ── In-memory prefetch cache (populated at job start for batch speed) ─────────
+# Structure: { table_name: { domain: response_dict | None } }
+# None means "we looked it up and it wasn't there" (explicit miss).
+_prefetch_cache: dict[str, dict[str, Optional[dict]]] = {}
+_PREFETCH_SENTINEL = object()  # distinct from None for "not prefetched"
+
+
+def prefetch_corp_cache(domains: list[str], tables: list[str]) -> None:
+    """
+    Batch-fetch the latest cached row for each (table, domain) pair.
+    Called once at job start — replaces N×T individual BQ queries with T queries.
+    After this, get_cached() will serve results from memory.
+    """
+    if not domains or not tables:
+        return
+    bq = corp_client()
+    t_start = time.time()
+
+    # Deduplicate + limit (BQ IN clause can handle thousands of values fine)
+    unique_domains = list(dict.fromkeys(domains))
+    # Build parameterised IN list
+    ph = ", ".join(f"@d{i}" for i in range(len(unique_domains)))
+    params = [bigquery.ScalarQueryParameter(f"d{i}", "STRING", d) for i, d in enumerate(unique_domains)]
+
+    for table in tables:
+        _prefetch_cache.setdefault(table, {})
+        try:
+            query = f"""
+                SELECT domain, response_json
+                FROM (
+                    SELECT domain, response_json,
+                           ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                    FROM `{corp_table_ref(table)}`
+                    WHERE domain IN ({ph})
+                )
+                WHERE rn = 1
+            """
+            rows = list(bq.query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params)
+            ).result())
+            hit_count = 0
+            for row in rows:
+                d = row["domain"]
+                data = row["response_json"]
+                _prefetch_cache[table][d] = data if isinstance(data, dict) else json.loads(data)
+                hit_count += 1
+            # Mark explicit misses so get_cached() won't fall through to BQ
+            for d in unique_domains:
+                if d not in _prefetch_cache[table]:
+                    _prefetch_cache[table][d] = None
+            elapsed = time.time() - t_start
+            logger.info(f"Prefetch {table}: {hit_count}/{len(unique_domains)} hits in {elapsed:.1f}s")
+        except Exception as e:
+            logger.error(f"Prefetch error ({table}): {e}")
+
+
+def clear_prefetch_cache() -> None:
+    """Clear the in-memory prefetch cache after a job finishes."""
+    _prefetch_cache.clear()
+
+
 def get_cached(table: str, domain: str, ttl_days: int = 90, force: bool = False, ignore_ttl: bool = False) -> Optional[dict]:
     if force:
         return None
+
+    # Fast path: serve from in-memory prefetch cache if available
+    if table in _prefetch_cache and domain in _prefetch_cache[table]:
+        data = _prefetch_cache[table][domain]
+        if data is None:
+            logger.debug(f"Prefetch MISS: {table} / {domain}")
+        else:
+            logger.debug(f"Prefetch HIT: {table} / {domain}")
+        return data
+
+    # Slow path: individual BQ query (used when prefetch wasn't called)
     bq = corp_client()
     t_start = time.time()
     logger.info(f"Cache lookup: {table} / {domain}")
