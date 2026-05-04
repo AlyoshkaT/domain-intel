@@ -432,18 +432,22 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
     setSheetsExporting(true); setSheetsUrl("")
     try {
       const label = `${total.toLocaleString()} domains`
-      await fetch("/api/explore/export/sheets", {
+      const res = await fetch("/api/explore/export/sheets", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ results: allResults, label })
       })
-      // Poll for URL
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 2000))
+      if (!res.ok) throw new Error("Export failed")
+      // Poll for URL (max 45s)
+      let found = false
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 3000))
         const r = await fetch("/api/explore/export/sheets/url")
         const d = await r.json()
-        if (d.url) { setSheetsUrl(d.url); break }
+        if (d.url) { setSheetsUrl(d.url); found = true; break }
+        if (d.error) throw new Error(d.error)
       }
-    } catch { alert("Sheets export error") }
+      if (!found) throw new Error("Timeout — перевір налаштування Google Sheets API")
+    } catch (e: any) { alert(`Sheets export помилка: ${e.message}`) }
     finally { setSheetsExporting(false) }
   }
 

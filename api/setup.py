@@ -37,18 +37,12 @@ class CatalogEntry(BaseModel):
 
 @router.post("/catalog/add")
 async def add_catalog_entry(entry: CatalogEntry):
-    from core.bigquery import client, table_ref
-    from services.technology_catalog import ensure_catalog_table
-    ensure_catalog_table()
-    bq = client()
-    errors = bq.insert_rows_json(table_ref("technology_catalog"), [{
-        "sheet": entry.sheet,
-        "technology": entry.technology.strip(),
-        "group_name": entry.group_name.strip(),
-    }])
-    if errors:
-        raise HTTPException(status_code=500, detail=str(errors))
-    return {"ok": True}
+    from services.technology_catalog import add_technology
+    try:
+        added = add_technology(entry.sheet, entry.technology.strip(), entry.group_name.strip())
+        return {"ok": True, "added": added}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/catalog")

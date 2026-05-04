@@ -205,6 +205,7 @@ async def sync_status():
 
 # ─── Sheets/XLSX export ───────────────────────────────────────────────────────
 _explore_sheet_url: str | None = None
+_explore_sheet_error: str | None = None
 
 @router.post("/export/xlsx")
 async def explore_export_xlsx(body: dict):
@@ -228,22 +229,28 @@ async def explore_export_xlsx(body: dict):
 
 @router.post("/export/sheets")
 async def explore_export_sheets(body: dict, background_tasks: BackgroundTasks):
-    global _explore_sheet_url
+    global _explore_sheet_url, _explore_sheet_error
     _explore_sheet_url = None
+    _explore_sheet_error = None
     results = body.get("results", [])
     if not results:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="No results")
     label = body.get("label", f"{len(results)} domains")
     def do_export():
-        global _explore_sheet_url
-        from services.sheets_export import export_explorer_to_sheets
-        url = export_explorer_to_sheets(label, results)
-        if url:
-            _explore_sheet_url = url
+        global _explore_sheet_url, _explore_sheet_error
+        try:
+            from services.sheets_export import export_explorer_to_sheets
+            url = export_explorer_to_sheets(label, results)
+            if url:
+                _explore_sheet_url = url
+            else:
+                _explore_sheet_error = "Export failed — check GOOGLE_SHEETS_CREDENTIALS_JSON"
+        except Exception as e:
+            _explore_sheet_error = str(e)
     background_tasks.add_task(do_export)
     return {"status": "exporting"}
 
 @router.get("/export/sheets/url")
 async def explore_sheets_url():
-    return {"url": _explore_sheet_url}
+    return {"url": _explore_sheet_url, "error": _explore_sheet_error}
