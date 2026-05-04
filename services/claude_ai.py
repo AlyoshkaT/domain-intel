@@ -57,6 +57,10 @@ def get_corp_ai_cached(domain: str) -> Optional[dict]:
         if rows:
             rj = rows[0]["response_json"]
             data = rj if isinstance(rj, dict) else json.loads(rj)
+            # Skip malformed/test rows (must have standard keys)
+            if "category" not in data:
+                logger.warning(f"Corp AI cache: invalid JSON for {domain}, skipping")
+                return None
             logger.info(f"Corp AI cache HIT: {domain}")
             is_ecom = data.get("is_ecommerce")
             return {

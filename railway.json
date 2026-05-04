@@ -1,8 +1,5 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
-  "build": {
-    "buildCommand": "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && cd frontend && npm install && npm run build && cd .."
-  },
   "deploy": {
     "startCommand": "uvicorn api.main:app --host 0.0.0.0 --port $PORT",
     "healthcheckPath": "/api/health",
