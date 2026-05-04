@@ -20,6 +20,7 @@ function CatalogSection() {
   const [addVal, setAddVal] = useState("")
   const [addGroup, setAddGroup] = useState("")
   const [msg, setMsg] = useState("")
+  const [removing, setRemoving] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -52,11 +53,14 @@ function CatalogSection() {
   }
 
   const remove = async (technology: string) => {
-    setMsg("")
+    if (!window.confirm(`Видалити "${technology}" з ${SHEET_LABELS[tab]}?`)) return
+    setMsg(""); setRemoving(technology)
     try {
       await apiFetch(`/api/setup/catalog?sheet=${tab}&technology=${encodeURIComponent(technology)}`, { method: "DELETE" })
       await load()
+      setMsg(`✓ Видалено: ${technology}`)
     } catch (e: any) { setMsg("Помилка: " + e.message) }
+    finally { setRemoving(null) }
   }
 
   const items: string[] = (tab === "osearch"
@@ -104,7 +108,10 @@ function CatalogSection() {
                   {catalog.osearch.find(o => o.technology === tech)?.group || ""}
                 </span>
               )}
-              <button className="setup-remove-btn" onClick={() => remove(tech)} title="Видалити">&#10005;</button>
+              <button className="setup-remove-btn" onClick={() => remove(tech)}
+                disabled={removing === tech} title="Видалити">
+                {removing === tech ? "⏳" : "✕"}
+              </button>
             </div>
           ))}
         </div>
