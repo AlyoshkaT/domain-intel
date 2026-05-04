@@ -68,6 +68,21 @@ async def run_batch_job(job_id: str, domains: list[str], services: list[str], fo
     )
     logger.info(f"Job {job_id} finished: {processed} ok, {failed} failed")
 
+    # Auto-export to admin Google Sheets folder
+    try:
+        from core.bigquery import get_results, get_job
+        from services.sheets_export import export_job_to_sheets
+        job = get_job(job_id)
+        results = get_results(job_id)
+        if results:
+            url = export_job_to_sheets(job_id, job.get("filename", "results"), results)
+            if url:
+                from services.credits import _save_setting
+                _save_setting(f"sheet_url_{job_id}", url)
+                logger.info(f"Auto-exported job {job_id} to Sheets: {url}")
+    except Exception as e:
+        logger.warning(f"Auto Sheets export failed for job {job_id}: {e}")
+
 
 async def _update_job_safe(job_id: str, **kwargs):
     """Update job without raising on BQ errors."""

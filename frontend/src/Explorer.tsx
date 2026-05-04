@@ -424,6 +424,29 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
     (f.type && f.type !== "all") || (f.selected && f.selected.length > 0) || (f.value && f.value.trim())
   ).length
 
+  const [sheetsExporting, setSheetsExporting] = useState(false)
+  const [sheetsUrl, setSheetsUrl] = useState("")
+
+  const exportToSheets = async () => {
+    if (!allResults.length) return
+    setSheetsExporting(true); setSheetsUrl("")
+    try {
+      const label = `${total.toLocaleString()} domains`
+      await fetch("/api/explore/export/sheets", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ results: allResults, label })
+      })
+      // Poll for URL
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 2000))
+        const r = await fetch("/api/explore/export/sheets/url")
+        const d = await r.json()
+        if (d.url) { setSheetsUrl(d.url); break }
+      }
+    } catch { alert("Sheets export error") }
+    finally { setSheetsExporting(false) }
+  }
+
   const [refreshServices, setRefreshServices] = useState<string[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState("")
@@ -546,6 +569,12 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
               <>
                 <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
                 <button className="btn-export" onClick={exportXLSX}>↓ XLSX</button>
+                <button className="btn-export" onClick={exportToSheets} disabled={sheetsExporting}
+                  style={{background:"#0f9d58",color:"white",borderColor:"#0f9d58"}}>
+                  {sheetsExporting ? "⏳ Sheets..." : "↗ Sheets"}
+                </button>
+                {sheetsUrl && <a href={sheetsUrl} target="_blank" rel="noopener"
+                  style={{fontSize:11,color:"#0f9d58",textDecoration:"none"}}>✓ Відкрити →</a>}
                 {onViewTechnologies && allResults.length > 0 && (
                   <button className="btn-export" style={{background:"var(--accent)",color:"white",borderColor:"var(--accent)"}}
                     onClick={() => onViewTechnologies(allResults.map(r => r.domain))}>
