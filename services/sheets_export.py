@@ -35,28 +35,35 @@ EXPORT_COLUMNS = [
 
 
 def _create_sheet(title: str, results: list[dict], columns: list[tuple] = None) -> Optional[str]:
-    """Create a new Google Sheet with results. Returns URL or None."""
+    """Create a new Google Sheet inside GOOGLE_DRIVE_FOLDER_ID. Returns URL or raises."""
     cols = columns or EXPORT_COLUMNS
+
+    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
+    if not folder_id:
+        raise ValueError(
+            "GOOGLE_DRIVE_FOLDER_ID not set. "
+            "Create a Google Drive folder, share it with the service account (Editor), "
+            "and set GOOGLE_DRIVE_FOLDER_ID to the folder ID from its URL."
+        )
+
     try:
-        sh = sheets_client(write=True).spreadsheets()
         dr = drive_client()
-        folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
+        sh = sheets_client(write=True).spreadsheets()
 
-        spreadsheet = sh.create(body={
-            "properties": {"title": title},
-            "sheets": [{"properties": {"title": "Results"}}]
-        }).execute()
+        # Create spreadsheet directly inside the shared folder via Drive API.
+        # This avoids the 403 that spreadsheets.create() raises when the
+        # service account has no My Drive access — folder Editor is enough.
+        file = dr.files().create(
+            body={
+                "name": title,
+                "mimeType": "application/vnd.google-apps.spreadsheet",
+                "parents": [folder_id],
+            },
+            fields="id"
+        ).execute()
 
-        sheet_id = spreadsheet["spreadsheetId"]
+        sheet_id = file["id"]
         sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-
-        if folder_id:
-            dr.files().update(
-                fileId=sheet_id,
-                addParents=folder_id,
-                removeParents="root",
-                fields="id, parents"
-            ).execute()
 
         # Build rows
         headers = [col[1] for col in cols]
@@ -99,6 +106,7 @@ def _create_sheet(title: str, results: list[dict], columns: list[tuple] = None) 
             }},
         ]}).execute()
 
+        # Make sheet readable by anyone with the link
         dr.permissions().create(
             fileId=sheet_id,
             body={"type": "anyone", "role": "reader"}

@@ -87,6 +87,22 @@ async def remove_catalog_entry(sheet: str, technology: str):
     return {"ok": True}
 
 
+# ── Google Drive / Sheets info ────────────────────────────────────────────────
+
+@router.get("/drive-info")
+async def get_drive_info():
+    """Return service account email and GOOGLE_DRIVE_FOLDER_ID status."""
+    import os
+    from services.sheets_client import get_service_account_email
+    email = get_service_account_email()
+    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
+    return {
+        "service_account_email": email,
+        "folder_id": folder_id,
+        "folder_configured": bool(folder_id),
+    }
+
+
 # ── Settings (cache TTL etc.) ─────────────────────────────────────────────────
 
 @router.get("/settings")

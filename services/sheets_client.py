@@ -39,6 +39,27 @@ def _get_creds(scopes: list[str]):
     raise ValueError("No Google Sheets credentials available. Set GOOGLE_SHEETS_CREDENTIALS_JSON env var.")
 
 
+def get_service_account_email() -> str:
+    """Return the service account email from credentials, or empty string."""
+    for env_var in ("GOOGLE_SHEETS_CREDENTIALS_JSON", "GOOGLE_CREDENTIALS_JSON"):
+        json_str = os.getenv(env_var, "").strip()
+        if json_str:
+            try:
+                info = json.loads(json_str)
+                return info.get("client_email", "")
+            except Exception:
+                pass
+    from config.settings import GOOGLE_SHEETS_CREDENTIALS, GOOGLE_APPLICATION_CREDENTIALS
+    for path in [GOOGLE_SHEETS_CREDENTIALS, GOOGLE_APPLICATION_CREDENTIALS]:
+        if path and os.path.exists(path):
+            try:
+                with open(path) as f:
+                    return json.load(f).get("client_email", "")
+            except Exception:
+                pass
+    return ""
+
+
 def sheets_client(write: bool = False):
     """Return Google Sheets API client."""
     scopes = SCOPES_WRITE if write else SCOPES_READ
