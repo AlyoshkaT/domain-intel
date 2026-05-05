@@ -122,6 +122,14 @@ def _export_as_new_file(folder_id: str, title: str, rows: list[list]) -> str:
     sheet_id = file["id"]
     sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
 
+    # Rename default sheet to "Results"
+    sh.batchUpdate(spreadsheetId=sheet_id, body={"requests": [
+        {"updateSheetProperties": {
+            "properties": {"sheetId": 0, "title": "Results"},
+            "fields": "title"
+        }}
+    ]}).execute()
+
     n_cols = len(rows[0]) if rows else 1
     sh.values().update(
         spreadsheetId=sheet_id,
