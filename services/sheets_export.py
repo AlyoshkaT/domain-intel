@@ -110,12 +110,12 @@ def _export_as_new_file(folder_id: str, title: str, rows: list[list]) -> str:
     dr = drive_client()
     sh = sheets_client(write=True).spreadsheets()
 
+    body: dict = {"name": title, "mimeType": "application/vnd.google-apps.spreadsheet"}
+    if folder_id:
+        body["parents"] = [folder_id]
+
     file = dr.files().create(
-        body={
-            "name": title,
-            "mimeType": "application/vnd.google-apps.spreadsheet",
-            "parents": [folder_id],
-        },
+        body=body,
         fields="id",
         supportsAllDrives=True,
     ).execute()
@@ -165,20 +165,24 @@ def _create_sheet(title: str, tab_title: str, results: list[dict],
     cols = columns or EXPORT_COLUMNS
     rows = _build_rows(results, cols)
 
+    # Tab mode: append to one existing sheet (no Drive quota needed)
     sheet_id = os.getenv("GOOGLE_EXPORT_SHEET_ID", "").strip()
-    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
-
     if sheet_id:
         return _export_as_tab(sheet_id, tab_title, rows)
 
-    if folder_id:
+    # New-file mode: create separate file
+    # With OAuth credentials → root Drive (no folder needed)
+    # With SA credentials   → folder required (SA has no Drive storage)
+    using_oauth = bool(os.getenv("GOOGLE_OAUTH_TOKEN_JSON", "").strip())
+    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip() if not using_oauth else ""
+
+    if using_oauth or folder_id:
         return _export_as_new_file(folder_id, title, rows)
 
     raise ValueError(
         "Google Sheets export not configured. "
-        "Set GOOGLE_EXPORT_SHEET_ID (recommended): create a Google Sheet, "
-        "share with the service account as Editor, paste its ID. "
-        "Or set GOOGLE_DRIVE_FOLDER_ID: shared Drive folder ID."
+        "Set GOOGLE_OAUTH_TOKEN_JSON (run get_google_token.py) "
+        "or GOOGLE_EXPORT_SHEET_ID (existing sheet ID)."
     )
 
 
