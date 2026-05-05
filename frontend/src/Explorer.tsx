@@ -397,7 +397,16 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
     setLoading(true)
     try {
       const data = await apiFetch("/api/explore/profiles")
-      const profiles: ExploreResult[] = data.profiles || []
+      // Columnar format: {columns: [...], rows: [[...], ...]}
+      let profiles: ExploreResult[] = []
+      if (data.columns && data.rows) {
+        const cols: string[] = data.columns
+        profiles = data.rows.map((row: any[]) => {
+          const obj: any = {}
+          cols.forEach((c, i) => { obj[c] = row[i] })
+          return obj as ExploreResult
+        })
+      }
       _cachedProfiles = profiles; _cachedProfilesTs = Date.now()
       setAllProfiles(profiles); setFilteredProfiles(profiles)
     } catch (e) { console.error("Failed to load profiles", e) }

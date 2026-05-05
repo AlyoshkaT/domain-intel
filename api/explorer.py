@@ -27,10 +27,18 @@ _search_cache: dict[str, dict] = {}
 _SEARCH_CACHE_TTL = 300
 _SEARCH_CACHE_MAX = 30
 
-# Cache for full profiles list (for in-memory client filtering)
-_profiles_cache: list = []
+# Cache for full profiles list (columnar format to minimise memory)
+# {"columns": [...], "rows": [[...], ...]}
+_profiles_cache: dict = {}
 _profiles_cache_ts: float = 0
 _PROFILES_CACHE_TTL = 300  # 5 min
+
+PROFILE_COLUMNS = [
+    "domain", "sw_visits", "cms_list", "osearch", "osearch_group",
+    "ems_list", "ai_category", "ai_is_ecommerce", "ai_industry",
+    "sw_category", "sw_subcategory", "sw_description", "sw_title",
+    "company_name", "sw_primary_region", "sw_primary_region_pct",
+]
 
 
 def _make_cache_key(body: dict) -> str:
@@ -97,31 +105,40 @@ def _build_where(filters: dict) -> tuple[str, list]:
 
 @router.get("/profiles")
 async def get_all_profiles():
-    """Return ALL profiles for client-side in-memory filtering.
-    Cached in Python memory for 5 min to avoid repeated BQ scans."""
+    """Return ALL profiles in columnar format for client-side filtering.
+    Columnar = one array per row (no repeated keys) → ~3x less memory/JSON."""
     global _profiles_cache, _profiles_cache_ts
     now = time.time()
     if _profiles_cache and (now - _profiles_cache_ts) < _PROFILES_CACHE_TTL:
-        return {"profiles": _profiles_cache, "total": len(_profiles_cache)}
+        return _profiles_cache
     try:
         bq_client = client()
-        rows = list(bq_client.query(f"""
-            SELECT domain, sw_visits, cms_list, osearch, osearch_group,
-                   ems_list, ai_category, ai_is_ecommerce, ai_industry,
-                   sw_category, sw_subcategory, sw_description, sw_title,
-                   company_name, sw_primary_region, sw_primary_region_pct
+        cols_sql = ", ".join(PROFILE_COLUMNS)
+        bq_rows = list(bq_client.query(f"""
+            SELECT {cols_sql}
             FROM `{table_ref(PROFILES_TABLE)}`
             ORDER BY sw_visits DESC NULLS LAST
         """).result())
-        _profiles_cache = [
-            {k: (float(v) if hasattr(v, 'is_integer') else v)
-             for k, v in dict(r).items()}
-            for r in rows
-        ]
+
+        # Build compact columnar structure: list of lists, no repeated keys
+        rows = []
+        for r in bq_rows:
+            row = []
+            for col in PROFILE_COLUMNS:
+                v = r[col]
+                if v is None:
+                    row.append(None)
+                elif hasattr(v, 'is_integer'):   # BQ Decimal/float
+                    row.append(float(v))
+                else:
+                    row.append(v)
+            rows.append(row)
+
+        _profiles_cache = {"columns": PROFILE_COLUMNS, "rows": rows, "total": len(rows)}
         _profiles_cache_ts = now
-        return {"profiles": _profiles_cache, "total": len(_profiles_cache)}
+        return _profiles_cache
     except Exception as e:
-        return {"profiles": [], "total": 0, "error": str(e)}
+        return {"columns": PROFILE_COLUMNS, "rows": [], "total": 0, "error": str(e)}
 
 
 def invalidate_profiles_cache():
