@@ -60,6 +60,7 @@ async def auth_middleware(request: Request, call_next):
 
     users = get_auth_users()
     if not users:
+        request.state.username = "anonymous"
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
@@ -81,4 +82,5 @@ async def auth_middleware(request: Request, call_next):
         return Response(content="Unauthorized", status_code=401,
                         headers={"WWW-Authenticate": 'Basic realm="Domain Intel"'})
 
+    request.state.username = username
     return await call_next(request)

@@ -5,7 +5,7 @@ Search results cached in memory (5 min TTL) to speed up repeat queries.
 import hashlib
 import json
 import time
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Request
 from google.cloud import bigquery as bq
 
 from core.bigquery import client, table_ref
@@ -266,7 +266,7 @@ _explore_sheet_url: str | None = None
 _explore_sheet_error: str | None = None
 
 @router.post("/export/xlsx")
-async def explore_export_xlsx(body: dict):
+async def explore_export_xlsx(request: Request, body: dict):
     import io
     import pandas as pd
     from fastapi.responses import StreamingResponse
@@ -274,6 +274,12 @@ async def explore_export_xlsx(body: dict):
     if not results:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="No results")
+    username = getattr(request.state, "username", "unknown")
+    try:
+        from core.bigquery import log_activity
+        log_activity(username, "export_xlsx", {"row_count": len(results)})
+    except Exception:
+        pass
     df = pd.DataFrame(results)
     stream = io.BytesIO()
     with pd.ExcelWriter(stream, engine="openpyxl") as writer:
@@ -286,7 +292,7 @@ async def explore_export_xlsx(body: dict):
     )
 
 @router.post("/export/sheets")
-async def explore_export_sheets(body: dict, background_tasks: BackgroundTasks):
+async def explore_export_sheets(request: Request, body: dict, background_tasks: BackgroundTasks):
     global _explore_sheet_url, _explore_sheet_error
     _explore_sheet_url = None
     _explore_sheet_error = None
@@ -295,6 +301,12 @@ async def explore_export_sheets(body: dict, background_tasks: BackgroundTasks):
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="No results")
     label = body.get("label", f"{len(results)} domains")
+    username = getattr(request.state, "username", "unknown")
+    try:
+        from core.bigquery import log_activity
+        log_activity(username, "export_sheets", {"row_count": len(results), "label": label})
+    except Exception:
+        pass
     def do_export():
         global _explore_sheet_url, _explore_sheet_error
         try:

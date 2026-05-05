@@ -2,7 +2,7 @@
 Setup API — manage technology catalog, users, cache settings, job history.
 """
 import logging
-from typing import Literal
+from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -141,6 +141,17 @@ class UserCreate(BaseModel):
     username: str
     password: str
     permissions: Literal["read", "add", "download", "admin"]
+    email: Optional[str] = None
+    google_folder: Optional[str] = None
+    display_name: Optional[str] = None
+
+
+class UserUpdate(BaseModel):
+    permissions: Optional[Literal["read", "add", "download", "admin"]] = None
+    password: Optional[str] = None
+    email: Optional[str] = None
+    google_folder: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 @router.post("/users")
@@ -150,7 +161,20 @@ async def create_user(user: UserCreate):
     if not user.password.strip():
         raise HTTPException(status_code=400, detail="Password required")
     from core.bigquery import add_user
-    add_user(user.username.strip(), user.password, user.permissions)
+    add_user(
+        user.username.strip(), user.password, user.permissions,
+        email=user.email, google_folder=user.google_folder, display_name=user.display_name
+    )
+    return {"ok": True}
+
+
+@router.patch("/users/{username}")
+async def patch_user(username: str, update: UserUpdate):
+    from core.bigquery import update_user
+    fields = update.model_dump(exclude_none=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    update_user(username, **fields)
     return {"ok": True}
 
 
@@ -159,6 +183,22 @@ async def delete_user(username: str):
     from core.bigquery import remove_user
     remove_user(username)
     return {"ok": True}
+
+
+# ── Activity Logs ─────────────────────────────────────────────────────────────
+
+@router.get("/logs")
+async def get_logs():
+    from core.bigquery import get_activity_logs
+    return {"logs": get_activity_logs(limit=200)}
+
+
+# ── API Usage ─────────────────────────────────────────────────────────────────
+
+@router.get("/usage")
+async def get_usage():
+    from core.bigquery import get_api_usage_summary
+    return {"usage": get_api_usage_summary()}
 
 
 # ── Job History ───────────────────────────────────────────────────────────────

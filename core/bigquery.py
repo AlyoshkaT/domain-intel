@@ -132,6 +132,19 @@ def ensure_tables_exist():
             bq_corp.get_table(f"{CORP_PROJECT_ID}.{CORP_DATASET}.{table_name}")
         except Exception as e:
             logger.warning(f"Corp table {table_name} not found: {e}")
+    # Ensure user management tables and run migrations
+    try:
+        _ensure_users_table()
+    except Exception as e:
+        logger.error(f"_ensure_users_table error: {e}")
+    try:
+        _ensure_activity_logs_table()
+    except Exception as e:
+        logger.error(f"_ensure_activity_logs_table error: {e}")
+    try:
+        _ensure_sw_usage_table()
+    except Exception as e:
+        logger.error(f"_ensure_sw_usage_table error: {e}")
 
 
 # ── In-memory prefetch cache (populated at job start for batch speed) ─────────
@@ -398,6 +411,20 @@ _USERS_SCHEMA = [
     bigquery.SchemaField("created_at", "TIMESTAMP"),
 ]
 
+_ACTIVITY_LOGS_SCHEMA = [
+    bigquery.SchemaField("logged_at", "TIMESTAMP"),
+    bigquery.SchemaField("username", "STRING"),
+    bigquery.SchemaField("action", "STRING"),
+    bigquery.SchemaField("details", "STRING"),
+]
+
+_SW_USAGE_COUNTER_SCHEMA = [
+    bigquery.SchemaField("date", "DATE"),
+    bigquery.SchemaField("username", "STRING"),
+    bigquery.SchemaField("api", "STRING"),
+    bigquery.SchemaField("calls", "INTEGER"),
+]
+
 
 def _ensure_users_table():
     bq = client()
@@ -407,16 +434,51 @@ def _ensure_users_table():
     except Exception:
         bq.create_table(tbl)
         logger.info("Created table app_users")
+    # Migrate: add new columns if not exists
+    for col, col_type in [("email", "STRING"), ("google_folder", "STRING"), ("display_name", "STRING")]:
+        try:
+            bq.query(
+                f"ALTER TABLE `{table_ref('app_users')}` ADD COLUMN IF NOT EXISTS {col} {col_type}"
+            ).result()
+        except Exception as e:
+            logger.warning(f"Migration add column {col} to app_users: {e}")
+
+
+def _ensure_activity_logs_table():
+    bq = client()
+    tbl = bigquery.Table(table_ref("activity_logs"), schema=_ACTIVITY_LOGS_SCHEMA)
+    try:
+        bq.get_table(tbl)
+    except Exception:
+        bq.create_table(tbl)
+        logger.info("Created table activity_logs")
+
+
+def _ensure_sw_usage_table():
+    bq = client()
+    tbl = bigquery.Table(table_ref("sw_usage_counter"), schema=_SW_USAGE_COUNTER_SCHEMA)
+    try:
+        bq.get_table(tbl)
+    except Exception:
+        bq.create_table(tbl)
+        logger.info("Created table sw_usage_counter")
 
 
 def get_users() -> list[dict]:
     try:
         bq = client()
         rows = list(bq.query(
-            f"SELECT username, permissions, created_at FROM `{table_ref('app_users')}` ORDER BY created_at"
+            f"SELECT username, permissions, created_at, email, google_folder, display_name"
+            f" FROM `{table_ref('app_users')}` ORDER BY created_at"
         ).result())
-        return [{"username": r["username"], "permissions": r["permissions"],
-                 "created_at": str(r["created_at"])} for r in rows]
+        return [{
+            "username": r["username"],
+            "permissions": r["permissions"],
+            "created_at": str(r["created_at"]),
+            "email": r["email"],
+            "google_folder": r["google_folder"],
+            "display_name": r["display_name"],
+        } for r in rows]
     except Exception as e:
         logger.error(f"get_users error: {e}")
         return []
@@ -434,20 +496,54 @@ def get_bq_users_for_auth() -> dict[str, str]:
         return {}
 
 
-def add_user(username: str, password: str, permissions: str):
+def add_user(username: str, password: str, permissions: str,
+             email: str = None, google_folder: str = None, display_name: str = None):
     _ensure_users_table()
     bq = client()
     bq.query(
         f"DELETE FROM `{table_ref('app_users')}` WHERE username = @u",
         job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("u", "STRING", username)])
     ).result()
-    errors = bq.insert_rows_json(table_ref("app_users"), [{
+    row = {
         "username": username, "password": password,
         "permissions": permissions,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }])
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if email is not None:
+        row["email"] = email
+    if google_folder is not None:
+        row["google_folder"] = google_folder
+    if display_name is not None:
+        row["display_name"] = display_name
+    errors = bq.insert_rows_json(table_ref("app_users"), [row])
     if errors:
         logger.error(f"add_user errors: {errors}")
+
+
+def update_user(username: str, **kwargs):
+    """Update specific fields for an existing user. Accepted fields:
+    permissions, email, google_folder, display_name, password."""
+    allowed = {"permissions", "email", "google_folder", "display_name", "password"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return
+    bq = client()
+    set_parts = []
+    params = [bigquery.ScalarQueryParameter("u", "STRING", username)]
+    for i, (k, v) in enumerate(updates.items()):
+        pname = f"p{i}"
+        if v is None:
+            set_parts.append(f"{k} = NULL")
+        else:
+            set_parts.append(f"{k} = @{pname}")
+            params.append(bigquery.ScalarQueryParameter(pname, "STRING", str(v)))
+    try:
+        bq.query(
+            f"UPDATE `{table_ref('app_users')}` SET {', '.join(set_parts)} WHERE username = @u",
+            job_config=bigquery.QueryJobConfig(query_parameters=params)
+        ).result()
+    except Exception as e:
+        logger.error(f"update_user error: {e}")
 
 
 def remove_user(username: str):
@@ -456,3 +552,96 @@ def remove_user(username: str):
         f"DELETE FROM `{table_ref('app_users')}` WHERE username = @u",
         job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("u", "STRING", username)])
     ).result()
+
+
+# ── Activity Logs ─────────────────────────────────────────────────────────────
+
+def log_activity(username: str, action: str, details: dict = None):
+    """Log a user action. Uses DML INSERT to avoid streaming buffer issues."""
+    try:
+        bq = client()
+        logged_at = datetime.now(timezone.utc).isoformat()
+        details_str = json.dumps(details) if details else None
+        params = [
+            bigquery.ScalarQueryParameter("logged_at", "TIMESTAMP", logged_at),
+            bigquery.ScalarQueryParameter("username", "STRING", username),
+            bigquery.ScalarQueryParameter("action", "STRING", action),
+        ]
+        if details_str is not None:
+            params.append(bigquery.ScalarQueryParameter("details", "STRING", details_str))
+            sql = (
+                f"INSERT INTO `{table_ref('activity_logs')}` (logged_at, username, action, details) "
+                f"VALUES (@logged_at, @username, @action, @details)"
+            )
+        else:
+            sql = (
+                f"INSERT INTO `{table_ref('activity_logs')}` (logged_at, username, action, details) "
+                f"VALUES (@logged_at, @username, @action, NULL)"
+            )
+        bq.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+    except Exception as e:
+        logger.error(f"log_activity error: {e}")
+
+
+def get_activity_logs(limit: int = 200) -> list[dict]:
+    try:
+        bq = client()
+        rows = list(bq.query(
+            f"SELECT logged_at, username, action, details"
+            f" FROM `{table_ref('activity_logs')}` ORDER BY logged_at DESC LIMIT {limit}"
+        ).result())
+        return [{
+            "logged_at": str(r["logged_at"]),
+            "username": r["username"],
+            "action": r["action"],
+            "details": r["details"],
+        } for r in rows]
+    except Exception as e:
+        logger.error(f"get_activity_logs error: {e}")
+        return []
+
+
+# ── SW Usage Counter ──────────────────────────────────────────────────────────
+
+def increment_api_usage(username: str, api: str, calls: int = 1):
+    """Upsert (date, username, api) → increment calls. Uses MERGE for atomic upsert."""
+    try:
+        bq = client()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        sql = f"""
+            MERGE `{table_ref('sw_usage_counter')}` AS T
+            USING (SELECT @date AS date, @username AS username, @api AS api) AS S
+            ON T.date = S.date AND T.username = S.username AND T.api = S.api
+            WHEN MATCHED THEN
+                UPDATE SET T.calls = T.calls + @calls
+            WHEN NOT MATCHED THEN
+                INSERT (date, username, api, calls) VALUES (S.date, S.username, S.api, @calls)
+        """
+        params = [
+            bigquery.ScalarQueryParameter("date", "DATE", today),
+            bigquery.ScalarQueryParameter("username", "STRING", username),
+            bigquery.ScalarQueryParameter("api", "STRING", api),
+            bigquery.ScalarQueryParameter("calls", "INT64", calls),
+        ]
+        bq.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+    except Exception as e:
+        logger.error(f"increment_api_usage error: {e}")
+
+
+def get_api_usage_summary() -> list[dict]:
+    """Returns usage grouped by date + api."""
+    try:
+        bq = client()
+        rows = list(bq.query(
+            f"SELECT date, username, api, calls"
+            f" FROM `{table_ref('sw_usage_counter')}` ORDER BY date DESC, username, api"
+        ).result())
+        return [{
+            "date": str(r["date"]),
+            "username": r["username"],
+            "api": r["api"],
+            "calls": r["calls"],
+        } for r in rows]
+    except Exception as e:
+        logger.error(f"get_api_usage_summary error: {e}")
+        return []

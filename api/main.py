@@ -7,7 +7,7 @@ import logging
 import csv
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -163,6 +163,7 @@ def _parse_domains_from_file(content: bytes, filename: str) -> list[str]:
 
 @app.post("/api/jobs")
 async def create_job_endpoint(
+    request: Request,
     file: UploadFile = File(...),
     services: str = Form(...),
     force_refresh: str = Form(default="false"),
@@ -180,6 +181,15 @@ async def create_job_endpoint(
 
     fr = force_refresh.lower() == "true"
     job_id = start_job(domains, services_list, file.filename or "upload.csv", force_refresh=fr)
+    username = getattr(request.state, "username", "unknown")
+    try:
+        from core.bigquery import log_activity
+        log_activity(username, "job_created", {
+            "job_id": job_id, "total_domains": len(domains),
+            "services": services_list, "filename": file.filename or "upload.csv"
+        })
+    except Exception:
+        pass
     return {"job_id": job_id, "total_domains": len(domains), "services": services_list, "status": "pending"}
 
 
@@ -207,10 +217,16 @@ async def get_results_endpoint(job_id: str):
 
 
 @app.get("/api/jobs/{job_id}/export/csv")
-async def export_csv(job_id: str):
+async def export_csv(request: Request, job_id: str):
     results = get_results(job_id)
     if not results:
         raise HTTPException(status_code=404, detail="No results found")
+    username = getattr(request.state, "username", "unknown")
+    try:
+        from core.bigquery import log_activity
+        log_activity(username, "export_csv", {"job_id": job_id, "row_count": len(results)})
+    except Exception:
+        pass
     import pandas as pd
     df = pd.DataFrame(results)
     stream = io.StringIO()
@@ -223,10 +239,16 @@ async def export_csv(job_id: str):
     )
 
 @app.get("/api/jobs/{job_id}/export/xlsx")
-async def export_xlsx(job_id: str):
+async def export_xlsx(request: Request, job_id: str):
     results = get_results(job_id)
     if not results:
         raise HTTPException(status_code=404, detail="No results found")
+    username = getattr(request.state, "username", "unknown")
+    try:
+        from core.bigquery import log_activity
+        log_activity(username, "export_xlsx", {"job_id": job_id, "row_count": len(results)})
+    except Exception:
+        pass
     import pandas as pd
     df = pd.DataFrame(results)
     # Remove timezone from datetime columns
@@ -251,13 +273,19 @@ async def export_xlsx(job_id: str):
     )
 
 @app.post("/api/jobs/{job_id}/export/sheets")
-async def export_sheets(job_id: str, background_tasks: BackgroundTasks):
+async def export_sheets(request: Request, job_id: str, background_tasks: BackgroundTasks):
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     results = get_results(job_id)
     if not results:
         raise HTTPException(status_code=404, detail="No results found")
+    username = getattr(request.state, "username", "unknown")
+    try:
+        from core.bigquery import log_activity
+        log_activity(username, "export_sheets", {"job_id": job_id, "row_count": len(results)})
+    except Exception:
+        pass
 
     def do_export():
         url = export_job_to_sheets(job_id, job.get("filename", "results"), results)
