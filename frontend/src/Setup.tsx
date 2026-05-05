@@ -123,16 +123,35 @@ function CatalogSection() {
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 const PERMISSION_LABELS: Record<string, string> = {
-  read: "Read — тільки перегляд",
-  add: "Add — подавати запити на обробку",
-  download: "Download — скачувати дані",
-  admin: "Admin — керування системою",
+  read: "Read",
+  add: "Add",
+  download: "Download",
+  admin: "Admin",
+}
+const PERMISSION_DESC: Record<string, string> = {
+  read: "тільки перегляд",
+  add: "подавати запити на обробку",
+  download: "скачувати дані",
+  admin: "керування системою",
 }
 
+interface User {
+  username: string; permissions: string; created_at: string
+  first_name?: string; last_name?: string; email?: string
+  google_folder?: string; display_name?: string
+}
+
+const emptyNew = () => ({
+  username: "", password: "", permissions: "read",
+  first_name: "", last_name: "", email: "", google_folder: "",
+})
+
 function UsersSection() {
-  const [users, setUsers] = useState<{ username: string; permissions: string; created_at: string }[]>([])
+  const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
-  const [newUser, setNewUser] = useState({ username: "", password: "", permissions: "read" })
+  const [newUser, setNewUser] = useState(emptyNew())
+  const [editingUser, setEditingUser] = useState<string | null>(null)
+  const [editFields, setEditFields] = useState<Partial<User & { password: string }>>({})
   const [msg, setMsg] = useState("")
 
   const load = useCallback(async () => {
@@ -151,13 +170,41 @@ function UsersSection() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newUser)
       })
-      setNewUser({ username: "", password: "", permissions: "read" })
+      setNewUser(emptyNew())
       await load()
-      setMsg("Користувача додано")
+      setMsg("✓ Користувача додано")
+    } catch (e: any) { setMsg("Помилка: " + e.message) }
+  }
+
+  const startEdit = (u: User) => {
+    setEditingUser(u.username)
+    setEditFields({
+      first_name: u.first_name || "", last_name: u.last_name || "",
+      email: u.email || "", google_folder: u.google_folder || "",
+      permissions: u.permissions, password: "",
+    })
+  }
+
+  const saveEdit = async (username: string) => {
+    const fields: any = { ...editFields }
+    if (!fields.password) delete fields.password
+    // remove empty strings for optional fields
+    for (const k of ["first_name","last_name","email","google_folder"]) {
+      if (fields[k] === "") fields[k] = null
+    }
+    try {
+      await apiFetch(`/api/setup/users/${encodeURIComponent(username)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields)
+      })
+      setEditingUser(null)
+      await load()
+      setMsg("✓ Збережено")
     } catch (e: any) { setMsg("Помилка: " + e.message) }
   }
 
   const remove = async (username: string) => {
+    if (!window.confirm(`Видалити користувача "${username}"?`)) return
     setMsg("")
     try {
       await apiFetch(`/api/setup/users/${encodeURIComponent(username)}`, { method: "DELETE" })
@@ -168,51 +215,174 @@ function UsersSection() {
   return (
     <div className="card">
       <div className="card-section-title">Користувачі</div>
-      <div className="setup-users-grid">
-        <div style={{ fontWeight: 600, fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>Новий користувач</div>
-        <div className="setup-add-row">
+
+      {/* Add form */}
+      <div style={{ background: "var(--bg-2)", borderRadius: 8, padding: "12px 14px", marginBottom: 16 }}>
+        <div style={{ fontWeight: 600, fontSize: 11, color: "var(--text-3)", marginBottom: 8, textTransform: "uppercase", letterSpacing: .5 }}>Новий користувач</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <input className="filter-input" placeholder="Ім'я..." value={newUser.first_name}
+            onChange={e => setNewUser(p => ({ ...p, first_name: e.target.value }))} />
+          <input className="filter-input" placeholder="Прізвище..." value={newUser.last_name}
+            onChange={e => setNewUser(p => ({ ...p, last_name: e.target.value }))} />
           <input className="filter-input" placeholder="Логін..." value={newUser.username}
-            onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))} style={{ width: 140 }} />
+            onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))} />
           <input className="filter-input" placeholder="Пароль..." type="password" value={newUser.password}
-            onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))} style={{ width: 140 }} />
+            onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: 8 }}>
+          <input className="filter-input" placeholder="Email (Google)..." value={newUser.email}
+            onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} />
+          <input className="filter-input" placeholder="Google Folder ID (необов'язково)..." value={newUser.google_folder}
+            onChange={e => setNewUser(p => ({ ...p, google_folder: e.target.value }))} />
           <select className="flt-select-sm" value={newUser.permissions}
             onChange={e => setNewUser(p => ({ ...p, permissions: e.target.value }))}>
             {Object.entries(PERMISSION_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
-          <button className="btn-primary" style={{ padding: "6px 16px", fontSize: 13 }} onClick={add}>+ Додати</button>
+          <button className="btn-primary" style={{ padding: "6px 16px", fontSize: 13, whiteSpace: "nowrap" }} onClick={add}>+ Додати</button>
         </div>
-        {msg && <div className="setup-msg">{msg}</div>}
       </div>
 
+      {msg && <div className="setup-msg" style={{ marginBottom: 8 }}>{msg}</div>}
+
       {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (
-        <table className="results-table" style={{ marginTop: 12 }}>
-          <thead><tr><th>Логін</th><th>Доступ</th><th>Створено</th><th></th></tr></thead>
+        <table className="results-table">
+          <thead>
+            <tr>
+              <th>Ім'я / Прізвище</th>
+              <th>Логін</th>
+              <th>Email</th>
+              <th>Доступ</th>
+              <th>Google Folder</th>
+              <th>Створено</th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody>
             {users.length === 0 && (
-              <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--text-3)", padding: 16 }}>
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-3)", padding: 16 }}>
                 Немає користувачів — авторизація вимкнена
               </td></tr>
             )}
-            {users.map(u => (
+            {users.map(u => editingUser === u.username ? (
+              <tr key={u.username} style={{ background: "var(--bg-2)" }}>
+                <td>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <input className="filter-input" placeholder="Ім'я" value={editFields.first_name || ""}
+                      onChange={e => setEditFields(p => ({ ...p, first_name: e.target.value }))} style={{ width: 90 }} />
+                    <input className="filter-input" placeholder="Прізвище" value={editFields.last_name || ""}
+                      onChange={e => setEditFields(p => ({ ...p, last_name: e.target.value }))} style={{ width: 90 }} />
+                  </div>
+                </td>
+                <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{u.username}</td>
+                <td>
+                  <input className="filter-input" placeholder="email@..." value={editFields.email || ""}
+                    onChange={e => setEditFields(p => ({ ...p, email: e.target.value }))} style={{ width: 160 }} />
+                </td>
+                <td>
+                  <select className="flt-select-sm" value={editFields.permissions || "read"}
+                    onChange={e => setEditFields(p => ({ ...p, permissions: e.target.value }))}>
+                    {Object.entries(PERMISSION_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </td>
+                <td>
+                  <input className="filter-input" placeholder="Folder ID..." value={editFields.google_folder || ""}
+                    onChange={e => setEditFields(p => ({ ...p, google_folder: e.target.value }))} style={{ width: 130 }} />
+                </td>
+                <td>
+                  <input className="filter-input" placeholder="Новий пароль..." type="password" value={editFields.password || ""}
+                    onChange={e => setEditFields(p => ({ ...p, password: e.target.value }))} style={{ width: 110 }} />
+                </td>
+                <td>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button className="btn-primary" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => saveEdit(u.username)}>✓</button>
+                    <button className="setup-remove-btn" onClick={() => setEditingUser(null)}>✕</button>
+                  </div>
+                </td>
+              </tr>
+            ) : (
               <tr key={u.username}>
-                <td style={{ fontFamily: "var(--mono)", fontWeight: 500 }}>{u.username}</td>
+                <td>{[u.first_name, u.last_name].filter(Boolean).join(" ") || <span style={{ color: "var(--text-3)" }}>—</span>}</td>
+                <td style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 500 }}>{u.username}</td>
+                <td style={{ fontSize: 12 }}>{u.email || <span style={{ color: "var(--text-3)" }}>—</span>}</td>
                 <td><span className="service-tag">{u.permissions}</span></td>
+                <td style={{ fontSize: 11, color: "var(--text-3)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {u.google_folder ? <span title={u.google_folder}>{u.google_folder.slice(0, 12)}…</span> : "—"}
+                </td>
                 <td style={{ fontSize: 11, color: "var(--text-3)" }}>{u.created_at ? new Date(u.created_at).toLocaleDateString("uk-UA") : "—"}</td>
-                <td><button className="setup-remove-btn" onClick={() => remove(u.username)}>&#10005;</button></td>
+                <td>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button className="btn-export" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => startEdit(u)}>✎</button>
+                    <button className="setup-remove-btn" onClick={() => remove(u.username)}>✕</button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
 
-      <div className="setup-permissions-legend">
+      <div className="setup-permissions-legend" style={{ marginTop: 12 }}>
         {Object.entries(PERMISSION_LABELS).map(([k, v]) => (
           <div key={k} className="setup-perm-row">
-            <span className="service-tag">{k}</span>
-            <span style={{ fontSize: 12, color: "var(--text-2)" }}>{v.split("—")[1]?.trim()}</span>
+            <span className="service-tag">{v}</span>
+            <span style={{ fontSize: 12, color: "var(--text-2)" }}>{PERMISSION_DESC[k]}</span>
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ── Activity Logs ─────────────────────────────────────────────────────────────
+
+function LogsSection() {
+  const [logs, setLogs] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { const r = await apiFetch("/api/setup/logs"); setLogs(r.logs) } catch {}
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const ACTION_LABELS: Record<string, string> = {
+    job_created: "🚀 Новий job", export_csv: "↓ CSV", export_xlsx: "↓ XLSX",
+    export_sheets: "↗ Sheets", explore_export_xlsx: "↓ Explorer XLSX",
+    explore_export_sheets: "↗ Explorer Sheets",
+  }
+
+  return (
+    <div className="card">
+      <div className="setup-section-header">
+        <div className="card-section-title">Лог дій</div>
+        <button className="btn-export" onClick={load} disabled={loading}>↻ Оновити</button>
+      </div>
+      {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (
+        <table className="results-table" style={{ marginTop: 8 }}>
+          <thead><tr><th>Дата / Час</th><th>Користувач</th><th>Дія</th><th>Деталі</th></tr></thead>
+          <tbody>
+            {logs.length === 0 && (
+              <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--text-3)", padding: 16 }}>Логів немає</td></tr>
+            )}
+            {logs.map((l, i) => {
+              let details = ""
+              try { const d = JSON.parse(l.details || "{}"); details = Object.entries(d).map(([k,v]) => `${k}: ${v}`).join(", ") } catch {}
+              return (
+                <tr key={i}>
+                  <td style={{ fontSize: 11, color: "var(--text-3)", whiteSpace: "nowrap" }}>
+                    {l.logged_at ? new Date(l.logged_at).toLocaleString("uk-UA") : "—"}
+                  </td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{l.username}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{ACTION_LABELS[l.action] || l.action}</td>
+                  <td style={{ fontSize: 11, color: "var(--text-2)" }}>{details}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }
@@ -329,6 +499,8 @@ export default function SetupPage() {
       <CacheSection />
       <div style={{ height: 16 }} />
       <JobsSection />
+      <div style={{ height: 16 }} />
+      <LogsSection />
     </div>
   )
 }
