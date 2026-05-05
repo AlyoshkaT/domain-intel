@@ -128,7 +128,7 @@ async def update_settings(data: SettingsUpdate):
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
-VALID_PERMISSIONS = {"explorer", "jobs", "download", "sheets", "setup"}
+VALID_PERMISSIONS = {"explorer", "jobs", "download", "sheets", "admin"}
 
 
 def _normalize_permissions(perms: str | list | None) -> str:
@@ -156,7 +156,7 @@ async def list_permissions():
         {"key": "jobs",      "label": "Jobs",            "desc": "Створення та запуск завдань обробки"},
         {"key": "download",  "label": "Download",        "desc": "Скачати CSV / XLSX"},
         {"key": "sheets",    "label": "Google Sheets",   "desc": "Експорт результатів у Google Sheets"},
-        {"key": "setup",     "label": "Setup (адмін)",   "desc": "Керування системою, юзерами, каталогом"},
+        {"key": "admin",     "label": "Admin",            "desc": "Керування системою, юзерами, каталогом"},
     ]}
 
 

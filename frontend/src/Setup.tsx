@@ -123,18 +123,35 @@ function CatalogSection() {
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 const ALL_PERMISSIONS = [
-  { key: "explorer", label: "Explorer",     desc: "Перегляд Explorer та дашборду" },
-  { key: "jobs",     label: "Jobs",          desc: "Створення та запуск завдань" },
-  { key: "download", label: "Download",      desc: "Скачати CSV / XLSX" },
-  { key: "sheets",   label: "Sheets",        desc: "Експорт у Google Sheets" },
-  { key: "setup",    label: "Setup (адмін)", desc: "Керування системою та юзерами" },
+  { key: "explorer", label: "Explorer",  desc: "Перегляд Explorer та дашборду" },
+  { key: "jobs",     label: "Jobs",      desc: "Створення та запуск завдань" },
+  { key: "download", label: "Download",  desc: "Скачати CSV / XLSX" },
+  { key: "sheets",   label: "Sheets",    desc: "Експорт у Google Sheets" },
+  { key: "admin",    label: "Admin",     desc: "Керування системою та юзерами" },
 ]
 
 const PRESETS = [
   { label: "Viewer",  perms: ["explorer"] },
   { label: "Manager", perms: ["explorer","jobs","download","sheets"] },
-  { label: "Admin",   perms: ["explorer","jobs","download","sheets","setup"] },
+  { label: "Admin",   perms: ["explorer","jobs","download","sheets","admin"] },
 ]
+
+// Map legacy permission values to new system
+function parsePerms(s?: string): string[] {
+  if (!s) return ["explorer"]
+  const legacy: Record<string, string[]> = {
+    read:     ["explorer"],
+    add:      ["explorer","jobs"],
+    download: ["explorer","jobs","download"],
+    admin:    ["explorer","jobs","download","sheets","admin"],
+  }
+  const parts = s.split(",").map(p => p.trim()).filter(Boolean)
+  // if single legacy value — map it
+  if (parts.length === 1 && legacy[parts[0]]) return legacy[parts[0]]
+  // otherwise filter to known keys
+  const known = new Set(ALL_PERMISSIONS.map(p => p.key))
+  return parts.filter(p => known.has(p))
+}
 
 function PermissionToggle({ value, onChange }: { value: string[], onChange: (v: string[]) => void }) {
   const toggle = (key: string) =>
@@ -169,10 +186,7 @@ function PermissionToggle({ value, onChange }: { value: string[], onChange: (v: 
   )
 }
 
-function parsePerms(s?: string): string[] {
-  if (!s) return ["explorer"]
-  return s.split(",").map(p => p.trim()).filter(Boolean)
-}
+
 
 interface User {
   username: string; permissions: string; created_at: string
