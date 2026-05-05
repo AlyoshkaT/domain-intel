@@ -435,7 +435,7 @@ def _ensure_users_table():
         bq.create_table(tbl)
         logger.info("Created table app_users")
     # Migrate: add new columns if not exists
-    for col, col_type in [("email", "STRING"), ("google_folder", "STRING"), ("display_name", "STRING")]:
+    for col, col_type in [("email", "STRING"), ("google_folder", "STRING"), ("display_name", "STRING"), ("first_name", "STRING"), ("last_name", "STRING")]:
         try:
             bq.query(
                 f"ALTER TABLE `{table_ref('app_users')}` ADD COLUMN IF NOT EXISTS {col} {col_type}"
@@ -468,7 +468,7 @@ def get_users() -> list[dict]:
     try:
         bq = client()
         rows = list(bq.query(
-            f"SELECT username, permissions, created_at, email, google_folder, display_name"
+            f"SELECT username, permissions, created_at, email, google_folder, display_name, first_name, last_name"
             f" FROM `{table_ref('app_users')}` ORDER BY created_at"
         ).result())
         return [{
@@ -478,6 +478,8 @@ def get_users() -> list[dict]:
             "email": r["email"],
             "google_folder": r["google_folder"],
             "display_name": r["display_name"],
+            "first_name": r["first_name"],
+            "last_name": r["last_name"],
         } for r in rows]
     except Exception as e:
         logger.error(f"get_users error: {e}")
@@ -497,7 +499,8 @@ def get_bq_users_for_auth() -> dict[str, str]:
 
 
 def add_user(username: str, password: str, permissions: str,
-             email: str = None, google_folder: str = None, display_name: str = None):
+             email: str = None, google_folder: str = None, display_name: str = None,
+             first_name: str = None, last_name: str = None):
     _ensure_users_table()
     bq = client()
     bq.query(
@@ -515,6 +518,10 @@ def add_user(username: str, password: str, permissions: str,
         row["google_folder"] = google_folder
     if display_name is not None:
         row["display_name"] = display_name
+    if first_name is not None:
+        row["first_name"] = first_name
+    if last_name is not None:
+        row["last_name"] = last_name
     errors = bq.insert_rows_json(table_ref("app_users"), [row])
     if errors:
         logger.error(f"add_user errors: {errors}")
@@ -523,7 +530,7 @@ def add_user(username: str, password: str, permissions: str,
 def update_user(username: str, **kwargs):
     """Update specific fields for an existing user. Accepted fields:
     permissions, email, google_folder, display_name, password."""
-    allowed = {"permissions", "email", "google_folder", "display_name", "password"}
+    allowed = {"permissions", "email", "google_folder", "display_name", "first_name", "last_name", "password"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return

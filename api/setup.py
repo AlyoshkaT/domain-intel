@@ -141,6 +141,8 @@ class UserCreate(BaseModel):
     username: str
     password: str
     permissions: Literal["read", "add", "download", "admin"]
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: Optional[str] = None
     google_folder: Optional[str] = None
     display_name: Optional[str] = None
@@ -149,6 +151,8 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     permissions: Optional[Literal["read", "add", "download", "admin"]] = None
     password: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: Optional[str] = None
     google_folder: Optional[str] = None
     display_name: Optional[str] = None
@@ -163,6 +167,7 @@ async def create_user(user: UserCreate):
     from core.bigquery import add_user
     add_user(
         user.username.strip(), user.password, user.permissions,
+        first_name=user.first_name, last_name=user.last_name,
         email=user.email, google_folder=user.google_folder, display_name=user.display_name
     )
     return {"ok": True}
