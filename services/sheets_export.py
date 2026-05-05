@@ -179,10 +179,10 @@ def _create_sheet(title: str, tab_title: str, results: list[dict],
         return _export_as_tab(sheet_id, tab_title, rows)
 
     # New-file mode: create separate file
-    # With OAuth credentials → root Drive (no folder needed)
+    # With OAuth credentials → use folder if set, otherwise root Drive
     # With SA credentials   → folder required (SA has no Drive storage)
     using_oauth = bool(os.getenv("GOOGLE_OAUTH_TOKEN_JSON", "").strip())
-    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip() if not using_oauth else ""
+    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
 
     if using_oauth or folder_id:
         return _export_as_new_file(folder_id, title, rows)
