@@ -128,7 +128,19 @@ async def update_settings(data: SettingsUpdate):
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
-VALID_PERMISSIONS = {"read", "add", "download", "admin"}
+VALID_PERMISSIONS = {"explorer", "jobs", "download", "sheets", "setup"}
+
+
+def _normalize_permissions(perms: str | list | None) -> str:
+    """Accept list or comma-string, return validated comma-string."""
+    if perms is None:
+        return "explorer"
+    if isinstance(perms, list):
+        vals = perms
+    else:
+        vals = [p.strip() for p in str(perms).split(",")]
+    valid = [v for v in vals if v in VALID_PERMISSIONS]
+    return ",".join(valid) if valid else "explorer"
 
 
 @router.get("/users")
@@ -137,10 +149,21 @@ async def list_users():
     return {"users": get_users()}
 
 
+@router.get("/permissions")
+async def list_permissions():
+    return {"permissions": [
+        {"key": "explorer",  "label": "Explorer",       "desc": "Перегляд Explorer та дашборду"},
+        {"key": "jobs",      "label": "Jobs",            "desc": "Створення та запуск завдань обробки"},
+        {"key": "download",  "label": "Download",        "desc": "Скачати CSV / XLSX"},
+        {"key": "sheets",    "label": "Google Sheets",   "desc": "Експорт результатів у Google Sheets"},
+        {"key": "setup",     "label": "Setup (адмін)",   "desc": "Керування системою, юзерами, каталогом"},
+    ]}
+
+
 class UserCreate(BaseModel):
     username: str
     password: str
-    permissions: Literal["read", "add", "download", "admin"]
+    permissions: str = "explorer"   # comma-separated: "explorer,jobs,download"
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[str] = None
@@ -149,7 +172,7 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    permissions: Optional[Literal["read", "add", "download", "admin"]] = None
+    permissions: Optional[str] = None
     password: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -166,7 +189,7 @@ async def create_user(user: UserCreate):
         raise HTTPException(status_code=400, detail="Password required")
     from core.bigquery import add_user
     add_user(
-        user.username.strip(), user.password, user.permissions,
+        user.username.strip(), user.password, _normalize_permissions(user.permissions),
         first_name=user.first_name, last_name=user.last_name,
         email=user.email, google_folder=user.google_folder, display_name=user.display_name
     )
@@ -179,6 +202,8 @@ async def patch_user(username: str, update: UserUpdate):
     fields = update.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
+    if "permissions" in fields:
+        fields["permissions"] = _normalize_permissions(fields["permissions"])
     update_user(username, **fields)
     return {"ok": True}
 

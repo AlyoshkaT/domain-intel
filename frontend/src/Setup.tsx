@@ -122,17 +122,56 @@ function CatalogSection() {
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
-const PERMISSION_LABELS: Record<string, string> = {
-  read: "Read",
-  add: "Add",
-  download: "Download",
-  admin: "Admin",
+const ALL_PERMISSIONS = [
+  { key: "explorer", label: "Explorer",     desc: "Перегляд Explorer та дашборду" },
+  { key: "jobs",     label: "Jobs",          desc: "Створення та запуск завдань" },
+  { key: "download", label: "Download",      desc: "Скачати CSV / XLSX" },
+  { key: "sheets",   label: "Sheets",        desc: "Експорт у Google Sheets" },
+  { key: "setup",    label: "Setup (адмін)", desc: "Керування системою та юзерами" },
+]
+
+const PRESETS = [
+  { label: "Viewer",  perms: ["explorer"] },
+  { label: "Manager", perms: ["explorer","jobs","download","sheets"] },
+  { label: "Admin",   perms: ["explorer","jobs","download","sheets","setup"] },
+]
+
+function PermissionToggle({ value, onChange }: { value: string[], onChange: (v: string[]) => void }) {
+  const toggle = (key: string) =>
+    onChange(value.includes(key) ? value.filter(k => k !== key) : [...value, key])
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {ALL_PERMISSIONS.map(p => (
+        <button key={p.key} title={p.desc}
+          onClick={() => toggle(p.key)}
+          style={{
+            padding: "3px 10px", fontSize: 12, borderRadius: 4, cursor: "pointer", border: "1px solid",
+            background: value.includes(p.key) ? "var(--accent)" : "var(--bg-2)",
+            color: value.includes(p.key) ? "#fff" : "var(--text-2)",
+            borderColor: value.includes(p.key) ? "var(--accent)" : "var(--border)",
+            fontWeight: value.includes(p.key) ? 600 : 400,
+          }}>
+          {p.label}
+        </button>
+      ))}
+      <span style={{ color: "var(--border)", margin: "0 2px" }}>|</span>
+      {PRESETS.map(pr => (
+        <button key={pr.label} onClick={() => onChange(pr.perms)}
+          style={{
+            padding: "3px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+            background: "transparent", color: "var(--text-3)",
+            border: "1px dashed var(--border)",
+          }}>
+          {pr.label}
+        </button>
+      ))}
+    </div>
+  )
 }
-const PERMISSION_DESC: Record<string, string> = {
-  read: "тільки перегляд",
-  add: "подавати запити на обробку",
-  download: "скачувати дані",
-  admin: "керування системою",
+
+function parsePerms(s?: string): string[] {
+  if (!s) return ["explorer"]
+  return s.split(",").map(p => p.trim()).filter(Boolean)
 }
 
 interface User {
@@ -142,7 +181,7 @@ interface User {
 }
 
 const emptyNew = () => ({
-  username: "", password: "", permissions: "read",
+  username: "", password: "", permissions: ["explorer"] as string[],
   first_name: "", last_name: "", email: "", google_folder: "",
 })
 
@@ -168,7 +207,7 @@ function UsersSection() {
     try {
       await apiFetch("/api/setup/users", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newUser)
+        body: JSON.stringify({ ...newUser, permissions: newUser.permissions.join(",") })
       })
       setNewUser(emptyNew())
       await load()
@@ -182,13 +221,14 @@ function UsersSection() {
       first_name: u.first_name || "", last_name: u.last_name || "",
       email: u.email || "", google_folder: u.google_folder || "",
       permissions: u.permissions, password: "",
+      _perms: parsePerms(u.permissions) as any,
     })
   }
 
   const saveEdit = async (username: string) => {
     const fields: any = { ...editFields }
+    if (fields._perms) { fields.permissions = (fields._perms as string[]).join(","); delete fields._perms }
     if (!fields.password) delete fields.password
-    // remove empty strings for optional fields
     for (const k of ["first_name","last_name","email","google_folder"]) {
       if (fields[k] === "") fields[k] = null
     }
@@ -229,16 +269,17 @@ function UsersSection() {
           <input className="filter-input" placeholder="Пароль..." type="password" value={newUser.password}
             onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))} />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="filter-input" placeholder="Email (Google)..." value={newUser.email}
-            onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} />
+            onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} style={{ flex: "1 1 180px" }} />
           <input className="filter-input" placeholder="Google Folder ID (необов'язково)..." value={newUser.google_folder}
-            onChange={e => setNewUser(p => ({ ...p, google_folder: e.target.value }))} />
-          <select className="flt-select-sm" value={newUser.permissions}
-            onChange={e => setNewUser(p => ({ ...p, permissions: e.target.value }))}>
-            {Object.entries(PERMISSION_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
+            onChange={e => setNewUser(p => ({ ...p, google_folder: e.target.value }))} style={{ flex: "1 1 160px" }} />
           <button className="btn-primary" style={{ padding: "6px 16px", fontSize: 13, whiteSpace: "nowrap" }} onClick={add}>+ Додати</button>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>Права доступу:</div>
+          <PermissionToggle value={newUser.permissions}
+            onChange={v => setNewUser(p => ({ ...p, permissions: v }))} />
         </div>
       </div>
 
@@ -278,11 +319,10 @@ function UsersSection() {
                   <input className="filter-input" placeholder="email@..." value={editFields.email || ""}
                     onChange={e => setEditFields(p => ({ ...p, email: e.target.value }))} style={{ width: 160 }} />
                 </td>
-                <td>
-                  <select className="flt-select-sm" value={editFields.permissions || "read"}
-                    onChange={e => setEditFields(p => ({ ...p, permissions: e.target.value }))}>
-                    {Object.entries(PERMISSION_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                  </select>
+                <td colSpan={2}>
+                  <PermissionToggle
+                    value={(editFields as any)._perms || parsePerms(editFields.permissions)}
+                    onChange={v => setEditFields(p => ({ ...p, _perms: v as any }))} />
                 </td>
                 <td>
                   <input className="filter-input" placeholder="Folder ID..." value={editFields.google_folder || ""}
@@ -304,7 +344,7 @@ function UsersSection() {
                 <td>{[u.first_name, u.last_name].filter(Boolean).join(" ") || <span style={{ color: "var(--text-3)" }}>—</span>}</td>
                 <td style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 500 }}>{u.username}</td>
                 <td style={{ fontSize: 12 }}>{u.email || <span style={{ color: "var(--text-3)" }}>—</span>}</td>
-                <td><span className="service-tag">{u.permissions}</span></td>
+                <td>{parsePerms(u.permissions).map(p => <span key={p} className="service-tag" style={{marginRight:3}}>{p}</span>)}</td>
                 <td style={{ fontSize: 11, color: "var(--text-3)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>
                   {u.google_folder ? <span title={u.google_folder}>{u.google_folder.slice(0, 12)}…</span> : "—"}
                 </td>
@@ -322,10 +362,10 @@ function UsersSection() {
       )}
 
       <div className="setup-permissions-legend" style={{ marginTop: 12 }}>
-        {Object.entries(PERMISSION_LABELS).map(([k, v]) => (
-          <div key={k} className="setup-perm-row">
-            <span className="service-tag">{v}</span>
-            <span style={{ fontSize: 12, color: "var(--text-2)" }}>{PERMISSION_DESC[k]}</span>
+        {ALL_PERMISSIONS.map(p => (
+          <div key={p.key} className="setup-perm-row">
+            <span className="service-tag">{p.label}</span>
+            <span style={{ fontSize: 12, color: "var(--text-2)" }}>{p.desc}</span>
           </div>
         ))}
       </div>
