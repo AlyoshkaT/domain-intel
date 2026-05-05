@@ -598,13 +598,12 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
               <>
                 <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
                 <button className="btn-export" onClick={exportXLSX}>↓ XLSX</button>
-                <button className="btn-export" onClick={exportToSheets} disabled={sheetsExporting}
-                  style={{background:"#0f9d58",color:"white",borderColor:"#0f9d58"}}>
+                <button className="btn-export" onClick={exportToSheets} disabled={sheetsExporting}>
                   {sheetsExporting ? "⏳ Sheets..." : "↗ Sheets"}
                 </button>
                 {sheetsUrl && (
                   <a href={sheetsUrl} target="_blank" rel="noopener"
-                    style={{fontSize:11,color:"#0f9d58",textDecoration:"none"}}>✓ Відкрити →</a>
+                    style={{fontSize:11,color:"var(--accent)",textDecoration:"none"}}>✓ Відкрити →</a>
                 )}
                 {onViewTechnologies && (
                   <button className="btn-export"

@@ -283,10 +283,7 @@ async def explore_export_sheets(body: dict, background_tasks: BackgroundTasks):
         try:
             from services.sheets_export import export_explorer_to_sheets
             url = export_explorer_to_sheets(label, results)
-            if url:
-                _explore_sheet_url = url
-            else:
-                _explore_sheet_error = "Export failed — check GOOGLE_SHEETS_CREDENTIALS_JSON"
+            _explore_sheet_url = url
         except Exception as e:
             _explore_sheet_error = str(e)
     background_tasks.add_task(do_export)

@@ -109,7 +109,7 @@ def _create_sheet(title: str, results: list[dict], columns: list[tuple] = None) 
 
     except Exception as e:
         logger.error(f"Sheets export error: {e}")
-        return None
+        raise
 
 
 def export_job_to_sheets(job_id: str, filename: str, results: list[dict]) -> Optional[str]:
