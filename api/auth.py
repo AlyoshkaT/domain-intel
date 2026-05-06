@@ -42,10 +42,12 @@ def _load_bq_users() -> dict[str, str]:
 
 
 def get_auth_users() -> dict[str, str]:
+    """Merge env users + BQ users. ENV takes priority on conflict."""
+    bq_users = _load_bq_users()
     env_users = _load_env_users()
-    if env_users:
-        return env_users
-    return _load_bq_users()
+    # BQ users as base, env users override (so env admin always works)
+    merged = {**bq_users, **env_users}
+    return merged
 
 
 def invalidate_users_cache():
