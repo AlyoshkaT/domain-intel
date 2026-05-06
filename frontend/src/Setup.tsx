@@ -311,6 +311,11 @@ function UsersSection() {
           onChange={e => setUserSearch(e.target.value)}
           style={{ flex: 1 }}
         />
+        <span style={{ fontSize: 11, color: "var(--text-3)", whiteSpace: "nowrap", fontFamily: "var(--mono)" }}>
+          {userSearch.trim()
+            ? `${users.filter(u => { const q = userSearch.trim().toLowerCase(); return u.username.toLowerCase().includes(q) || (u.first_name||"").toLowerCase().includes(q) || (u.last_name||"").toLowerCase().includes(q) || (u.email||"").toLowerCase().includes(q) }).length} / ${users.length}`
+            : `${users.length}`}
+        </span>
         {userSearch && (
           <button onClick={() => setUserSearch("")}
             style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-3)", fontSize: 16 }}>✕</button>
@@ -318,6 +323,7 @@ function UsersSection() {
       </div>
 
       {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (
+        <div style={{ overflowX: "auto" }}>
         <table className="results-table">
           <thead>
             <tr>
@@ -409,6 +415,7 @@ function UsersSection() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       <div className="setup-permissions-legend" style={{ marginTop: 12 }}>
@@ -577,7 +584,7 @@ function JobsSection() {
 
 export default function SetupPage() {
   return (
-    <div className="page">
+    <div className="page-wide">
       <div className="page-header">
         <h1 className="page-title">Setup</h1>
         <span style={{ fontSize: 12, color: "var(--text-3)" }}>Налаштування системи</span>

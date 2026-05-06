@@ -350,9 +350,11 @@ function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, active
 function cell(v?: string | null) { return v && v.trim() ? v : "—" }
 
 // ─── Main Explorer ─────────────────────────────────────────────────────────────
-export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
+export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can }: {
   onViewTechnologies?: (domains: string[]) => void; onNavigateToJobs?: () => void
+  can?: (p: string) => boolean
 }) {
+  const canDo = can || (() => true)  // default: allow all
   const [filters, setFilters] = useState<FilterState>(defaultFilters())
   const [allProfiles, setAllProfiles] = useState<ExploreResult[]>(_cachedProfiles || [])
   const [filteredProfiles, setFilteredProfiles] = useState<ExploreResult[]>(_cachedProfiles || [])
@@ -605,12 +607,12 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs }: {
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             {!loading && filteredProfiles.length > 0 && (
               <>
-                <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
-                <button className="btn-export" onClick={exportXLSX}>↓ XLSX</button>
-                <button className="btn-export" onClick={exportToSheets} disabled={sheetsExporting}>
+                {canDo("download") && <button className="btn-export" onClick={exportCSV}>↓ CSV</button>}
+                {canDo("download") && <button className="btn-export" onClick={exportXLSX}>↓ XLSX</button>}
+                {canDo("sheets") && <button className="btn-export" onClick={exportToSheets} disabled={sheetsExporting}>
                   {sheetsExporting ? "⏳ Sheets..." : "↗ Sheets"}
-                </button>
-                {sheetsUrl && (
+                </button>}
+                {canDo("sheets") && sheetsUrl && (
                   <a href={sheetsUrl} target="_blank" rel="noopener"
                     style={{fontSize:11,color:"var(--accent)",textDecoration:"none"}}>✓ Відкрити →</a>
                 )}

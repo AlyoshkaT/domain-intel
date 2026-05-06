@@ -459,7 +459,7 @@ export default function App() {
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} />}
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} />}
         {view === "results" && selectedJobId && <ResultsPage jobId={selectedJobId} onBack={() => setView("jobs")} can={can} />}
-        {view === "explorer" && <ExplorerPage onViewTechnologies={(domains: string[]) => { setTechDomains(domains); setView("technologies") }} onNavigateToJobs={() => setView("jobs")} />}
+        {view === "explorer" && <ExplorerPage onViewTechnologies={(domains: string[]) => { setTechDomains(domains); setView("technologies") }} onNavigateToJobs={() => setView("jobs")} can={can} />}
       </main>
     </div>
   )
