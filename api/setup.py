@@ -188,30 +188,36 @@ async def create_user(user: UserCreate):
     if not user.password.strip():
         raise HTTPException(status_code=400, detail="Password required")
     from core.bigquery import add_user
+    from api.auth import invalidate_users_cache
     add_user(
         user.username.strip(), user.password, _normalize_permissions(user.permissions),
         first_name=user.first_name, last_name=user.last_name,
         email=user.email, google_folder=user.google_folder, display_name=user.display_name
     )
+    invalidate_users_cache()
     return {"ok": True}
 
 
 @router.patch("/users/{username}")
 async def patch_user(username: str, update: UserUpdate):
     from core.bigquery import update_user
+    from api.auth import invalidate_users_cache
     fields = update.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
     if "permissions" in fields:
         fields["permissions"] = _normalize_permissions(fields["permissions"])
     update_user(username, **fields)
+    invalidate_users_cache()
     return {"ok": True}
 
 
 @router.delete("/users/{username}")
 async def delete_user(username: str):
     from core.bigquery import remove_user
+    from api.auth import invalidate_users_cache
     remove_user(username)
+    invalidate_users_cache()
     return {"ok": True}
 
 
