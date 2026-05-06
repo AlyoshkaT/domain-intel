@@ -1,10 +1,14 @@
 """
 Claude AI (Haiku) classification service.
 
-READ  → esoteric-parsec-147012.es_analysis.latest_categories_claude
-        (deduplicated view: domain, latest_response, category, subcategory)
+READ  → esoteric-parsec-147012.es_analysis.claude_responses
+        using QUALIFY ROW_NUMBER() to get latest per domain (same logic as
+        latest_categories_claude VIEW, but extracts all fields incl. is_ecommerce)
 WRITE → esoteric-parsec-147012.es_analysis.claude_responses
         (append-only log: domain, fetched_at, response_json JSON, input_hash)
+
+Note: latest_categories_claude is just a VIEW on claude_responses that
+      loses is_ecommerce — we read the source directly.
 """
 import hashlib
 import httpx
@@ -15,15 +19,12 @@ from config.settings import ANTHROPIC_API_KEY, CORP_PROJECT_ID, CORP_DATASET
 
 logger = logging.getLogger(__name__)
 
-# Write target (append-only log)
-CORP_AI_WRITE_TABLE  = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
-CORP_AI_WRITE_TABLE_ID = f"{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses"
+# Both read and write use claude_responses (the source of truth)
+CORP_AI_TABLE     = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
+CORP_AI_TABLE_ID  = f"{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses"
 
-# Read source (deduplicated view — already latest per domain)
-CORP_AI_READ_TABLE   = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.latest_categories_claude`"
-
-# Prefetch cache key (used in core/bigquery.py _prefetch_cache)
-CORP_AI_CACHE_KEY = "latest_categories_claude"
+# Prefetch cache key
+CORP_AI_CACHE_KEY = "claude_responses"
 
 CATEGORIES = [
     "product_ecom", "service_ecom", "marketplace",
@@ -48,63 +49,56 @@ def _make_input_hash(domain: str, sw_title: str, sw_description: str) -> str:
     return hashlib.md5(raw.encode()).hexdigest()[:16]
 
 
-def _parse_latest_row(data: dict) -> Optional[dict]:
-    """Convert latest_categories_claude row → our ai_ fields.
-    NOTE: is_ecommerce is not in this view — defaults to 'Ні'.
-    """
-    category = data.get("category") or data.get("ai_category")
+def _parse_ai_row(data: dict) -> Optional[dict]:
+    """Convert claude_responses response_json → our ai_ fields (all fields incl. is_ecommerce)."""
+    category = data.get("category")
     if not category:
-        return None
-    return {
-        "ai_category":     category,
-        "ai_industry":     data.get("subcategory") or data.get("ai_industry") or "",
-        "ai_is_ecommerce": "Ні",   # not stored in latest_categories_claude
-    }
-
-
-def _parse_response_json(data: dict) -> Optional[dict]:
-    """Convert full claude_responses response_json → our ai_ fields (includes is_ecommerce)."""
-    if "category" not in data:
         return None
     is_ecom = data.get("is_ecommerce")
     return {
-        "ai_category":     data.get("category", ""),
+        "ai_category":     category,
         "ai_industry":     data.get("subcategory", ""),
         "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
     }
 
 
 def get_corp_ai_cached(domain: str) -> Optional[dict]:
-    """Read AI classification. Uses latest_categories_claude (fast, deduplicated)."""
+    """Read AI classification from claude_responses (latest per domain, all fields)."""
     from core.bigquery import _prefetch_cache
 
-    # Fast path: prefetch cache (populated at job start from latest_categories_claude)
+    # Fast path: prefetch cache (populated at job start)
     if CORP_AI_CACHE_KEY in _prefetch_cache and domain in _prefetch_cache[CORP_AI_CACHE_KEY]:
         raw = _prefetch_cache[CORP_AI_CACHE_KEY][domain]
         if raw is None:
             logger.debug(f"Prefetch AI MISS: {domain}")
             return None
         data = raw if isinstance(raw, dict) else json.loads(raw)
-        result = _parse_latest_row(data)
+        result = _parse_ai_row(data)
         if result:
             logger.debug(f"Prefetch AI HIT: {domain}")
         return result
 
-    # Slow path: direct query to latest_categories_claude
+    # Slow path: QUALIFY query — same logic as latest_categories_claude view
     from core.bigquery import corp_client
     import google.cloud.bigquery as gcbq
     bq = corp_client()
     try:
         rows = list(bq.query(
-            f"SELECT category, subcategory FROM {CORP_AI_READ_TABLE} WHERE domain = @domain LIMIT 1",
+            f"""SELECT
+                  JSON_VALUE(response_json, '$.category')     AS category,
+                  JSON_VALUE(response_json, '$.subcategory')  AS subcategory,
+                  JSON_VALUE(response_json, '$.is_ecommerce') AS is_ecommerce
+                FROM {CORP_AI_TABLE}
+                WHERE domain = @domain
+                QUALIFY ROW_NUMBER() OVER (ORDER BY fetched_at DESC) = 1""",
             job_config=gcbq.QueryJobConfig(
                 query_parameters=[gcbq.ScalarQueryParameter("domain", "STRING", domain)]
             )
         ).result())
         if rows:
-            result = _parse_latest_row(dict(rows[0]))
+            result = _parse_ai_row(dict(rows[0]))
             if result:
-                logger.info(f"Corp AI cache HIT (latest): {domain}")
+                logger.info(f"Corp AI cache HIT: {domain}")
             return result
         return None
     except Exception as e:
@@ -138,7 +132,7 @@ def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
     }
 
     try:
-        errors = bq.insert_rows_json(CORP_AI_WRITE_TABLE_ID, [row])
+        errors = bq.insert_rows_json(CORP_AI_TABLE_ID, [row])
         if errors:
             logger.error(f"Corp AI save error ({domain}): {errors}")
         else:
