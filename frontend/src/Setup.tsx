@@ -206,6 +206,7 @@ function UsersSection() {
   const [editingUser, setEditingUser] = useState<string | null>(null)
   const [editFields, setEditFields] = useState<Partial<User & { password: string; _perms: string[] }>>({})
   const [msg, setMsg] = useState("")
+  const [filter, setFilter] = useState("")
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -299,6 +300,16 @@ function UsersSection() {
 
       {msg && <div className="setup-msg" style={{ marginBottom: 8 }}>{msg}</div>}
 
+      <div style={{ marginBottom: 10 }}>
+        <input
+          className="filter-input"
+          placeholder="🔍 Пошук за ім'ям, логіном, email..."
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          style={{ width: "100%", boxSizing: "border-box" }}
+        />
+      </div>
+
       {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (
         <table className="results-table">
           <thead>
@@ -318,7 +329,16 @@ function UsersSection() {
                 Немає користувачів — авторизація вимкнена
               </td></tr>
             )}
-            {users.map(u => editingUser === u.username ? (
+            {users.filter(u => {
+              if (!filter.trim()) return true
+              const q = filter.trim().toLowerCase()
+              return (
+                u.username.toLowerCase().includes(q) ||
+                (u.first_name || "").toLowerCase().includes(q) ||
+                (u.last_name || "").toLowerCase().includes(q) ||
+                (u.email || "").toLowerCase().includes(q)
+              )
+            }).map(u => editingUser === u.username ? (
               <tr key={u.username} style={{ background: "var(--bg-2)" }}>
                 <td>
                   <div style={{ display: "flex", gap: 4 }}>
