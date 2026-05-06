@@ -32,15 +32,24 @@ def _load_bq_users() -> dict[str, str]:
     now = time.time()
     if now - _bq_users_cached_at < _BQ_CACHE_TTL:
         return _bq_users_cache
+    # Load passwords — critical, must succeed
     try:
-        from core.bigquery import get_bq_users_for_auth, get_bq_users_permissions
+        from core.bigquery import get_bq_users_for_auth
         users = get_bq_users_for_auth()
-        _bq_permissions_cache = get_bq_users_permissions()
         _bq_users_cache = users
         _bq_users_cached_at = now
-        return users
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to load BQ users: {e}")
         return _bq_users_cache
+    # Load permissions — separate, non-critical (failure keeps old cache)
+    try:
+        from core.bigquery import get_bq_users_permissions
+        _bq_permissions_cache = get_bq_users_permissions()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to load BQ permissions: {e}")
+    return _bq_users_cache
 
 
 def get_auth_users() -> dict[str, str]:
@@ -50,24 +59,30 @@ def get_auth_users() -> dict[str, str]:
     return {**bq_users, **env_users}
 
 
+_ALL_PERMS = {"explorer", "jobs", "download", "sheets", "admin"}
+
 def get_user_permissions(username: str) -> set[str]:
     """Return set of permissions for the given username.
     If no users configured (anonymous mode) → full access."""
-    # Refresh cache if needed
     _load_bq_users()
-    # ENV users always get full access (they're configured outside BQ)
+    # ENV users always get full access
     env_users = _load_env_users()
     if username in env_users:
-        return {"explorer", "jobs", "download", "sheets", "admin"}
-    # No auth configured → full access
+        return _ALL_PERMS.copy()
+    # No auth configured at all → full access
     all_users = get_auth_users()
     if not all_users or username == "anonymous":
-        return {"explorer", "jobs", "download", "sheets", "admin"}
+        return _ALL_PERMS.copy()
+    # Permissions cache may be empty if load failed — fall back to full access
+    # so existing users don't get locked out
+    if not _bq_permissions_cache:
+        return _ALL_PERMS.copy()
     perm_str = _bq_permissions_cache.get(username, "")
+    if not perm_str:
+        return {"explorer"}  # user exists but no permissions recorded → minimal
     perms = set(p.strip() for p in perm_str.split(",") if p.strip())
-    # admin implies everything
     if "admin" in perms:
-        return {"explorer", "jobs", "download", "sheets", "admin"}
+        return _ALL_PERMS.copy()
     return perms
 
 
