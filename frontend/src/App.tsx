@@ -454,7 +454,7 @@ export default function App() {
         </div>
       </nav>
       <main className="main">
-        {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => setView("explorer")} />}
+        {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => setView("explorer")} can={can} />}
         {view === "setup" && <SetupPage />}
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} />}
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} />}

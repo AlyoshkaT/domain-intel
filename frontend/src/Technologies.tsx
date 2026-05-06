@@ -97,7 +97,7 @@ function Legend({ series, visibleSet, onToggle, hovered, onHover }: {
   )
 }
 
-export default function TechnologiesPage({ domains = [], onBack }: { domains?: string[]; onBack?: () => void }) {
+export default function TechnologiesPage({ domains = [], onBack, can }: { domains?: string[]; onBack?: () => void; can?: (p: string) => boolean }) {
   const now = new Date()
   const defaultTo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`
   const ago = new Date(now); ago.setMonth(ago.getMonth()-24)
@@ -234,10 +234,12 @@ export default function TechnologiesPage({ domains = [], onBack }: { domains?: s
           <div className="filter-row" style={{marginBottom:8}}>
             <input className="filter-input" placeholder="Фільтр по домену, технології, тегу..." value={tableFilter} onChange={e=>setTableFilter(e.target.value)}/>
             <span className="filter-count">{filteredTable.length.toLocaleString()} записів</span>
-            <div style={{display:"flex",gap:6}}>
-              <button className="btn-export" onClick={exportCSV}>&#8595; CSV</button>
-              <button className="btn-export" onClick={exportXLSX}>&#8595; XLSX</button>
-            </div>
+            {(!can || can("download")) && (
+              <div style={{display:"flex",gap:6}}>
+                <button className="btn-export" onClick={exportCSV}>&#8595; CSV</button>
+                <button className="btn-export" onClick={exportXLSX}>&#8595; XLSX</button>
+              </div>
+            )}
           </div>
           <div className="table-wrap table-fixed-height">
             <table className="results-table">
