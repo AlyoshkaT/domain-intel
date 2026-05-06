@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 
 const API = ""
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -208,6 +208,17 @@ function UsersSection() {
   const [msg, setMsg] = useState("")
   const [filter, setFilter] = useState("")
 
+  const filteredUsers = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    if (!q) return users
+    return users.filter(u =>
+      u.username.toLowerCase().includes(q) ||
+      (u.first_name || "").toLowerCase().includes(q) ||
+      (u.last_name || "").toLowerCase().includes(q) ||
+      (u.email || "").toLowerCase().includes(q)
+    )
+  }, [users, filter])
+
   const load = useCallback(async () => {
     setLoading(true)
     try { const r = await apiFetch("/api/setup/users"); setUsers(r.users) } catch {}
@@ -329,16 +340,12 @@ function UsersSection() {
                 Немає користувачів — авторизація вимкнена
               </td></tr>
             )}
-            {users.filter(u => {
-              if (!filter.trim()) return true
-              const q = filter.trim().toLowerCase()
-              return (
-                u.username.toLowerCase().includes(q) ||
-                (u.first_name || "").toLowerCase().includes(q) ||
-                (u.last_name || "").toLowerCase().includes(q) ||
-                (u.email || "").toLowerCase().includes(q)
-              )
-            }).map(u => editingUser === u.username ? (
+            {users.length > 0 && filteredUsers.length === 0 && (
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-3)", padding: 16 }}>
+                Нічого не знайдено
+              </td></tr>
+            )}
+            {filteredUsers.map(u => editingUser === u.username ? (
               <tr key={u.username} style={{ background: "var(--bg-2)" }}>
                 <td>
                   <div style={{ display: "flex", gap: 4 }}>
