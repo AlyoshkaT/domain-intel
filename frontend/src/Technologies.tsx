@@ -97,6 +97,25 @@ function Legend({ series, visibleSet, onToggle, hovered, onHover }: {
   )
 }
 
+// Cross-browser month picker (Safari doesn't support <input type="month">)
+const MONTHS = ["Січ","Лют","Бер","Кві","Тра","Чер","Лип","Сер","Вер","Жов","Лис","Гру"]
+function MonthPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [year, month] = value.split("-").map(Number)
+  const curYear = new Date().getFullYear()
+  const years = Array.from({ length: 6 }, (_, i) => curYear - 4 + i)
+  const sel = { padding: "5px 6px", background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: "var(--radius)", color: "var(--text)", fontSize: 12, outline: "none" }
+  return (
+    <div style={{ display: "flex", gap: 4 }}>
+      <select style={sel} value={month} onChange={e => onChange(`${year}-${String(+e.target.value).padStart(2,"0")}`)}>
+        {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+      </select>
+      <select style={sel} value={year} onChange={e => onChange(`${e.target.value}-${String(month).padStart(2,"0")}`)}>
+        {years.map(y => <option key={y} value={y}>{y}</option>)}
+      </select>
+    </div>
+  )
+}
+
 export default function TechnologiesPage({ domains = [], onBack, can }: { domains?: string[]; onBack?: () => void; can?: (p: string) => boolean }) {
   const now = new Date()
   const defaultTo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`
@@ -177,11 +196,11 @@ export default function TechnologiesPage({ domains = [], onBack, can }: { domain
         <div className="tech-filters">
           <div className="tech-filter-group">
             <label className="tech-filter-label">Від</label>
-            <input type="month" className="flt-num-input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
+            <MonthPicker value={dateFrom} onChange={setDateFrom} />
           </div>
           <div className="tech-filter-group">
             <label className="tech-filter-label">До</label>
-            <input type="month" className="flt-num-input" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
+            <MonthPicker value={dateTo} onChange={setDateTo} />
           </div>
           <div className="tech-filter-group">
             <label className="tech-filter-label">Деталізація</label>

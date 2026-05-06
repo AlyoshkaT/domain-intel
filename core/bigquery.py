@@ -578,20 +578,22 @@ def remove_user(username: str):
 # ── Activity Logs ─────────────────────────────────────────────────────────────
 
 def log_activity(username: str, action: str, details: dict = None):
-    """Log a user action via streaming insert (fast, non-blocking)."""
+    """Log a user action via streaming insert."""
     try:
         bq = client()
+        # BQ streaming insert: use float timestamp (seconds since epoch) for TIMESTAMP columns
         row = {
-            "logged_at": datetime.now(timezone.utc).isoformat(),
+            "logged_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "username": username or "unknown",
             "action": action,
-            "details": json.dumps(details) if details else None,
         }
+        if details is not None:
+            row["details"] = json.dumps(details)
         errors = bq.insert_rows_json(table_ref("activity_logs"), [row])
         if errors:
             logger.error(f"log_activity insert errors: {errors}")
         else:
-            logger.debug(f"log_activity OK: {username} / {action}")
+            logger.info(f"log_activity OK: {username} / {action}")
     except Exception as e:
         logger.error(f"log_activity error: {e}")
 

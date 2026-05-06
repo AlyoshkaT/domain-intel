@@ -231,6 +231,17 @@ async def get_logs():
     return {"logs": get_activity_logs(limit=200)}
 
 
+@router.post("/logs/test")
+async def test_log(request: Request):
+    """Write a test log entry and immediately read it back (for diagnostics)."""
+    from core.bigquery import log_activity, get_activity_logs
+    username = getattr(request.state, "username", "test")
+    log_activity(username, "log_test", {"ts": __import__("time").time()})
+    import time; time.sleep(1)  # brief wait for streaming buffer
+    logs = get_activity_logs(limit=5)
+    return {"written": True, "recent_logs": logs}
+
+
 # ── API Usage ─────────────────────────────────────────────────────────────────
 
 @router.get("/usage")
