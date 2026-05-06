@@ -584,7 +584,7 @@ def log_activity(username: str, action: str, details: dict = None):
         bq = client()
         # BQ streaming insert: use float timestamp (seconds since epoch) for TIMESTAMP columns
         row = {
-            "logged_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "logged_at": datetime.now(timezone.utc).isoformat(),
             "username": username or "unknown",
             "action": action,
         }

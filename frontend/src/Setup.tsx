@@ -144,7 +144,7 @@ function parsePerms(s?: string): string[] {
   const legacy: Record<string, string[]> = {
     read:     ["explorer"],
     add:      ["explorer","jobs"],
-    download: ["explorer","jobs","download"],
+    download: ["explorer","download"],
     admin:    ["explorer","jobs","download","sheets","admin"],
   }
   const parts = s.split(",").map(p => p.trim()).filter(Boolean)
