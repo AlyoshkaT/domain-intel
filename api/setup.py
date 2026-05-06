@@ -5,9 +5,11 @@ import logging
 from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from api.auth import require_permission
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/setup")
+_admin = require_permission("admin")
+router = APIRouter(prefix="/api/setup", dependencies=[_admin])
 
 
 # ── Technology Catalog ────────────────────────────────────────────────────────

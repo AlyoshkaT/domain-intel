@@ -404,11 +404,28 @@ export default function App() {
   const [view, setView] = useState<View>("new")
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [techDomains, setTechDomains] = useState<string[]>([])
+  const [permissions, setPermissions] = useState<string[]>(["explorer", "jobs", "download", "sheets", "admin"])
   const [dark, setDark] = useState(() => {
     const s = localStorage.getItem("theme")
     if (s) return s === "dark"
     return window.matchMedia("(prefers-color-scheme: dark)").matches
   })
+
+  useEffect(() => {
+    apiFetch("/api/me").then(r => {
+      if (r.permissions) {
+        const perms: string[] = r.permissions
+        setPermissions(perms)
+        // Redirect to a valid default page
+        if (!perms.includes("jobs")) {
+          if (perms.includes("explorer")) setView("explorer")
+          else if (perms.includes("admin")) setView("setup")
+        }
+      }
+    }).catch(() => {})
+  }, [])
+
+  const can = (p: string) => permissions.includes(p)
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light")
@@ -426,11 +443,11 @@ export default function App() {
           <span className="nav-title">Domain Intel</span>
         </div>
         <div className="nav-links">
-          <button className={`nav-link ${view === "new" ? "active" : ""}`} onClick={() => setView("new")}>+ Новий</button>
-          <button className={`nav-link ${view === "jobs" ? "active" : ""}`} onClick={() => setView("jobs")}>Job-и</button>
-          <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>Explorer</button>
-          <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => setView("technologies")}>Technologies</button>
-          <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>Setup</button>
+          {can("jobs") && <button className={`nav-link ${view === "new" ? "active" : ""}`} onClick={() => setView("new")}>+ Новий</button>}
+          {can("jobs") && <button className={`nav-link ${view === "jobs" ? "active" : ""}`} onClick={() => setView("jobs")}>Job-и</button>}
+          {can("explorer") && <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>Explorer</button>}
+          {can("explorer") && <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => setView("technologies")}>Technologies</button>}
+          {can("admin") && <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>Setup</button>}
         </div>
         <div className="nav-right">
           <button className="theme-toggle" onClick={() => setDark(!dark)} title="Змінити тему">{dark ? "☀" : "☾"}</button>

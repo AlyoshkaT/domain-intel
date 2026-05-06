@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _active_jobs: dict[str, asyncio.Task] = {}
 
 
-async def run_batch_job(job_id: str, domains: list[str], services: list[str], force_refresh: bool = False):
+async def run_batch_job(job_id: str, domains: list[str], services: list[str], force_refresh: bool = False, username: str = ""):
     """
     Main batch processing coroutine. Runs in background.
     Updates job progress in BigQuery after each domain.
@@ -50,7 +50,7 @@ async def run_batch_job(job_id: str, domains: list[str], services: list[str], fo
     async def process_one(domain: str):
         nonlocal processed, failed
         async with semaphore:
-            result = await process_domain(domain, job_id, services, force_refresh=force_refresh)
+            result = await process_domain(domain, job_id, services, force_refresh=force_refresh, username=username)
             save_result(result)
 
             if result["status"] == "error":
@@ -107,7 +107,7 @@ async def _update_job_safe(job_id: str, **kwargs):
         logger.error(f"Failed to update job {job_id}: {e}")
 
 
-def start_job(domains: list[str], services: list[str], filename: str, force_refresh: bool = False) -> str:
+def start_job(domains: list[str], services: list[str], filename: str, force_refresh: bool = False, username: str = "") -> str:
     """
     Create a new job in BQ and launch background task.
     Returns job_id.
@@ -116,7 +116,7 @@ def start_job(domains: list[str], services: list[str], filename: str, force_refr
     create_job(job_id, len(domains), services, filename)
 
     loop = asyncio.get_event_loop()
-    task = loop.create_task(run_batch_job(job_id, domains, services, force_refresh=force_refresh))
+    task = loop.create_task(run_batch_job(job_id, domains, services, force_refresh=force_refresh, username=username))
     _active_jobs[job_id] = task
 
     # Cleanup on completion

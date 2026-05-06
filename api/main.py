@@ -20,7 +20,7 @@ from services.sheets_export import export_job_to_sheets
 from services.domain_profiles import ensure_profiles_table, get_sync_status
 from processing.batch import start_job, cancel_job
 from processing.pipeline import reload_catalog
-from api.auth import auth_middleware
+from api.auth import auth_middleware, get_user_permissions, require_permission
 from api.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -89,6 +89,14 @@ except Exception as e:
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# ─── Current user ─────────────────────────────────────────────────────────────
+@app.get("/api/me")
+async def me(request: Request):
+    username = getattr(request.state, "username", "anonymous")
+    perms = get_user_permissions(username)
+    return {"username": username, "permissions": sorted(perms)}
 
 
 # ─── Credits ──────────────────────────────────────────────────────────────────
@@ -161,7 +169,7 @@ def _parse_domains_from_file(content: bytes, filename: str) -> list[str]:
     return cleaned
 
 
-@app.post("/api/jobs")
+@app.post("/api/jobs", dependencies=[require_permission("jobs")])
 async def create_job_endpoint(
     request: Request,
     file: UploadFile = File(...),
@@ -180,8 +188,8 @@ async def create_job_endpoint(
         raise HTTPException(status_code=400, detail="No valid services selected")
 
     fr = force_refresh.lower() == "true"
-    job_id = start_job(domains, services_list, file.filename or "upload.csv", force_refresh=fr)
     username = getattr(request.state, "username", "unknown")
+    job_id = start_job(domains, services_list, file.filename or "upload.csv", force_refresh=fr, username=username)
     try:
         from core.bigquery import log_activity
         log_activity(username, "job_created", {
@@ -216,7 +224,7 @@ async def get_results_endpoint(job_id: str):
     return {"results": results, "total": len(results)}
 
 
-@app.get("/api/jobs/{job_id}/export/csv")
+@app.get("/api/jobs/{job_id}/export/csv", dependencies=[require_permission("download")])
 async def export_csv(request: Request, job_id: str):
     results = get_results(job_id)
     if not results:
@@ -238,7 +246,7 @@ async def export_csv(request: Request, job_id: str):
         headers={"Content-Disposition": f"attachment; filename=results_{job_id[:8]}.csv"}
     )
 
-@app.get("/api/jobs/{job_id}/export/xlsx")
+@app.get("/api/jobs/{job_id}/export/xlsx", dependencies=[require_permission("download")])
 async def export_xlsx(request: Request, job_id: str):
     results = get_results(job_id)
     if not results:
@@ -272,7 +280,7 @@ async def export_xlsx(request: Request, job_id: str):
         headers={"Content-Disposition": f"attachment; filename=results_{job_id[:8]}.xlsx"}
     )
 
-@app.post("/api/jobs/{job_id}/export/sheets")
+@app.post("/api/jobs/{job_id}/export/sheets", dependencies=[require_permission("sheets")])
 async def export_sheets(request: Request, job_id: str, background_tasks: BackgroundTasks):
     job = get_job(job_id)
     if not job:

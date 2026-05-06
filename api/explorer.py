@@ -9,8 +9,9 @@ from fastapi import APIRouter, BackgroundTasks, Request
 from google.cloud import bigquery as bq
 
 from core.bigquery import client, table_ref
+from api.auth import require_permission
 
-router = APIRouter(prefix="/api/explore")
+router = APIRouter(prefix="/api/explore", dependencies=[require_permission("explorer")])
 PROFILES_TABLE = "domain_profiles"
 FILTERABLE_FIELDS = [
     "domain","cms_list","osearch","ems_list",
@@ -265,7 +266,7 @@ async def sync_status():
 _explore_sheet_url: str | None = None
 _explore_sheet_error: str | None = None
 
-@router.post("/export/xlsx")
+@router.post("/export/xlsx", dependencies=[require_permission("download")])
 async def explore_export_xlsx(request: Request, body: dict):
     import io
     import pandas as pd
@@ -291,7 +292,7 @@ async def explore_export_xlsx(request: Request, body: dict):
         headers={"Content-Disposition": "attachment; filename=explorer_results.xlsx"}
     )
 
-@router.post("/export/sheets")
+@router.post("/export/sheets", dependencies=[require_permission("sheets")])
 async def explore_export_sheets(request: Request, body: dict, background_tasks: BackgroundTasks):
     global _explore_sheet_url, _explore_sheet_error
     _explore_sheet_url = None

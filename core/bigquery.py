@@ -500,6 +500,18 @@ def get_bq_users_for_auth() -> dict[str, str]:
         return {}
 
 
+def get_bq_users_permissions() -> dict[str, str]:
+    """Returns {username: permissions_string} for permission checking."""
+    try:
+        bq = client()
+        rows = list(bq.query(
+            f"SELECT username, permissions FROM `{table_ref('app_users')}`"
+        ).result())
+        return {r["username"]: (r["permissions"] or "") for r in rows}
+    except Exception:
+        return {}
+
+
 def add_user(username: str, password: str, permissions: str,
              email: str = None, google_folder: str = None, display_name: str = None,
              first_name: str = None, last_name: str = None):

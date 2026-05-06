@@ -60,6 +60,7 @@ async def process_domain(
     job_id: str,
     services: list[str],
     force_refresh: bool = False,
+    username: str = "",
 ) -> dict:
     domain = _clean_domain(domain)
 
@@ -90,6 +91,12 @@ async def process_domain(
             sw_data = get_cached("similarweb_raw_data", working_domain, ignore_ttl=True)
         if sw_data is None and "similarweb" in services:
             sw_data = await fetch_similarweb(working_domain)
+            if sw_data and username:
+                try:
+                    from core.bigquery import increment_api_usage
+                    increment_api_usage(username, "similarweb")
+                except Exception:
+                    pass
         if sw_data:
             p = parse_similarweb(sw_data)
             result.update({k: p.get(k) for k in ["sw_visits","sw_category","sw_subcategory","sw_description","sw_title","sw_top_countries","sw_primary_region","sw_primary_region_pct","company_name"]})

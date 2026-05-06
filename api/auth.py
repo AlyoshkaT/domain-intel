@@ -5,10 +5,11 @@ Priority: AUTH_USERS env var → BQ app_users table → allow all.
 import base64
 import os
 import time
-from fastapi import Request
+from fastapi import Request, HTTPException, Depends
 from fastapi.responses import Response
 
-_bq_users_cache: dict[str, str] = {}
+_bq_users_cache: dict[str, str] = {}          # username → password
+_bq_permissions_cache: dict[str, str] = {}    # username → "explorer,jobs,..."
 _bq_users_cached_at: float = 0
 _BQ_CACHE_TTL = 60  # seconds
 
@@ -27,13 +28,14 @@ def _load_env_users() -> dict[str, str]:
 
 
 def _load_bq_users() -> dict[str, str]:
-    global _bq_users_cache, _bq_users_cached_at
+    global _bq_users_cache, _bq_permissions_cache, _bq_users_cached_at
     now = time.time()
     if now - _bq_users_cached_at < _BQ_CACHE_TTL:
         return _bq_users_cache
     try:
-        from core.bigquery import get_bq_users_for_auth
+        from core.bigquery import get_bq_users_for_auth, get_bq_users_permissions
         users = get_bq_users_for_auth()
+        _bq_permissions_cache = get_bq_users_permissions()
         _bq_users_cache = users
         _bq_users_cached_at = now
         return users
@@ -45,9 +47,41 @@ def get_auth_users() -> dict[str, str]:
     """Merge env users + BQ users. ENV takes priority on conflict."""
     bq_users = _load_bq_users()
     env_users = _load_env_users()
-    # BQ users as base, env users override (so env admin always works)
-    merged = {**bq_users, **env_users}
-    return merged
+    return {**bq_users, **env_users}
+
+
+def get_user_permissions(username: str) -> set[str]:
+    """Return set of permissions for the given username.
+    If no users configured (anonymous mode) → full access."""
+    # Refresh cache if needed
+    _load_bq_users()
+    # ENV users always get full access (they're configured outside BQ)
+    env_users = _load_env_users()
+    if username in env_users:
+        return {"explorer", "jobs", "download", "sheets", "admin"}
+    # No auth configured → full access
+    all_users = get_auth_users()
+    if not all_users or username == "anonymous":
+        return {"explorer", "jobs", "download", "sheets", "admin"}
+    perm_str = _bq_permissions_cache.get(username, "")
+    perms = set(p.strip() for p in perm_str.split(",") if p.strip())
+    # admin implies everything
+    if "admin" in perms:
+        return {"explorer", "jobs", "download", "sheets", "admin"}
+    return perms
+
+
+def require_permission(perm: str):
+    """FastAPI dependency: raises 403 if user lacks the required permission."""
+    def checker(request: Request):
+        username = getattr(request.state, "username", "anonymous")
+        perms = get_user_permissions(username)
+        if perm not in perms:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Недостатньо прав: потрібен дозвіл '{perm}'"
+            )
+    return Depends(checker)
 
 
 def invalidate_users_cache():
