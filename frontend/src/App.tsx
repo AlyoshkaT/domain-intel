@@ -316,7 +316,7 @@ const COLUMNS = [
   { key: "sw_primary_region", label: "Region", w: "80px" }, { key: "sw_primary_region_pct", label: "Region %", w: "80px" },
 ]
 
-function ResultsPage({ jobId, onBack }: { jobId: string; onBack: () => void }) {
+function ResultsPage({ jobId, onBack, can }: { jobId: string; onBack: () => void; can: (p: string) => boolean }) {
   const [job, setJob] = useState<Job | null>(null)
   const [results, setResults] = useState<Result[]>([])
   const [loading, setLoading] = useState(true)
@@ -357,8 +357,8 @@ function ResultsPage({ jobId, onBack }: { jobId: string; onBack: () => void }) {
         <h1 className="page-title">{job?.filename}</h1>
         <div className="page-header-actions">
           {job && <StatusBadge status={job.status} />}
-          <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/csv`, "_blank")}>CSV</button>
-          <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/xlsx`, "_blank")}>XLSX</button>
+          {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/csv`, "_blank")}>CSV</button>}
+          {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/xlsx`, "_blank")}>XLSX</button>}
         </div>
       </div>
       {job && <JobStatusLine job={job} />}
@@ -458,7 +458,7 @@ export default function App() {
         {view === "setup" && <SetupPage />}
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} />}
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} />}
-        {view === "results" && selectedJobId && <ResultsPage jobId={selectedJobId} onBack={() => setView("jobs")} />}
+        {view === "results" && selectedJobId && <ResultsPage jobId={selectedJobId} onBack={() => setView("jobs")} can={can} />}
         {view === "explorer" && <ExplorerPage onViewTechnologies={(domains: string[]) => { setTechDomains(domains); setView("technologies") }} onNavigateToJobs={() => setView("jobs")} />}
       </main>
     </div>

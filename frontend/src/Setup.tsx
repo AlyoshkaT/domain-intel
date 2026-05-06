@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback } from "react"
 
 const API = ""
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -136,7 +136,9 @@ const PRESETS = [
   { label: "Admin",   perms: ["explorer","jobs","download","sheets","admin"] },
 ]
 
-// Map legacy permission values to new system
+const PERM_ORDER = ALL_PERMISSIONS.map(p => p.key)
+
+// Map legacy permission values to new system, always sorted by rank
 function parsePerms(s?: string): string[] {
   if (!s) return ["explorer"]
   const legacy: Record<string, string[]> = {
@@ -148,9 +150,10 @@ function parsePerms(s?: string): string[] {
   const parts = s.split(",").map(p => p.trim()).filter(Boolean)
   // if single legacy value — map it
   if (parts.length === 1 && legacy[parts[0]]) return legacy[parts[0]]
-  // otherwise filter to known keys
-  const known = new Set(ALL_PERMISSIONS.map(p => p.key))
-  return parts.filter(p => known.has(p))
+  // filter to known keys and sort by canonical rank
+  const known = new Set(PERM_ORDER)
+  const valid = parts.filter(p => known.has(p))
+  return PERM_ORDER.filter(k => valid.includes(k))
 }
 
 function PermissionToggle({ value, onChange }: { value: string[], onChange: (v: string[]) => void }) {
@@ -206,18 +209,7 @@ function UsersSection() {
   const [editingUser, setEditingUser] = useState<string | null>(null)
   const [editFields, setEditFields] = useState<Partial<User & { password: string; _perms: string[] }>>({})
   const [msg, setMsg] = useState("")
-  const [filter, setFilter] = useState("")
-
-  const filteredUsers = useMemo(() => {
-    const q = filter.trim().toLowerCase()
-    if (!q) return users
-    return users.filter(u =>
-      u.username.toLowerCase().includes(q) ||
-      (u.first_name || "").toLowerCase().includes(q) ||
-      (u.last_name || "").toLowerCase().includes(q) ||
-      (u.email || "").toLowerCase().includes(q)
-    )
-  }, [users, filter])
+  const [userSearch, setUserSearch] = useState("")
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -311,14 +303,18 @@ function UsersSection() {
 
       {msg && <div className="setup-msg" style={{ marginBottom: 8 }}>{msg}</div>}
 
-      <div style={{ marginBottom: 10 }}>
+      <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
         <input
           className="filter-input"
           placeholder="🔍 Пошук за ім'ям, логіном, email..."
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
-          style={{ width: "100%", boxSizing: "border-box" }}
+          value={userSearch}
+          onChange={e => setUserSearch(e.target.value)}
+          style={{ flex: 1 }}
         />
+        {userSearch && (
+          <button onClick={() => setUserSearch("")}
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-3)", fontSize: 16 }}>✕</button>
+        )}
       </div>
 
       {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (
@@ -340,12 +336,25 @@ function UsersSection() {
                 Немає користувачів — авторизація вимкнена
               </td></tr>
             )}
-            {users.length > 0 && filteredUsers.length === 0 && (
+            {users.length > 0 && userSearch.trim() && users.filter(u => {
+              const q = userSearch.trim().toLowerCase()
+              return u.username.toLowerCase().includes(q) ||
+                (u.first_name || "").toLowerCase().includes(q) ||
+                (u.last_name || "").toLowerCase().includes(q) ||
+                (u.email || "").toLowerCase().includes(q)
+            }).length === 0 && (
               <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-3)", padding: 16 }}>
                 Нічого не знайдено
               </td></tr>
             )}
-            {filteredUsers.map(u => editingUser === u.username ? (
+            {users.filter(u => {
+              if (!userSearch.trim()) return true
+              const q = userSearch.trim().toLowerCase()
+              return u.username.toLowerCase().includes(q) ||
+                (u.first_name || "").toLowerCase().includes(q) ||
+                (u.last_name || "").toLowerCase().includes(q) ||
+                (u.email || "").toLowerCase().includes(q)
+            }).map(u => editingUser === u.username ? (
               <tr key={u.username} style={{ background: "var(--bg-2)" }}>
                 <td>
                   <div style={{ display: "flex", gap: 4 }}>

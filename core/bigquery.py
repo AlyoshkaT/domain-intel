@@ -578,28 +578,20 @@ def remove_user(username: str):
 # ── Activity Logs ─────────────────────────────────────────────────────────────
 
 def log_activity(username: str, action: str, details: dict = None):
-    """Log a user action. Uses DML INSERT to avoid streaming buffer issues."""
+    """Log a user action via streaming insert (fast, non-blocking)."""
     try:
         bq = client()
-        logged_at = datetime.now(timezone.utc).isoformat()
-        details_str = json.dumps(details) if details else None
-        params = [
-            bigquery.ScalarQueryParameter("logged_at", "TIMESTAMP", logged_at),
-            bigquery.ScalarQueryParameter("username", "STRING", username),
-            bigquery.ScalarQueryParameter("action", "STRING", action),
-        ]
-        if details_str is not None:
-            params.append(bigquery.ScalarQueryParameter("details", "STRING", details_str))
-            sql = (
-                f"INSERT INTO `{table_ref('activity_logs')}` (logged_at, username, action, details) "
-                f"VALUES (@logged_at, @username, @action, @details)"
-            )
+        row = {
+            "logged_at": datetime.now(timezone.utc).isoformat(),
+            "username": username or "unknown",
+            "action": action,
+            "details": json.dumps(details) if details else None,
+        }
+        errors = bq.insert_rows_json(table_ref("activity_logs"), [row])
+        if errors:
+            logger.error(f"log_activity insert errors: {errors}")
         else:
-            sql = (
-                f"INSERT INTO `{table_ref('activity_logs')}` (logged_at, username, action, details) "
-                f"VALUES (@logged_at, @username, @action, NULL)"
-            )
-        bq.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+            logger.debug(f"log_activity OK: {username} / {action}")
     except Exception as e:
         logger.error(f"log_activity error: {e}")
 
