@@ -213,7 +213,8 @@ function UsersSection() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    try { const r = await apiFetch("/api/setup/users"); setUsers(r.users) } catch {}
+    try { const r = await apiFetch("/api/setup/users"); setUsers(r.users) }
+    catch (e: any) { setMsg("Помилка завантаження користувачів: " + e.message) }
     finally { setLoading(false) }
   }, [])
 

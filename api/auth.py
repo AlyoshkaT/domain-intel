@@ -77,9 +77,14 @@ def get_user_permissions(username: str) -> set[str]:
     # so existing users don't get locked out
     if not _bq_permissions_cache:
         return _ALL_PERMS.copy()
+    # Bootstrap: if NO user in the system has admin permission yet,
+    # treat all authenticated BQ users as admins (first-time setup)
+    any_admin = any("admin" in (v or "") for v in _bq_permissions_cache.values())
+    if not any_admin:
+        return _ALL_PERMS.copy()
     perm_str = _bq_permissions_cache.get(username, "")
     if not perm_str:
-        return {"explorer"}  # user exists but no permissions recorded → minimal
+        return _ALL_PERMS.copy()  # user exists but no permissions recorded → full access (legacy)
     perms = set(p.strip() for p in perm_str.split(",") if p.strip())
     if "admin" in perms:
         return _ALL_PERMS.copy()

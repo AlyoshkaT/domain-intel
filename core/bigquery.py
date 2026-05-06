@@ -395,6 +395,7 @@ def set_setting(key: str, value: str):
     }])
     if errors:
         logger.error(f"set_setting errors: {errors}")
+        raise RuntimeError(f"BQ insert error: {errors[0].get('errors', errors[0])}")
     _settings_cache[key] = value
     _settings_cached_at = 0  # invalidate cache
 
@@ -437,7 +438,7 @@ def _ensure_users_table():
         bq.create_table(tbl)
         logger.info("Created table app_users")
     # Migrate: add new columns if not exists
-    for col, col_type in [("email", "STRING"), ("google_folder", "STRING"), ("display_name", "STRING"), ("first_name", "STRING"), ("last_name", "STRING")]:
+    for col, col_type in [("permissions", "STRING"), ("email", "STRING"), ("google_folder", "STRING"), ("display_name", "STRING"), ("first_name", "STRING"), ("last_name", "STRING")]:
         try:
             bq.query(
                 f"ALTER TABLE `{table_ref('app_users')}` ADD COLUMN IF NOT EXISTS {col} {col_type}"
@@ -470,22 +471,21 @@ def get_users() -> list[dict]:
     try:
         bq = client()
         rows = list(bq.query(
-            f"SELECT username, permissions, created_at, email, google_folder, display_name, first_name, last_name"
-            f" FROM `{table_ref('app_users')}` ORDER BY created_at"
+            f"SELECT * FROM `{table_ref('app_users')}` ORDER BY created_at"
         ).result())
         return [{
             "username": r["username"],
-            "permissions": r["permissions"],
+            "permissions": dict(r).get("permissions"),
             "created_at": str(r["created_at"]),
-            "email": r["email"],
-            "google_folder": r["google_folder"],
-            "display_name": r["display_name"],
-            "first_name": r["first_name"],
-            "last_name": r["last_name"],
+            "email": dict(r).get("email"),
+            "google_folder": dict(r).get("google_folder"),
+            "display_name": dict(r).get("display_name"),
+            "first_name": dict(r).get("first_name"),
+            "last_name": dict(r).get("last_name"),
         } for r in rows]
     except Exception as e:
         logger.error(f"get_users error: {e}")
-        return []
+        raise
 
 
 def get_bq_users_for_auth() -> dict[str, str]:
@@ -539,6 +539,7 @@ def add_user(username: str, password: str, permissions: str,
     errors = bq.insert_rows_json(table_ref("app_users"), [row])
     if errors:
         logger.error(f"add_user errors: {errors}")
+        raise RuntimeError(f"BQ insert error: {errors[0].get('errors', errors[0])}")
 
 
 def update_user(username: str, **kwargs):

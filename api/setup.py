@@ -3,7 +3,7 @@ Setup API — manage technology catalog, users, cache settings, job history.
 """
 import logging
 from typing import Literal, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from api.auth import require_permission
 
