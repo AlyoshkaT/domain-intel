@@ -204,7 +204,7 @@ function UsersSection() {
   const [loading, setLoading] = useState(false)
   const [newUser, setNewUser] = useState(emptyNew())
   const [editingUser, setEditingUser] = useState<string | null>(null)
-  const [editFields, setEditFields] = useState<Partial<User & { password: string }>>({})
+  const [editFields, setEditFields] = useState<Partial<User & { password: string; _perms: string[] }>>({})
   const [msg, setMsg] = useState("")
 
   const load = useCallback(async () => {
