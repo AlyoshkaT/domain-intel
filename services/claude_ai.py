@@ -1,7 +1,10 @@
 """
 Claude AI (Haiku) classification service.
-Reads cache from corpBQ claude_responses.
-Writes new results to corpBQ claude_responses (same format).
+
+READ  → esoteric-parsec-147012.es_analysis.latest_categories_claude
+        (deduplicated view: domain, latest_response, category, subcategory)
+WRITE → esoteric-parsec-147012.es_analysis.claude_responses
+        (append-only log: domain, fetched_at, response_json JSON, input_hash)
 """
 import hashlib
 import httpx
@@ -12,11 +15,15 @@ from config.settings import ANTHROPIC_API_KEY, CORP_PROJECT_ID, CORP_DATASET
 
 logger = logging.getLogger(__name__)
 
-CORP_AI_TABLE = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
+# Write target (append-only log)
+CORP_AI_WRITE_TABLE  = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
+CORP_AI_WRITE_TABLE_ID = f"{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses"
 
-# Map our internal fields → corpBQ format
-# corpBQ: category, subcategory, is_ecommerce, category_reasoning, ecommerce_reasoning
-# Our:    ai_category, ai_industry, ai_is_ecommerce
+# Read source (deduplicated view — already latest per domain)
+CORP_AI_READ_TABLE   = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.latest_categories_claude`"
+
+# Prefetch cache key (used in core/bigquery.py _prefetch_cache)
+CORP_AI_CACHE_KEY = "latest_categories_claude"
 
 CATEGORIES = [
     "product_ecom", "service_ecom", "marketplace",
@@ -37,57 +44,67 @@ SUBCATEGORIES = [
 
 
 def _make_input_hash(domain: str, sw_title: str, sw_description: str) -> str:
-    """Create hash of inputs to detect if re-classification needed."""
     raw = f"{domain}|{sw_title[:100]}|{sw_description[:200]}"
     return hashlib.md5(raw.encode()).hexdigest()[:16]
 
 
-def _parse_ai_row(data: dict) -> Optional[dict]:
-    """Convert corpBQ response_json dict → our ai_ keys. Returns None if invalid."""
+def _parse_latest_row(data: dict) -> Optional[dict]:
+    """Convert latest_categories_claude row → our ai_ fields.
+    NOTE: is_ecommerce is not in this view — defaults to 'Ні'.
+    """
+    category = data.get("category") or data.get("ai_category")
+    if not category:
+        return None
+    return {
+        "ai_category":     category,
+        "ai_industry":     data.get("subcategory") or data.get("ai_industry") or "",
+        "ai_is_ecommerce": "Ні",   # not stored in latest_categories_claude
+    }
+
+
+def _parse_response_json(data: dict) -> Optional[dict]:
+    """Convert full claude_responses response_json → our ai_ fields (includes is_ecommerce)."""
     if "category" not in data:
-        logger.warning(f"Corp AI cache: invalid JSON (missing 'category'), skipping")
         return None
     is_ecom = data.get("is_ecommerce")
     return {
         "ai_category":     data.get("category", ""),
-        "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
         "ai_industry":     data.get("subcategory", ""),
+        "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
     }
 
 
 def get_corp_ai_cached(domain: str) -> Optional[dict]:
-    """Read AI classification from corpBQ claude_responses."""
-    # Fast path: use in-memory prefetch cache if available (populated at job start)
+    """Read AI classification. Uses latest_categories_claude (fast, deduplicated)."""
     from core.bigquery import _prefetch_cache
-    ai_key = "claude_responses"
-    if ai_key in _prefetch_cache and domain in _prefetch_cache[ai_key]:
-        raw = _prefetch_cache[ai_key][domain]
+
+    # Fast path: prefetch cache (populated at job start from latest_categories_claude)
+    if CORP_AI_CACHE_KEY in _prefetch_cache and domain in _prefetch_cache[CORP_AI_CACHE_KEY]:
+        raw = _prefetch_cache[CORP_AI_CACHE_KEY][domain]
         if raw is None:
             logger.debug(f"Prefetch AI MISS: {domain}")
             return None
         data = raw if isinstance(raw, dict) else json.loads(raw)
-        result = _parse_ai_row(data)
+        result = _parse_latest_row(data)
         if result:
             logger.debug(f"Prefetch AI HIT: {domain}")
         return result
 
-    # Slow path: individual BQ query
+    # Slow path: direct query to latest_categories_claude
     from core.bigquery import corp_client
     import google.cloud.bigquery as gcbq
     bq = corp_client()
     try:
         rows = list(bq.query(
-            f"SELECT response_json FROM {CORP_AI_TABLE} WHERE domain = @domain ORDER BY fetched_at DESC LIMIT 1",
+            f"SELECT category, subcategory FROM {CORP_AI_READ_TABLE} WHERE domain = @domain LIMIT 1",
             job_config=gcbq.QueryJobConfig(
                 query_parameters=[gcbq.ScalarQueryParameter("domain", "STRING", domain)]
             )
         ).result())
         if rows:
-            rj = rows[0]["response_json"]
-            data = rj if isinstance(rj, dict) else json.loads(rj)
-            result = _parse_ai_row(data)
+            result = _parse_latest_row(dict(rows[0]))
             if result:
-                logger.info(f"Corp AI cache HIT: {domain}")
+                logger.info(f"Corp AI cache HIT (latest): {domain}")
             return result
         return None
     except Exception as e:
@@ -96,18 +113,15 @@ def get_corp_ai_cached(domain: str) -> Optional[dict]:
 
 
 def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
-    """Save AI result to corpBQ claude_responses in standard format."""
+    """Append AI result to claude_responses."""
     from core.bigquery import corp_client
     from datetime import datetime, timezone
     bq = corp_client()
 
-    # Convert our format → corpBQ format
     is_ecom = result.get("ai_is_ecommerce", "")
-    if isinstance(is_ecom, str):
-        is_ecom_bool = is_ecom.lower() in ("yes", "true", "1")
-    else:
-        is_ecom_bool = bool(is_ecom)
+    is_ecom_bool = is_ecom.lower() in ("так", "yes", "true", "1") if isinstance(is_ecom, str) else bool(is_ecom)
 
+    # response_json column is BQ JSON type — pass as dict, BQ client serialises it
     response_json = {
         "category":            result.get("ai_category", "other"),
         "subcategory":         result.get("ai_industry", "other"),
@@ -119,15 +133,12 @@ def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
     row = {
         "domain":        domain,
         "fetched_at":    datetime.now(timezone.utc).isoformat(),
-        "response_json": json.dumps(response_json),
+        "response_json": json.dumps(response_json),   # insert_rows_json needs string for JSON columns
         "input_hash":    input_hash or _make_input_hash(domain, "", ""),
     }
 
     try:
-        errors = bq.insert_rows_json(
-            f"{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses",
-            [row]
-        )
+        errors = bq.insert_rows_json(CORP_AI_WRITE_TABLE_ID, [row])
         if errors:
             logger.error(f"Corp AI save error ({domain}): {errors}")
         else:
@@ -185,7 +196,7 @@ Respond ONLY with JSON (no markdown):
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": "claude-haiku-4-5",
                     "max_tokens": 300,
                     "messages": [{"role": "user", "content": prompt}],
                 }
@@ -194,7 +205,6 @@ Respond ONLY with JSON (no markdown):
             data = resp.json()
             text = data["content"][0]["text"].strip()
 
-            # Strip markdown fences
             if text.startswith("```"):
                 text = text.split("```")[1]
                 if text.startswith("json"):
@@ -202,7 +212,6 @@ Respond ONLY with JSON (no markdown):
             text = text.strip()
 
             parsed = json.loads(text)
-
             is_ecom = parsed.get("is_ecommerce", False)
             return {
                 "ai_category":              parsed.get("category", "other"),
@@ -220,7 +229,6 @@ Respond ONLY with JSON (no markdown):
 
 
 async def fetch_homepage_text(domain: str) -> str:
-    """Fetch homepage text for AI classification."""
     for url in [f"https://{domain}", f"http://{domain}"]:
         try:
             async with httpx.AsyncClient(

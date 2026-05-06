@@ -174,16 +174,26 @@ def prefetch_corp_cache(domains: list[str], tables: list[str]) -> None:
     for table in tables:
         _prefetch_cache.setdefault(table, {})
         try:
-            query = f"""
-                SELECT domain, response_json
-                FROM (
-                    SELECT domain, response_json,
-                           ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+            # latest_categories_claude is already deduplicated (view) — simpler query,
+            # different columns. All other corp tables use response_json + ROW_NUMBER.
+            is_latest_view = table == "latest_categories_claude"
+            if is_latest_view:
+                query = f"""
+                    SELECT domain, category, subcategory
                     FROM `{corp_table_ref(table)}`
                     WHERE domain IN ({ph})
-                )
-                WHERE rn = 1
-            """
+                """
+            else:
+                query = f"""
+                    SELECT domain, response_json
+                    FROM (
+                        SELECT domain, response_json,
+                               ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                        FROM `{corp_table_ref(table)}`
+                        WHERE domain IN ({ph})
+                    )
+                    WHERE rn = 1
+                """
             rows = list(bq.query(
                 query,
                 job_config=bigquery.QueryJobConfig(query_parameters=params)
@@ -191,8 +201,13 @@ def prefetch_corp_cache(domains: list[str], tables: list[str]) -> None:
             hit_count = 0
             for row in rows:
                 d = row["domain"]
-                data = row["response_json"]
-                _prefetch_cache[table][d] = data if isinstance(data, dict) else json.loads(data)
+                if is_latest_view:
+                    data = {"category": row["category"], "subcategory": row["subcategory"]}
+                else:
+                    data = row["response_json"]
+                    if not isinstance(data, dict):
+                        data = json.loads(data)
+                _prefetch_cache[table][d] = data
                 hit_count += 1
             # Mark explicit misses so get_cached() won't fall through to BQ
             for d in unique_domains:

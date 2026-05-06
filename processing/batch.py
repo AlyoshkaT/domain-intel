@@ -38,10 +38,9 @@ async def run_batch_job(job_id: str, domains: list[str], services: list[str], fo
         try:
             from config.settings import BQ_SIMILARWEB_CACHE, BQ_BUILTWITH_CACHE
             tables = [BQ_SIMILARWEB_CACHE, BQ_BUILTWITH_CACHE]
-            # AI cache is in a different corp table (claude_responses)
-            from config.settings import CORP_PROJECT_ID, CORP_DATASET
-            ai_table = "claude_responses"  # short name for prefetch
-            tables.append(ai_table)
+            # AI cache: read from latest_categories_claude (deduplicated view)
+            from services.claude_ai import CORP_AI_CACHE_KEY
+            tables.append(CORP_AI_CACHE_KEY)
             prefetch_corp_cache(domains, tables)
         except Exception as e:
             logger.warning(f"Prefetch failed (will fall back to per-domain queries): {e}")
