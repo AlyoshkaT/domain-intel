@@ -169,6 +169,7 @@ export default function TechnologiesPage({ domains = [], onBack, can }: { domain
     const a = document.createElement("a")
     a.href = URL.createObjectURL(new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"}))
     a.download = `technologies_${new Date().toISOString().slice(0,10)}.csv`; a.click()
+    fetch("/api/log",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"tech_export_csv",details:{row_count:filteredTable.length}})}).catch(()=>{})
   },[filteredTable])
 
   const exportXLSX = useCallback(async()=>{

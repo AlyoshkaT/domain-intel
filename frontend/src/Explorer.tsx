@@ -445,6 +445,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
     const a = document.createElement("a")
     a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }))
     a.download = `explorer_${new Date().toISOString().slice(0, 10)}.csv`; a.click()
+    fetch("/api/log",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"explore_export_csv",details:{row_count:filteredProfiles.length}})}).catch(()=>{})
   }
 
   const exportXLSX = async () => {

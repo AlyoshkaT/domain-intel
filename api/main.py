@@ -99,6 +99,24 @@ async def me(request: Request):
     return {"username": username, "permissions": sorted(perms)}
 
 
+# ─── Client-side action logger ────────────────────────────────────────────────
+@app.post("/api/log")
+async def client_log(request: Request):
+    """Log a client-side action (e.g. CSV export done in browser)."""
+    try:
+        body = await request.json()
+        action = str(body.get("action", ""))
+        details = body.get("details", {})
+        if not action:
+            return {"ok": False}
+        username = getattr(request.state, "username", "unknown")
+        from core.bigquery import log_activity
+        log_activity(username, action, details)
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 # ─── Credits ──────────────────────────────────────────────────────────────────
 @app.get("/api/credits")
 async def credits_endpoint():
