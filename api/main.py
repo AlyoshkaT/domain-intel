@@ -250,7 +250,7 @@ async def export_csv(request: Request, job_id: str):
     username = getattr(request.state, "username", "unknown")
     try:
         from core.bigquery import log_activity
-        log_activity(username, "export_csv", {"job_id": job_id, "row_count": len(results)})
+        log_activity(username, "job_export_csv", {"job_id": job_id, "row_count": len(results)})
     except Exception:
         pass
     import pandas as pd
@@ -272,7 +272,7 @@ async def export_xlsx(request: Request, job_id: str):
     username = getattr(request.state, "username", "unknown")
     try:
         from core.bigquery import log_activity
-        log_activity(username, "export_xlsx", {"job_id": job_id, "row_count": len(results)})
+        log_activity(username, "job_export_xlsx", {"job_id": job_id, "row_count": len(results)})
     except Exception:
         pass
     import pandas as pd
@@ -309,7 +309,7 @@ async def export_sheets(request: Request, job_id: str, background_tasks: Backgro
     username = getattr(request.state, "username", "unknown")
     try:
         from core.bigquery import log_activity
-        log_activity(username, "export_sheets", {"job_id": job_id, "row_count": len(results)})
+        log_activity(username, "job_export_sheets", {"job_id": job_id, "row_count": len(results)})
     except Exception:
         pass
 

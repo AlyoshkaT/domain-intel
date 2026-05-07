@@ -460,9 +460,9 @@ function LogsSection() {
   }, [load])
 
   const ACTION_LABELS: Record<string, string> = {
-    job_created: "🚀 Новий job", export_csv: "↓ CSV", export_xlsx: "↓ XLSX",
-    export_sheets: "↗ Sheets", explore_export_xlsx: "↓ Explorer XLSX",
-    explore_export_csv: "↓ Explorer CSV", explore_export_sheets: "↗ Explorer Sheets",
+    job_created: "🚀 Новий job",
+    job_export_csv: "↓ Job CSV", job_export_xlsx: "↓ Job XLSX", job_export_sheets: "↗ Job Sheets",
+    explore_export_csv: "↓ Explorer CSV", explore_export_xlsx: "↓ Explorer XLSX", explore_export_sheets: "↗ Explorer Sheets",
     tech_export_csv: "↓ Tech CSV", tech_export_xlsx: "↓ Tech XLSX",
     log_test: "🧪 Тест", login: "🔑 Вхід",
   }
