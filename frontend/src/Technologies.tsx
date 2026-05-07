@@ -119,7 +119,7 @@ function MonthPicker({ value, onChange }: { value: string; onChange: (v: string)
 export default function TechnologiesPage({ domains = [], onBack, can }: { domains?: string[]; onBack?: () => void; can?: (p: string) => boolean }) {
   const now = new Date()
   const defaultTo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`
-  const ago = new Date(now); ago.setMonth(ago.getMonth()-24)
+  const ago = new Date(now); ago.setMonth(ago.getMonth()-12)
   const defaultFrom = `${ago.getFullYear()}-${String(ago.getMonth()+1).padStart(2,"0")}`
 
   const [dateFrom, setDateFrom] = useState(defaultFrom)
