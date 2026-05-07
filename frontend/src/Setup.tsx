@@ -436,12 +436,22 @@ function UsersSection() {
 function LogsSection() {
   const [logs, setLogs] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [testMsg, setTestMsg] = useState("")
 
   const load = useCallback(async () => {
     setLoading(true)
     try { const r = await apiFetch("/api/setup/logs"); setLogs(r.logs) } catch {}
     finally { setLoading(false) }
   }, [])
+
+  const testLog = async () => {
+    setTestMsg("⏳ Тестуємо...")
+    try {
+      const r = await apiFetch("/api/setup/logs/test", { method: "POST" })
+      setTestMsg(`✓ Записано. Останні логи: ${r.recent_logs?.length ?? 0}`)
+      setLogs(r.recent_logs || [])
+    } catch (e: any) { setTestMsg("✗ Помилка: " + e.message) }
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -455,7 +465,11 @@ function LogsSection() {
     <div className="card">
       <div className="setup-section-header">
         <div className="card-section-title">Лог дій</div>
-        <button className="btn-export" onClick={load} disabled={loading}>↻ Оновити</button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {testMsg && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{testMsg}</span>}
+          <button className="btn-export" onClick={testLog}>🧪 Тест</button>
+          <button className="btn-export" onClick={load} disabled={loading}>↻ Оновити</button>
+        </div>
       </div>
       {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (
         <table className="results-table" style={{ marginTop: 8 }}>
