@@ -463,7 +463,7 @@ function LogsSection() {
     job_created: "🚀 Новий job", export_csv: "↓ CSV", export_xlsx: "↓ XLSX",
     export_sheets: "↗ Sheets", explore_export_xlsx: "↓ Explorer XLSX",
     explore_export_sheets: "↗ Explorer Sheets", log_test: "🧪 Тест",
-    login: "🔑 Вхід",
+    login: "🔑 Вхід", tech_export_xlsx: "↓ Tech XLSX",
   }
 
   return (

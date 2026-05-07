@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from google.cloud import bigquery as bq
 
 from core.bigquery import corp_client
@@ -196,7 +196,7 @@ async def add_technology_endpoint(body: dict):
 
 
 @router.post("/export/xlsx")
-async def export_technologies_xlsx(body: dict):
+async def export_technologies_xlsx(request: Request, body: dict):
     import io
     import pandas as pd
     from fastapi import HTTPException
@@ -204,6 +204,11 @@ async def export_technologies_xlsx(body: dict):
     rows = body.get("rows", [])
     if not rows:
         raise HTTPException(status_code=400, detail="No rows to export")
+    try:
+        from core.bigquery import log_activity
+        log_activity(getattr(request.state, "username", "unknown"), "tech_export_xlsx", {"row_count": len(rows)})
+    except Exception:
+        pass
     df = pd.DataFrame(rows)
     stream = io.BytesIO()
     with pd.ExcelWriter(stream, engine="openpyxl") as writer:
