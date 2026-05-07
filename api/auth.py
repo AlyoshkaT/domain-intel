@@ -109,6 +109,21 @@ def invalidate_users_cache():
     _bq_users_cached_at = 0
 
 
+_login_logged: dict[str, float] = {}   # username → last logged timestamp
+_LOGIN_LOG_INTERVAL = 3600             # log once per hour per user
+
+def _maybe_log_login(username: str):
+    now = time.time()
+    if now - _login_logged.get(username, 0) < _LOGIN_LOG_INTERVAL:
+        return
+    _login_logged[username] = now
+    try:
+        from core.bigquery import log_activity
+        log_activity(username, "login", {})
+    except Exception:
+        pass
+
+
 async def auth_middleware(request: Request, call_next):
     """Basic Auth middleware. Skips if no users configured."""
     if request.url.path in ["/api/health"]:
@@ -139,4 +154,5 @@ async def auth_middleware(request: Request, call_next):
                         headers={"WWW-Authenticate": 'Basic realm="Domain Intel"'})
 
     request.state.username = username
+    _maybe_log_login(username)
     return await call_next(request)

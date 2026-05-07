@@ -453,12 +453,17 @@ function LogsSection() {
     } catch (e: any) { setTestMsg("✗ Помилка: " + e.message) }
   }
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 30000)
+    return () => clearInterval(t)
+  }, [load])
 
   const ACTION_LABELS: Record<string, string> = {
     job_created: "🚀 Новий job", export_csv: "↓ CSV", export_xlsx: "↓ XLSX",
     export_sheets: "↗ Sheets", explore_export_xlsx: "↓ Explorer XLSX",
-    explore_export_sheets: "↗ Explorer Sheets",
+    explore_export_sheets: "↗ Explorer Sheets", log_test: "🧪 Тест",
+    login: "🔑 Вхід",
   }
 
   return (
