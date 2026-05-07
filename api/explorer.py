@@ -278,7 +278,7 @@ async def explore_export_xlsx(request: Request, body: dict):
     username = getattr(request.state, "username", "unknown")
     try:
         from core.bigquery import log_activity
-        log_activity(username, "export_xlsx", {"row_count": len(results)})
+        log_activity(username, "explore_export_xlsx", {"row_count": len(results)})
     except Exception:
         pass
     df = pd.DataFrame(results)
@@ -305,7 +305,7 @@ async def explore_export_sheets(request: Request, body: dict, background_tasks: 
     username = getattr(request.state, "username", "unknown")
     try:
         from core.bigquery import log_activity
-        log_activity(username, "export_sheets", {"row_count": len(results), "label": label})
+        log_activity(username, "explore_export_sheets", {"row_count": len(results), "label": label})
     except Exception:
         pass
     def do_export():
