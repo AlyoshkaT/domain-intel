@@ -317,18 +317,16 @@ def list_jobs(limit: int = 50) -> list[dict]:
 
 
 def save_result(result: dict):
+    """Save one domain result via streaming insert (~100ms vs 3-5s for DML INSERT)."""
     bq = client()
+    # Normalise: BQ insert_rows_json needs JSON-serialisable values only
+    row = {k: (None if v is None else v) for k, v in result.items()}
     try:
-        cols, placeholders, params = [], [], []
-        for k, v in result.items():
-            cols.append(k)
-            if v is None: placeholders.append("NULL")
-            elif isinstance(v, float): placeholders.append(f"@p_{k}"); params.append(bigquery.ScalarQueryParameter(f"p_{k}", "FLOAT64", v))
-            elif isinstance(v, int): placeholders.append(f"@p_{k}"); params.append(bigquery.ScalarQueryParameter(f"p_{k}", "INT64", v))
-            else: placeholders.append(f"@p_{k}"); params.append(bigquery.ScalarQueryParameter(f"p_{k}", "STRING", str(v)))
-        sql = f"INSERT INTO `{table_ref(BQ_RESULTS_TABLE)}` ({', '.join(cols)}) VALUES ({', '.join(placeholders)})"
-        bq.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
-        logger.info(f"Result saved OK: {result.get('domain')}")
+        errors = bq.insert_rows_json(table_ref(BQ_RESULTS_TABLE), [row])
+        if errors:
+            logger.error(f"Result write error: {errors}")
+        else:
+            logger.info(f"Result saved OK: {result.get('domain')}")
     except Exception as e:
         logger.error(f"Result write error: {e}")
 

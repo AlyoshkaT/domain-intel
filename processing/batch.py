@@ -87,7 +87,8 @@ async def run_batch_job(job_id: str, domains: list[str], services: list[str], fo
         nonlocal processed, failed
         async with semaphore:
             result = await process_domain(domain, job_id, services, force_refresh=force_refresh, username=username)
-            save_result(result)
+            # Run sync BQ write in thread — doesn't block the event loop
+            await asyncio.to_thread(save_result, result)
 
             if result["status"] == "error":
                 failed += 1
@@ -139,9 +140,9 @@ async def run_batch_job(job_id: str, domains: list[str], services: list[str], fo
 
 
 async def _update_job_safe(job_id: str, **kwargs):
-    """Update job without raising on BQ errors."""
+    """Update job without raising on BQ errors. Runs in thread to avoid blocking event loop."""
     try:
-        update_job(job_id, **kwargs)
+        await asyncio.to_thread(update_job, job_id, **kwargs)
     except Exception as e:
         logger.error(f"Failed to update job {job_id}: {e}")
 

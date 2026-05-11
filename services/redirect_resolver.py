@@ -126,8 +126,10 @@ async def resolve_domain(domain: str, job_id: str) -> tuple[str, str]:
     Returns (resolved_domain, redirect_type).
     redirect_type: 'none' | 'www' | 'subdomain' | 'http_redirect'
     """
-    # 1. Check known redirects in BQ
-    known = get_known_redirect(domain)
+    import asyncio as _asyncio
+
+    # 1. Check known redirects in BQ (run in thread — sync BQ query)
+    known = await _asyncio.to_thread(get_known_redirect, domain)
     if known:
         logger.info(f"Known redirect: {domain} → {known}")
         return known, "known"
@@ -135,7 +137,6 @@ async def resolve_domain(domain: str, job_id: str) -> tuple[str, str]:
     # 2. Check HTTP redirect
     resolved = await check_http_redirect(domain)
     if resolved and resolved != domain:
-        # Determine type
         orig_parts = domain.split(".")
         res_parts = resolved.split(".")
 
@@ -144,7 +145,8 @@ async def resolve_domain(domain: str, job_id: str) -> tuple[str, str]:
         else:
             redirect_type = "http_redirect"
 
-        save_redirect(domain, resolved, redirect_type, job_id)
+        # Fire-and-forget: save redirect in thread
+        _asyncio.get_event_loop().run_in_executor(None, save_redirect, domain, resolved, redirect_type, job_id)
         return resolved, redirect_type
 
     return domain, "none"

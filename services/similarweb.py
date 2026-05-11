@@ -44,7 +44,9 @@ async def fetch_similarweb(domain: str) -> Optional[dict]:
                 pass
 
             data = resp.json()
-            save_cache(SIMILARWEB_CACHE_TABLE, domain, data)
+            # Fire-and-forget: save cache in thread so it doesn't block SW response
+            import asyncio as _asyncio
+            _asyncio.get_event_loop().run_in_executor(None, save_cache, SIMILARWEB_CACHE_TABLE, domain, data)
             return data
     except Exception as e:
         logger.error(f"SimilarWeb error for {domain}: {e}")
