@@ -599,6 +599,22 @@ def log_activity(username: str, action: str, details: dict = None):
         logger.error(f"log_activity error: {e}")
 
 
+def clear_activity_logs() -> int:
+    """Delete all rows from activity_logs. Returns number of rows deleted."""
+    try:
+        bq = client()
+        tbl = table_ref("activity_logs")
+        # BQ DML DELETE — returns rows affected via job stats
+        job = bq.query(f"DELETE FROM `{tbl}` WHERE TRUE")
+        job.result()
+        deleted = job.num_dml_affected_rows or 0
+        logger.info(f"clear_activity_logs: deleted {deleted} rows")
+        return deleted
+    except Exception as e:
+        logger.error(f"clear_activity_logs error: {e}")
+        raise
+
+
 def get_activity_logs(limit: int = 200) -> list[dict]:
     try:
         bq = client()

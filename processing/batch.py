@@ -22,8 +22,11 @@ _sync_lock = threading.Lock()
 _sync_running = False
 
 
-def _trigger_profiles_sync(job_id: str):
-    """Start domain_profiles sync in a background thread after job completes."""
+def _trigger_profiles_sync(job_id: str, domains: list[str]):
+    """
+    Fast incremental upsert — only updates profiles for the processed domains.
+    Skips if a sync is already running to avoid pile-up.
+    """
     global _sync_running
     with _sync_lock:
         if _sync_running:
@@ -34,12 +37,12 @@ def _trigger_profiles_sync(job_id: str):
     def _do_sync():
         global _sync_running
         try:
-            logger.info(f"Auto-sync profiles triggered by job {job_id}")
-            from services.domain_profiles import sync_domain_profiles
+            logger.info(f"Incremental profiles sync triggered by job {job_id}: {len(domains)} domains")
+            from services.domain_profiles import sync_domain_profiles_incremental
             from api.explorer import invalidate_profiles_cache
-            result = sync_domain_profiles()
+            result = sync_domain_profiles_incremental(domains)
             invalidate_profiles_cache()
-            logger.info(f"Auto-sync profiles done: {result}")
+            logger.info(f"Incremental profiles sync done: {result}")
         except Exception as e:
             logger.warning(f"Auto-sync profiles error: {e}")
         finally:
@@ -131,8 +134,8 @@ async def run_batch_job(job_id: str, domains: list[str], services: list[str], fo
     except Exception as e:
         logger.warning(f"Auto Sheets export failed for job {job_id}: {e}")
 
-    # Auto-sync domain_profiles so new domains appear in Explorer immediately
-    _trigger_profiles_sync(job_id)
+    # Fast incremental upsert — only updates profiles for the just-processed domains
+    _trigger_profiles_sync(job_id, domains)
 
 
 async def _update_job_safe(job_id: str, **kwargs):

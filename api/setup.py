@@ -231,6 +231,14 @@ async def get_logs():
     return {"logs": get_activity_logs(limit=200)}
 
 
+@router.delete("/logs/clear")
+async def clear_logs():
+    """Delete all activity log entries."""
+    from core.bigquery import clear_activity_logs
+    deleted = clear_activity_logs()
+    return {"deleted": deleted, "status": "ok"}
+
+
 @router.post("/logs/test")
 async def test_log(request: Request):
     """Write a test log entry and immediately read it back (for diagnostics)."""

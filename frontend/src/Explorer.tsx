@@ -313,8 +313,10 @@ function SyncButton({ onSync }: { onSync: () => void }) {
     await apiFetch("/api/explore/refresh", { method: "POST" })
   }
 
+  const pct: number = typeof status.pct === "number" ? status.pct : 0
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, minWidth: 220 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {status.last_sync && !isRunning && (
           <span style={{ fontSize: 10, color: "var(--text-3)" }}>
@@ -322,13 +324,29 @@ function SyncButton({ onSync }: { onSync: () => void }) {
           </span>
         )}
         <button className="flt-reset-btn" disabled={isRunning} onClick={handleClick}>
-          {isRunning ? "⏳" : "↻"} {isRunning ? (status.progress || "Syncing…") : "Sync DB"}
+          {isRunning ? "⏳" : "↻"} {isRunning ? "Syncing…" : "Sync DB"}
         </button>
       </div>
-      {isRunning && status.progress && (
-        <span style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--mono)" }}>{status.progress}</span>
+
+      {isRunning && (
+        <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 2 }}>
+          {/* Progress bar */}
+          <div style={{ width: "100%", height: 4, background: "var(--border)", borderRadius: 2, overflow: "hidden" }}>
+            <div style={{
+              height: "100%", background: "var(--accent)",
+              width: `${pct}%`,
+              transition: "width 0.4s ease",
+              borderRadius: 2,
+            }} />
+          </div>
+          {/* Progress text */}
+          <span style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--mono)", textAlign: "right" }}>
+            {status.progress || "…"}{pct > 0 && pct < 100 ? "" : ""}
+          </span>
+        </div>
       )}
-      {status.error && <span style={{ fontSize: 10, color: "var(--red)" }}>❌ {status.error.slice(0, 80)}</span>}
+
+      {status.error && <span style={{ fontSize: 10, color: "var(--danger)" }}>❌ {status.error.slice(0, 80)}</span>}
     </div>
   )
 }

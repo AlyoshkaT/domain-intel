@@ -438,6 +438,7 @@ function UsersSection({ lang }: { lang: Lang }) {
 function LogsSection({ lang }: { lang: Lang }) {
   const [logs, setLogs] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const [testMsg, setTestMsg] = useState("")
 
   const load = useCallback(async () => {
@@ -453,6 +454,18 @@ function LogsSection({ lang }: { lang: Lang }) {
       setTestMsg(t('setup_log_ok', lang)(r.recent_logs?.length ?? 0))
       setLogs(r.recent_logs || [])
     } catch (e: any) { setTestMsg(t('setup_log_err', lang)(e.message)) }
+  }
+
+  const clearLogs = async () => {
+    if (!window.confirm(t('setup_log_confirm_clear', lang))) return
+    setClearing(true)
+    setTestMsg("")
+    try {
+      const r = await apiFetch("/api/setup/logs/clear", { method: "DELETE" })
+      setTestMsg(t('setup_log_cleared', lang)(String(r.deleted ?? 0)))
+      setLogs([])
+    } catch (e: any) { setTestMsg(t('setup_err', lang)(e.message)) }
+    finally { setClearing(false) }
   }
 
   useEffect(() => {
@@ -476,7 +489,15 @@ function LogsSection({ lang }: { lang: Lang }) {
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {testMsg && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{testMsg}</span>}
           <button className="btn-export" onClick={testLog}>{t('setup_log_test_btn', lang)}</button>
-          <button className="btn-export" onClick={load} disabled={loading}>↻ Оновити</button>
+          <button className="btn-export" onClick={load} disabled={loading}>↻ {t('setup_log_refresh', lang)}</button>
+          <button
+            className="btn-export"
+            onClick={clearLogs}
+            disabled={clearing || logs.length === 0}
+            style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
+          >
+            🗑 {t('setup_log_clear_btn', lang)}
+          </button>
         </div>
       </div>
       {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (

@@ -1,6 +1,6 @@
 """
-Scheduler — weekly auto-sync of domain_profiles.
-Runs every Saturday at 02:00 UTC.
+Scheduler — daily auto-sync of domain_profiles.
+Runs every day at 04:00 UTC (= 06:00 Kyiv winter / 07:00 summer).
 """
 import logging
 import threading
@@ -10,34 +10,34 @@ logger = logging.getLogger(__name__)
 
 _scheduler_thread: threading.Thread | None = None
 _stop_event = threading.Event()
+_SYNC_HOUR_UTC = 4   # 04:00 UTC = 06:00 Kyiv (UTC+2 winter)
 
 
 def _run_sync():
-    """Run sync in background thread."""
+    """Run full sync in background thread."""
     from services.domain_profiles import sync_domain_profiles
-    logger.info("Scheduled sync started")
+    logger.info("Scheduled daily sync started")
     result = sync_domain_profiles()
-    logger.info(f"Scheduled sync done: {result}")
+    logger.info(f"Scheduled daily sync done: {result}")
 
     # Invalidate Explorer cache after sync
     try:
-        import api.explorer as explorer
-        explorer._profiles_cache = None
+        from api.explorer import invalidate_profiles_cache
+        invalidate_profiles_cache()
     except Exception:
         pass
 
 
 def _scheduler_loop():
-    """Check every hour if it's time to sync (Saturday 02:00 UTC)."""
+    """Check every 5 minutes if it's time to sync (daily at 04:00 UTC)."""
     import time
     while not _stop_event.is_set():
         now = datetime.utcnow()
-        # Saturday = weekday 5, at 02:00
-        if now.weekday() == 5 and now.hour == 2 and now.minute < 5:
-            logger.info("Weekly sync triggered")
-            thread = threading.Thread(target=_run_sync, daemon=True)
+        if now.hour == _SYNC_HOUR_UTC and now.minute < 5:
+            logger.info("Daily sync triggered")
+            thread = threading.Thread(target=_run_sync, daemon=True, name="daily-sync")
             thread.start()
-            # Sleep 6 hours to avoid double-trigger
+            # Sleep 6 hours to avoid double-trigger within same hour
             _stop_event.wait(timeout=6 * 3600)
         else:
             # Check every 5 minutes
@@ -51,7 +51,7 @@ def start_scheduler():
     _stop_event.clear()
     _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name="sync-scheduler")
     _scheduler_thread.start()
-    logger.info("Sync scheduler started (weekly, Saturday 02:00 UTC)")
+    logger.info(f"Sync scheduler started (daily at {_SYNC_HOUR_UTC:02d}:00 UTC)")
 
 
 def stop_scheduler():
