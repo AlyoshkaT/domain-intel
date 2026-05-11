@@ -282,25 +282,47 @@ function NumericFilter({ filter, onChange }: { filter: NumFilter; onChange: (f: 
 function SyncButton({ onSync }: { onSync: () => void }) {
   const [status, setStatus] = useState<any>({})
   const [syncing, setSyncing] = useState(false)
+  const wasRunningRef = useRef(false)
+
   const load = useCallback(async () => {
-    try { const s = await apiFetch("/api/explore/sync/status"); setStatus(s); if (!s.running) setSyncing(false) } catch {}
-  }, [])
-  useEffect(() => { load(); const iv = setInterval(load, 2000); return () => clearInterval(iv) }, [load])
+    try {
+      const s = await apiFetch("/api/explore/sync/status")
+      setStatus(s)
+      const isNowRunning = !!s.running
+      // Sync just finished → reload profiles automatically
+      if (wasRunningRef.current && !isNowRunning) {
+        setSyncing(false)
+        onSync()
+      }
+      wasRunningRef.current = isNowRunning
+    } catch {}
+  }, [onSync])
+
+  useEffect(() => { load(); const iv = setInterval(load, 3000); return () => clearInterval(iv) }, [load])
+
   const isRunning = syncing || status.running
+
+  const handleClick = async () => {
+    setSyncing(true)
+    wasRunningRef.current = true
+    await apiFetch("/api/explore/refresh", { method: "POST" })
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {status.last_sync && !isRunning && (
           <span style={{ fontSize: 10, color: "var(--text-3)" }}>
-            {new Date(status.last_sync).toLocaleString("uk-UA")} · {status.total_domains?.toLocaleString()} доменів
+            {new Date(status.last_sync).toLocaleString("uk-UA")} · {status.total_domains?.toLocaleString()} domains
           </span>
         )}
-        <button className="flt-reset-btn" disabled={isRunning}
-          onClick={async () => { setSyncing(true); await apiFetch("/api/explore/refresh", { method: "POST" }); setTimeout(onSync, 5000) }}>
-          {isRunning ? "⏳" : "↻"} {isRunning ? "Синхронізація..." : "Синхронізувати БД"}
+        <button className="flt-reset-btn" disabled={isRunning} onClick={handleClick}>
+          {isRunning ? "⏳" : "↻"} {isRunning ? (status.progress || "Syncing…") : "Sync DB"}
         </button>
       </div>
-      {isRunning && status.progress && <span style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--mono)" }}>{status.progress}</span>}
+      {isRunning && status.progress && (
+        <span style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--mono)" }}>{status.progress}</span>
+      )}
       {status.error && <span style={{ fontSize: 10, color: "var(--red)" }}>❌ {status.error.slice(0, 80)}</span>}
     </div>
   )

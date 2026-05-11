@@ -3,6 +3,7 @@ Batch processor - runs job in background with concurrency control
 """
 import asyncio
 import logging
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -15,6 +16,38 @@ from core.bigquery import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Track whether a profiles sync is already running (avoid pile-up)
+_sync_lock = threading.Lock()
+_sync_running = False
+
+
+def _trigger_profiles_sync(job_id: str):
+    """Start domain_profiles sync in a background thread after job completes."""
+    global _sync_running
+    with _sync_lock:
+        if _sync_running:
+            logger.info(f"Profiles sync already running — skipping auto-sync for job {job_id}")
+            return
+        _sync_running = True
+
+    def _do_sync():
+        global _sync_running
+        try:
+            logger.info(f"Auto-sync profiles triggered by job {job_id}")
+            from services.domain_profiles import sync_domain_profiles
+            from api.explorer import invalidate_profiles_cache
+            result = sync_domain_profiles()
+            invalidate_profiles_cache()
+            logger.info(f"Auto-sync profiles done: {result}")
+        except Exception as e:
+            logger.warning(f"Auto-sync profiles error: {e}")
+        finally:
+            with _sync_lock:
+                _sync_running = False
+
+    t = threading.Thread(target=_do_sync, daemon=True, name=f"profiles-sync-{job_id[:8]}")
+    t.start()
 
 # In-memory job registry for active jobs (worker status)
 _active_jobs: dict[str, asyncio.Task] = {}
@@ -97,6 +130,9 @@ async def run_batch_job(job_id: str, domains: list[str], services: list[str], fo
                 logger.info(f"Auto-exported job {job_id} to Sheets: {url}")
     except Exception as e:
         logger.warning(f"Auto Sheets export failed for job {job_id}: {e}")
+
+    # Auto-sync domain_profiles so new domains appear in Explorer immediately
+    _trigger_profiles_sync(job_id)
 
 
 async def _update_job_safe(job_id: str, **kwargs):
