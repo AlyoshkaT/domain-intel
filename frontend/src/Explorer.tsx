@@ -157,7 +157,7 @@ function DomainFilter({ filter, allValues, onChange, lang }: {
                     <span className="flt-option-count">{v.count}</span>
                   </label>
                 ))}
-                {!filter.value && <div className="flt-loading">Введіть домен для пошуку</div>}
+                {!filter.value && <div className="flt-loading">{t('expl_domain_search_ph', lang)}</div>}
               </div>
             </div>
           )}
@@ -359,9 +359,9 @@ function SyncButton({ onSync }: { onSync: () => void }) {
 }
 
 // ─── Filter panel ─────────────────────────────────────────────────────────────
-function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, activeCount, lang }: {
+function FilterPanel({ filters, fieldValues, onChange, onReset, onSearch, loading, activeCount, lang }: {
   filters: FilterState; fieldValues: Record<string, FilterValue[]>
-  onChange: (f: FilterState) => void; onSearch: () => void; loading: boolean; activeCount: number; lang: Lang
+  onChange: (f: FilterState) => void; onReset: () => void; onSearch: () => void; loading: boolean; activeCount: number; lang: Lang
 }) {
   const upd = (key: keyof FilterState, val: any) => onChange({ ...filters, [key]: val })
   const sections = [
@@ -379,8 +379,8 @@ function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, active
   return (
     <div className="filter-panel">
       <div className="filter-panel-header">
-        <span className="filter-panel-title">Фільтри</span>
-        <button className="flt-reset-btn" onClick={() => onChange(defaultFilters())}>Скинути</button>
+        <span className="filter-panel-title">{t('expl_filters_title', lang)}</span>
+        <button className="flt-reset-btn" onClick={onReset}>{t('expl_reset', lang)}</button>
       </div>
       {sections.map(s => (
         <div key={s.key} className="filter-section">
@@ -476,6 +476,11 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
   }, [])
 
   const handleSearch = () => applyFilters(filters, allProfiles)
+  const handleReset = useCallback(() => {
+    const def = defaultFilters()
+    setFilters(def)
+    applyFilters(def, allProfiles)
+  }, [allProfiles, applyFilters])
 
   // ── Pagination — pure in-memory slice ─────────────────────────────────────
   const total = filteredProfiles.length
@@ -600,7 +605,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
     <div className="explorer-layout">
       <aside className="explorer-sidebar">
         <FilterPanel filters={filters} fieldValues={fieldValues} onChange={setFilters}
-          onSearch={handleSearch} loading={loading} activeCount={activeCount} lang={lang} />
+          onReset={handleReset} onSearch={handleSearch} loading={loading} activeCount={activeCount} lang={lang} />
       </aside>
 
       <main className="explorer-main">
@@ -622,7 +627,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
           </div>
           {filteredProfiles.length > 0 && (
             <div className="stat-card force-refresh-card">
-              <div className="stat-label">↻ Оновити КЕШ</div>
+              <div className="stat-label">{t('expl_refresh_cache_label', lang)}</div>
               <div className="force-refresh-row">
                 <div className="gran-btns">
                   {[{id:"builtwith",label:"BW"},{id:"similarweb",label:"SW"},{id:"ai",label:"AI"}].map(s => (

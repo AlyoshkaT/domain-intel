@@ -62,6 +62,10 @@ const T = {
     results_empty: 'No results yet or nothing found',
 
     // ── Explorer ──
+    expl_filters_title: 'Filters',
+    expl_reset: 'Reset',
+    expl_domain_search_ph: 'Type domain to search',
+    expl_refresh_cache_label: '↻ Refresh cache',
     expl_apply: 'Apply',
     expl_loading: 'Loading…',
     expl_loading_data: 'Loading data…',
@@ -254,6 +258,10 @@ const T = {
     results_empty: 'Результатів ще немає або нічого не знайдено',
 
     // ── Explorer ──
+    expl_filters_title: 'Фільтри',
+    expl_reset: 'Скинути',
+    expl_domain_search_ph: 'Введіть домен для пошуку',
+    expl_refresh_cache_label: '↻ Оновити КЕШ',
     expl_apply: 'Застосувати',
     expl_loading: 'Завантаження…',
     expl_loading_data: 'Завантаження даних…',

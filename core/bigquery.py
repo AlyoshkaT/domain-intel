@@ -600,16 +600,35 @@ def log_activity(username: str, action: str, details: dict = None):
 
 
 def clear_activity_logs() -> int:
-    """Delete all rows from activity_logs. Returns number of rows deleted."""
+    """
+    Clear all rows from activity_logs.
+    Uses load_table_from_file(WRITE_TRUNCATE) with empty data instead of
+    DML DELETE, because BQ DML cannot modify rows still in the streaming
+    buffer — this approach always works regardless of buffer state.
+    Returns approximate row count that was in the table before clearing.
+    """
+    import io as _io
     try:
         bq = client()
-        tbl = table_ref("activity_logs")
-        # BQ DML DELETE — returns rows affected via job stats
-        job = bq.query(f"DELETE FROM `{tbl}` WHERE TRUE")
+        tbl_id = table_ref("activity_logs")
+
+        # Count existing rows first so we can report a number
+        try:
+            count_row = list(bq.query(f"SELECT COUNT(*) AS n FROM `{tbl_id}`").result())[0]
+            before = int(count_row["n"])
+        except Exception:
+            before = 0
+
+        # Overwrite table with empty JSONL file (WRITE_TRUNCATE)
+        job_config = bigquery.LoadJobConfig(
+            schema=_ACTIVITY_LOGS_SCHEMA,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        )
+        job = bq.load_table_from_file(_io.BytesIO(b""), tbl_id, job_config=job_config)
         job.result()
-        deleted = job.num_dml_affected_rows or 0
-        logger.info(f"clear_activity_logs: deleted {deleted} rows")
-        return deleted
+        logger.info(f"clear_activity_logs: truncated table (had ~{before} rows)")
+        return before
     except Exception as e:
         logger.error(f"clear_activity_logs error: {e}")
         raise
