@@ -12,7 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core.bigquery import ensure_tables_exist, list_jobs, get_job, get_results, reset_stale_jobs, update_job
+from core.bigquery import (
+    ensure_tables_exist, list_jobs, get_job, get_results,
+    reset_stale_jobs, update_job, get_stale_running_jobs,
+)
 from services.technology_catalog import sync_catalog
 from services.redirect_resolver import ensure_redirects_table
 from services.credits import ensure_app_settings_table, fetch_builtwith_credits, get_cached_credits
@@ -39,13 +42,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"BQ init error: {e}")
 
-    # Reset any jobs that were left running from previous instance
+    # Auto-resume jobs interrupted by server restart
     try:
-        stale = reset_stale_jobs()
-        if stale:
-            logger.warning(f"Reset {stale} stale running/pending jobs from previous instance")
+        from processing.batch import resume_job
+        stale_jobs = get_stale_running_jobs()
+        resumed, failed_reset = 0, 0
+        for job in stale_jobs:
+            result = resume_job(job["job_id"])
+            if result.get("ok") and result.get("remaining", 0) > 0:
+                logger.info(f"Auto-resumed job {job['job_id']}: {result['remaining']} remaining")
+                resumed += 1
+            elif result.get("ok") and result.get("remaining", 0) == 0:
+                logger.info(f"Job {job['job_id']} already fully processed — marked complete")
+                resumed += 1
+            else:
+                # No domain list saved (old job) — fall back to marking failed
+                update_job(job["job_id"], status="failed",
+                           error_message="Interrupted by server restart (no domain list — cannot resume)")
+                failed_reset += 1
+        if resumed or failed_reset:
+            logger.warning(f"Startup: {resumed} jobs auto-resumed, {failed_reset} marked failed (no domain list)")
     except Exception as e:
-        logger.warning(f"Stale job reset error: {e}")
+        logger.warning(f"Auto-resume error: {e}")
 
     try:
         await fetch_builtwith_credits()
@@ -254,6 +272,21 @@ async def cancel_job_endpoint(job_id: str):
             update_job(job_id, status="cancelled", error_message="Manually cancelled")
             return {"cancelled": True}
     return {"cancelled": cancelled}
+
+@app.post("/api/jobs/{job_id}/resume", dependencies=[require_permission("jobs")])
+async def resume_job_endpoint(request: Request, job_id: str):
+    """Resume an interrupted job from where it left off using the stored domain list."""
+    from processing.batch import resume_job
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("status") in ("running", "pending"):
+        raise HTTPException(status_code=400, detail="Job is already running")
+    username = getattr(request.state, "username", "unknown")
+    result = resume_job(job_id, username=username)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Cannot resume"))
+    return result
 
 @app.post("/api/jobs/{job_id}/retry_errors", dependencies=[require_permission("jobs")])
 async def retry_errors(request: Request, job_id: str):

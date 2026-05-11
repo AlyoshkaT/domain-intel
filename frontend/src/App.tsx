@@ -304,6 +304,19 @@ function JobsPage({ onSelect, can, lang }: { onSelect: (id: string) => void; can
     finally { setActing(null) }
   }
 
+  const handleResume = async (e: React.MouseEvent, jobId: string, notProcessed: number) => {
+    e.stopPropagation()
+    if (!window.confirm(t('jobs_resume_confirm', lang)(notProcessed, 0))) return
+    setActing(jobId)
+    try {
+      const d = await apiFetch(`/api/jobs/${jobId}/resume`, { method: "POST" })
+      if (d.remaining === 0) alert(t('jobs_resume_none', lang))
+      await load()
+    } catch (err: any) {
+      alert(err.message || t('jobs_resume_no_list', lang))
+    } finally { setActing(null) }
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -347,6 +360,13 @@ function JobsPage({ onSelect, can, lang }: { onSelect: (id: string) => void; can
                             </button>
                           )}
                         </>
+                      )}
+                      {isDone && notProcessed > 0 && (
+                        <button className="btn-export" disabled={isActing}
+                          style={{ color: "#22c55e", borderColor: "#22c55e", fontSize: 11 }}
+                          onClick={e => handleResume(e, job.job_id, notProcessed)}>
+                          {isActing ? "…" : t('jobs_resume', lang)}
+                        </button>
                       )}
                       {isDone && hasErrors && (
                         <button className="btn-export" disabled={isActing}
@@ -453,6 +473,22 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
               )}
             </>
           )}
+          {job && ["completed_with_errors","failed","cancelled"].includes(job.status) && (() => {
+            const notProcessed = (job.total_domains||0) - (job.processed_domains||0) - (job.failed_domains||0)
+            return notProcessed > 0 ? (
+              <button className="btn-export" disabled={acting}
+                style={{ color: "#22c55e", borderColor: "#22c55e" }}
+                onClick={async () => {
+                  if (!window.confirm(t('jobs_resume_confirm', lang)(notProcessed, (job.processed_domains||0)+(job.failed_domains||0)))) return
+                  setActing(true)
+                  try { await apiFetch(`/api/jobs/${jobId}/resume`, { method: "POST" }); await loadData() }
+                  catch (err: any) { alert(err.message || t('jobs_resume_no_list', lang)) }
+                  finally { setActing(false) }
+                }}>
+                {acting ? "…" : t('jobs_resume', lang)}
+              </button>
+            ) : null
+          })()}
           {job && ["completed_with_errors","failed","cancelled"].includes(job.status) && (job.failed_domains || 0) > 0 && (
             <button className="btn-export" disabled={acting}
               style={{ color: "var(--warning, #f59e0b)", borderColor: "var(--warning, #f59e0b)" }}

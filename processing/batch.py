@@ -13,6 +13,7 @@ from processing.pipeline import process_domain
 from core.bigquery import (
     create_job, update_job, get_job, save_result,
     prefetch_corp_cache, clear_prefetch_cache,
+    save_job_domains, get_job_domains, get_processed_domains_for_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,17 +57,25 @@ def _trigger_profiles_sync(job_id: str, domains: list[str]):
 _active_jobs: dict[str, asyncio.Task] = {}
 
 
-async def run_batch_job(job_id: str, domains: list[str], services: list[str], force_refresh: bool = False, username: str = ""):
+async def run_batch_job(
+    job_id: str, domains: list[str], services: list[str],
+    force_refresh: bool = False, username: str = "",
+    processed_offset: int = 0, failed_offset: int = 0,
+):
     """
     Main batch processing coroutine. Runs in background.
-    Updates job progress in BigQuery after each domain.
+    processed_offset / failed_offset: used when resuming a partially-done job.
     """
     total = len(domains)
-    processed = 0
-    failed = 0
+    processed = processed_offset
+    failed = failed_offset
 
-    logger.info(f"Job {job_id} started: {total} domains, services={services}")
-    await _update_job_safe(job_id, status="running", total_domains=total)
+    if processed_offset == 0 and failed_offset == 0:
+        logger.info(f"Job {job_id} started: {total} domains, services={services}")
+        await _update_job_safe(job_id, status="running", total_domains=total)
+    else:
+        logger.info(f"Job {job_id} resumed: {total} remaining, already done={processed_offset+failed_offset}, services={services}")
+        await _update_job_safe(job_id, status="running")
 
     # Batch-prefetch all corp BQ cache in 3 queries (SW + BW + AI)
     # This avoids N×3 individual BQ queries (~2-5s each) during processing.
@@ -147,6 +156,50 @@ async def _update_job_safe(job_id: str, **kwargs):
         logger.error(f"Failed to update job {job_id}: {e}")
 
 
+def resume_job(job_id: str, username: str = "") -> dict:
+    """
+    Resume a previously interrupted job using its stored domain list.
+    Returns {"ok": True/False, "remaining": N, "already_done": N}
+    """
+    job = get_job(job_id)
+    if not job:
+        return {"ok": False, "error": "Job not found"}
+
+    all_domains = get_job_domains(job_id)
+    if not all_domains:
+        return {"ok": False, "error": "No domain list saved for this job — cannot resume"}
+
+    processed_set = get_processed_domains_for_job(job_id)
+    remaining = [d for d in all_domains if d not in processed_set]
+    already_done = len(processed_set)
+
+    if not remaining:
+        # Everything processed — just mark complete
+        errors = sum(1 for r in [] if r)  # can't easily count errors here; use job record
+        update_job(job_id, status="completed", error_message=None)
+        return {"ok": True, "remaining": 0, "already_done": already_done}
+
+    services = job.get("services") or []
+    p_offset = job.get("processed_domains") or 0
+    f_offset = job.get("failed_domains") or 0
+
+    loop = asyncio.get_event_loop()
+    task = loop.create_task(
+        run_batch_job(job_id, remaining, services, username=username,
+                      processed_offset=p_offset, failed_offset=f_offset)
+    )
+    _active_jobs[job_id] = task
+
+    def on_done(t):
+        _active_jobs.pop(job_id, None)
+        if t.exception():
+            logger.error(f"Resumed job {job_id} raised: {t.exception()}")
+
+    task.add_done_callback(on_done)
+    logger.info(f"Resuming job {job_id}: {len(remaining)} remaining, {already_done} already done")
+    return {"ok": True, "remaining": len(remaining), "already_done": already_done}
+
+
 def start_job(domains: list[str], services: list[str], filename: str, force_refresh: bool = False, username: str = "") -> str:
     """
     Create a new job in BQ and launch background task.
@@ -154,6 +207,12 @@ def start_job(domains: list[str], services: list[str], filename: str, force_refr
     """
     job_id = str(uuid.uuid4())
     create_job(job_id, len(domains), services, filename)
+
+    # Persist domain list so the job can be resumed after a server restart
+    try:
+        save_job_domains(job_id, domains)
+    except Exception as e:
+        logger.warning(f"Could not save job domains for {job_id}: {e}")
 
     loop = asyncio.get_event_loop()
     task = loop.create_task(run_batch_job(job_id, domains, services, force_refresh=force_refresh, username=username))

@@ -19,6 +19,8 @@ from config.settings import (
     BQ_JOBS_TABLE, BQ_RESULTS_TABLE
 )
 
+BQ_JOB_DOMAINS_TABLE = "job_domain_lists"
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,11 +114,19 @@ RESULTS_SCHEMA = [
 ]
 
 
+_JOB_DOMAINS_SCHEMA = [
+    bigquery.SchemaField("job_id", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("domains_json", "STRING"),   # JSON array of domain strings
+    bigquery.SchemaField("created_at", "TIMESTAMP"),
+]
+
+
 def ensure_tables_exist():
     bq = client()
     tables_to_create = {
         BQ_JOBS_TABLE: JOBS_SCHEMA,
         BQ_RESULTS_TABLE: RESULTS_SCHEMA,
+        BQ_JOB_DOMAINS_TABLE: _JOB_DOMAINS_SCHEMA,
     }
     for table_name, schema in tables_to_create.items():
         table_ref_obj = bigquery.Table(f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{table_name}", schema=schema)
@@ -278,8 +288,76 @@ def create_job(job_id: str, total_domains: int, services: list[str], filename: s
     """).result()
 
 
+def get_stale_running_jobs() -> list[dict]:
+    """Return all jobs currently in running/pending state (survived server restart)."""
+    bq = client()
+    try:
+        rows = list(bq.query(
+            f"SELECT * FROM `{table_ref(BQ_JOBS_TABLE)}` WHERE status IN ('running','pending')"
+        ).result())
+        result = []
+        for row in rows:
+            r = dict(row)
+            r["services"] = json.loads(r.get("services") or "[]")
+            result.append(r)
+        return result
+    except Exception as e:
+        logger.error(f"get_stale_running_jobs error: {e}")
+        return []
+
+
+def save_job_domains(job_id: str, domains: list[str]) -> None:
+    """Persist the original domain list so the job can be resumed after restart."""
+    bq = client()
+    row = {
+        "job_id": job_id,
+        "domains_json": json.dumps(domains),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        errors = bq.insert_rows_json(table_ref(BQ_JOB_DOMAINS_TABLE), [row])
+        if errors:
+            logger.error(f"save_job_domains error: {errors}")
+    except Exception as e:
+        logger.error(f"save_job_domains exception: {e}")
+
+
+def get_job_domains(job_id: str) -> list[str]:
+    """Retrieve the original domain list for a job (for resume)."""
+    bq = client()
+    try:
+        rows = list(bq.query(
+            f"SELECT domains_json FROM `{table_ref(BQ_JOB_DOMAINS_TABLE)}` "
+            f"WHERE job_id = @job_id ORDER BY created_at DESC LIMIT 1",
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("job_id", "STRING", job_id)]
+            )
+        ).result())
+        if rows:
+            return json.loads(rows[0]["domains_json"])
+    except Exception as e:
+        logger.error(f"get_job_domains error: {e}")
+    return []
+
+
+def get_processed_domains_for_job(job_id: str) -> set[str]:
+    """Return the set of domains that already have a result row for this job."""
+    bq = client()
+    try:
+        rows = list(bq.query(
+            f"SELECT domain FROM `{table_ref(BQ_RESULTS_TABLE)}` WHERE job_id = @job_id",
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("job_id", "STRING", job_id)]
+            )
+        ).result())
+        return {r["domain"] for r in rows}
+    except Exception as e:
+        logger.error(f"get_processed_domains_for_job error: {e}")
+        return set()
+
+
 def reset_stale_jobs() -> int:
-    """Mark running/pending jobs as failed — called on startup after server restart."""
+    """Mark running/pending jobs as failed — fallback when no domain list is available."""
     bq = client()
     try:
         rows = list(bq.query(
