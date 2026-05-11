@@ -5,6 +5,10 @@ const T = {
     // ── Nav ──
     nav_new: '+ New',
     nav_jobs: 'Jobs',
+    nav_explorer: 'Explorer',
+    nav_technologies: 'Technologies',
+    nav_redirects: 'Redirects',
+    nav_setup: 'Setup',
     nav_theme: 'Toggle theme',
 
     // ── New Job page ──
@@ -189,6 +193,10 @@ const T = {
     // ── Nav ──
     nav_new: '+ Новий',
     nav_jobs: 'Job-и',
+    nav_explorer: 'Explorer',
+    nav_technologies: 'Technologies',
+    nav_redirects: 'Redirects',
+    nav_setup: 'Setup',
     nav_theme: 'Змінити тему',
 
     // ── New Job page ──

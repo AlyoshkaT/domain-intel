@@ -450,10 +450,10 @@ export default function App() {
         <div className="nav-links">
           {can("jobs") && <button className={`nav-link ${view === "new" ? "active" : ""}`} onClick={() => setView("new")}>{t('nav_new', lang)}</button>}
           {can("jobs") && <button className={`nav-link ${view === "jobs" ? "active" : ""}`} onClick={() => setView("jobs")}>{t('nav_jobs', lang)}</button>}
-          {can("explorer") && <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>Explorer</button>}
-          {can("explorer") && <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => setView("technologies")}>Technologies</button>}
-          {can("explorer") && <button className={`nav-link ${view === "redirects" ? "active" : ""}`} onClick={() => setView("redirects")}>Redirects</button>}
-          {can("admin") && <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>Setup</button>}
+          {can("explorer") && <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>{t('nav_explorer', lang)}</button>}
+          {can("explorer") && <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => setView("technologies")}>{t('nav_technologies', lang)}</button>}
+          {can("explorer") && <button className={`nav-link ${view === "redirects" ? "active" : ""}`} onClick={() => setView("redirects")}>{t('nav_redirects', lang)}</button>}
+          {can("admin") && <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>{t('nav_setup', lang)}</button>}
         </div>
         <div className="nav-right">
           <button className="theme-toggle" onClick={() => setLang(l => l === 'en' ? 'ua' : 'en')} title="Language">
