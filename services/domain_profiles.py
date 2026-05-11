@@ -1,10 +1,13 @@
 """
-Domain Profiles Sync — optimized, with domain normalization.
+Domain Profiles Sync — memory-efficient streaming version.
+Parses JSON immediately on load (never stores raw blobs), writes profiles
+directly to temp file (never accumulates full rows list in RAM).
 """
 import json
 import logging
+import tempfile
+import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -12,6 +15,10 @@ from google.cloud import bigquery
 
 from core.bigquery import client, corp_client, table_ref
 from config.settings import CORP_PROJECT_ID, CORP_DATASET, GCP_PROJECT_ID, BIGQUERY_DATASET
+
+# How many domains to keep in each parsed-data dict at any moment.
+# Lower = less peak RAM, but the dicts are already small (parsed, not raw JSON).
+# Keeping full dicts is fine after the raw-JSON parsing fix.
 
 logger = logging.getLogger(__name__)
 
@@ -141,11 +148,28 @@ def _parse_bw(data: dict | None, catalog: dict) -> dict:
         return {}
 
 
+_PROFILE_SCHEMA = {"domain","updated_at","sw_visits","sw_category","sw_subcategory",
+                   "sw_description","sw_title","sw_primary_region","sw_primary_region_pct",
+                   "company_name","cms_list","osearch","osearch_group","ems_list",
+                   "bw_vertical","ai_category","ai_is_ecommerce","ai_industry"}
+
+
 def _build_profile(domain: str, sw_raw, bw_raw,
                    ai_rec: dict, catalog: dict, updated_at: str) -> dict:
+    """Legacy helper — accepts raw JSON. Use _build_profile_parsed for efficiency."""
     sw = _parse_sw(_safe_json(sw_raw))
     bw = _parse_bw(_safe_json(bw_raw), catalog)
-    _SCHEMA = {"domain","updated_at","sw_visits","sw_category","sw_subcategory","sw_description","sw_title","sw_primary_region","sw_primary_region_pct","company_name","cms_list","osearch","osearch_group","ems_list","bw_vertical","ai_category","ai_is_ecommerce","ai_industry"}
+    return _assemble_profile(domain, sw, bw, ai_rec, updated_at)
+
+
+def _build_profile_parsed(domain: str, sw: dict, bw: dict,
+                           ai_rec: dict, updated_at: str) -> dict:
+    """Build profile from already-parsed dicts (no JSON parsing, memory efficient)."""
+    return _assemble_profile(domain, sw, bw, ai_rec, updated_at)
+
+
+def _assemble_profile(domain: str, sw: dict, bw: dict,
+                      ai_rec: dict, updated_at: str) -> dict:
     return {k: v for k, v in {
         "domain":                domain,
         "updated_at":            updated_at,
@@ -165,7 +189,7 @@ def _build_profile(domain: str, sw_raw, bw_raw,
         "ai_category":           ai_rec.get("ai_category", "") or "",
         "ai_is_ecommerce":       ai_rec.get("ai_is_ecommerce", "") or "",
         "ai_industry":           ai_rec.get("ai_industry", "") or "",
-    }.items() if k in _SCHEMA}
+    }.items() if k in _PROFILE_SCHEMA}
 
 
 def sync_domain_profiles() -> dict:
@@ -197,35 +221,39 @@ def sync_domain_profiles() -> dict:
         all_domains = {d for d in sw_domains | bw_domains | corp_ai_domains if d}
         logger.info(f"Unique normalized domains: {len(all_domains)}")
 
-        # Fetch latest data per domain (normalize keys)
+        # ── Memory-efficient data loading ──────────────────────────────────
+        # IMPORTANT: we parse JSON immediately and store only the small parsed
+        # dicts — raw response_json blobs (up to 100KB each for BW) are never
+        # accumulated in RAM.  This reduces peak memory by ~100x.
+
         _sync_status["progress"] = f"Завантажуємо SW ({len(sw_domains):,})..."
-        sw_data: dict[str, any] = {}
+        sw_parsed: dict[str, dict] = {}
         for r in corp.query(f"""
-            SELECT domain, response_json, fetched_at FROM {sw_table}
+            SELECT domain, response_json FROM {sw_table}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
                                        ORDER BY fetched_at DESC) = 1
         """).result():
             key = normalize_domain(r["domain"])
             if key:
-                sw_data[key] = r["response_json"]
+                sw_parsed[key] = _parse_sw(_safe_json(r["response_json"]))
+        logger.info(f"SW parsed: {len(sw_parsed)}")
 
         _sync_status["progress"] = f"Завантажуємо BW ({len(bw_domains):,})..."
-        bw_data: dict[str, any] = {}
+        bw_parsed: dict[str, dict] = {}
         for r in corp.query(f"""
-            SELECT domain, response_json, fetched_at FROM {bw_table}
+            SELECT domain, response_json FROM {bw_table}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
                                        ORDER BY fetched_at DESC) = 1
         """).result():
             key = normalize_domain(r["domain"])
             if key:
-                bw_data[key] = r["response_json"]
+                bw_parsed[key] = _parse_bw(_safe_json(r["response_json"]), catalog)
+        logger.info(f"BW parsed: {len(bw_parsed)}")
 
-        # Corp AI (claude_responses)
         _sync_status["progress"] = "Завантажуємо Corp AI (claude_responses)..."
         ai_data: dict[str, dict] = {}
-        logger.info("Fetching corp AI...")
         for r in corp.query(f"""
-            SELECT domain, response_json FROM {corp_ai_table}
+            SELECT domain, response_json, fetched_at FROM {corp_ai_table}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
         """).result():
             key = normalize_domain(r["domain"])
@@ -242,65 +270,64 @@ def sync_domain_profiles() -> dict:
                 }
         logger.info(f"AI data total: {len(ai_data)} domains")
 
-        # Build profiles in parallel
-        _sync_status["progress"] = f"Обробляємо {len(all_domains):,} доменів (8 потоків)..."
+        # ── Stream profiles directly to temp file (no rows[] list in RAM) ──
         updated_at = datetime.now(timezone.utc).isoformat()
-        domains_list = list(all_domains)
+        domains_list = sorted(all_domains)
+        total_count = len(domains_list)
 
-        def build_one(domain: str) -> dict:
-            return _build_profile(
-                domain,
-                sw_data.get(domain),
-                bw_data.get(domain),
-                ai_data.get(domain, {}),
-                catalog,
-                updated_at,
+        _sync_status["progress"] = f"Записуємо {total_count:,} профілів на диск..."
+        tmp_file = None
+        written = 0
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
+                tmp_file = f.name
+                for i, domain in enumerate(domains_list):
+                    try:
+                        profile = _build_profile_parsed(
+                            domain,
+                            sw_parsed.get(domain, {}),
+                            bw_parsed.get(domain, {}),
+                            ai_data.get(domain, {}),
+                            updated_at,
+                        )
+                        f.write(json.dumps(profile, default=str) + "\n")
+                        written += 1
+                    except Exception as e:
+                        logger.warning(f"Build error for {domain}: {e}")
+
+                    if (i + 1) % 10000 == 0:
+                        pct = int((i + 1) / total_count * 100)
+                        _sync_status["progress"] = f"Записуємо: {i+1:,}/{total_count:,} ({pct}%)"
+
+            logger.info(f"Written {written} profiles to {tmp_file} in {time.time()-t0:.0f}s")
+
+            # Release parsed data dicts — free memory before BQ upload
+            sw_parsed.clear()
+            bw_parsed.clear()
+            ai_data.clear()
+
+            _sync_status["progress"] = f"Завантажуємо {written:,} профілів у BigQuery..."
+            job_config = bigquery.LoadJobConfig(
+                schema=PROFILES_SCHEMA,
+                write_disposition="WRITE_TRUNCATE",
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
             )
-
-        rows = []
-        processed = 0
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(build_one, d): d for d in domains_list}
-            for future in as_completed(futures):
-                try:
-                    rows.append(future.result())
-                except Exception as e:
-                    logger.warning(f"Build error: {e}")
-                processed += 1
-                if processed % 5000 == 0:
-                    pct = int(processed / len(domains_list) * 100)
-                    _sync_status["progress"] = f"Обробка: {processed:,}/{len(domains_list):,} ({pct}%)"
-
-        logger.info(f"Built {len(rows)} profiles in {time.time()-t0:.0f}s")
-
-        # Write using load_table_from_file (reliable, no streaming buffer issues)
-        _sync_status["progress"] = f"Записуємо {len(rows):,} профілів..."
-        import tempfile, json as _json, os as _os
-
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-            for row in rows:
-                f.write(_json.dumps(row, default=str) + "\n")
-            tmp_file = f.name
-
-        job_config = bigquery.LoadJobConfig(
-            schema=PROFILES_SCHEMA,
-            write_disposition="WRITE_TRUNCATE",
-            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-        )
-        with open(tmp_file, "rb") as f:
-            load_job = our.load_table_from_file(
-                f, table_ref(PROFILES_TABLE), job_config=job_config
-            )
-        _sync_status["progress"] = "Очікуємо завантаження..."
-        load_job.result()
-        _os.unlink(tmp_file)
+            with open(tmp_file, "rb") as f:
+                load_job = our.load_table_from_file(
+                    f, table_ref(PROFILES_TABLE), job_config=job_config
+                )
+            _sync_status["progress"] = "BigQuery завантажує файл..."
+            load_job.result()
+        finally:
+            if tmp_file and os.path.exists(tmp_file):
+                os.unlink(tmp_file)
 
         elapsed = time.time() - t0
         _sync_status["last_sync"] = updated_at
-        _sync_status["total_domains"] = len(rows)
-        _sync_status["progress"] = f"✅ {len(rows):,} доменів за {elapsed/60:.1f} хв."
-        logger.info(f"Sync done: {len(rows)} domains in {elapsed:.0f}s")
-        return {"total": len(rows), "status": "ok"}
+        _sync_status["total_domains"] = written
+        _sync_status["progress"] = f"✅ {written:,} доменів за {elapsed/60:.1f} хв."
+        logger.info(f"Sync done: {written} domains in {elapsed:.0f}s")
+        return {"total": written, "status": "ok"}
 
     except Exception as e:
         logger.error(f"Sync error: {e}", exc_info=True)
