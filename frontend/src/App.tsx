@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import ExplorerPage from "./Explorer"
 import TechnologiesPage from "./Technologies"
+import RedirectsPage from "./Redirects"
 import SetupPage from "./Setup"
 import "./index.css"
 
@@ -398,7 +399,7 @@ function ResultsPage({ jobId, onBack, can }: { jobId: string; onBack: () => void
 }
 
 // ─── App ───────────────────────────────────────────────────────────────────────
-type View = "new" | "jobs" | "results" | "explorer" | "technologies" | "setup"
+type View = "new" | "jobs" | "results" | "explorer" | "technologies" | "redirects" | "setup"
 
 export default function App() {
   const [view, setView] = useState<View>("new")
@@ -447,6 +448,7 @@ export default function App() {
           {can("jobs") && <button className={`nav-link ${view === "jobs" ? "active" : ""}`} onClick={() => setView("jobs")}>Job-и</button>}
           {can("explorer") && <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>Explorer</button>}
           {can("explorer") && <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => setView("technologies")}>Technologies</button>}
+          {can("explorer") && <button className={`nav-link ${view === "redirects" ? "active" : ""}`} onClick={() => setView("redirects")}>Redirects</button>}
           {can("admin") && <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>Setup</button>}
         </div>
         <div className="nav-right">
@@ -455,6 +457,7 @@ export default function App() {
       </nav>
       <main className="main">
         {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => setView("explorer")} can={can} />}
+        {view === "redirects" && <RedirectsPage />}
         {view === "setup" && <SetupPage />}
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} />}
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} />}

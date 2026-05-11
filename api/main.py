@@ -84,6 +84,12 @@ try:
 except Exception as e:
     logger.warning(f"Setup router not loaded: {e}")
 
+try:
+    from api.redirects import router as redirects_router
+    app.include_router(redirects_router)
+except Exception as e:
+    logger.warning(f"Redirects router not loaded: {e}")
+
 
 # ─── Health ───────────────────────────────────────────────────────────────────
 @app.get("/api/health")

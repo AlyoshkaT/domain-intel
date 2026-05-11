@@ -85,30 +85,53 @@ async def process_domain(
         working_domain = resolved_domain
         catalog = _get_catalog()
 
-        # ── SimilarWeb ────────────────────────────────────────────────────────
-        sw_data = None
-        if not force_refresh:
-            sw_data = get_cached("similarweb_raw_data", working_domain, ignore_ttl=True)
-        if sw_data is None and "similarweb" in services:
-            sw_data = await fetch_similarweb(working_domain)
+        # ── SimilarWeb + BuiltWith ────────────────────────────────────────────
+        sw_want = "similarweb" in services
+        bw_want = "builtwith" in services
+
+        # Cache strategy:
+        # - Selected service  → always fetch fresh (ignore cache), so user gets new data
+        # - Non-selected svc  → read from cache and enrich result (cross-job enrichment)
+        # Example: job1=SW only → job2=BW+AI: job2 results still include SW cache data
+        sw_data = None if (force_refresh or sw_want) else get_cached("similarweb_raw_data", working_domain, ignore_ttl=True)
+        bw_data = None if (force_refresh or bw_want) else get_cached("builtwith_raw_data", working_domain, ignore_ttl=True)
+
+        sw_needs_fetch = sw_data is None and sw_want
+        bw_needs_fetch = bw_data is None and bw_want
+
+        if sw_needs_fetch and bw_needs_fetch:
+            # Both uncached and requested — fetch concurrently
+            sw_data, bw_data = await asyncio.gather(
+                fetch_similarweb(working_domain),
+                fetch_builtwith(working_domain),
+            )
             if sw_data and username:
                 try:
                     from core.bigquery import increment_api_usage
                     increment_api_usage(username, "similarweb")
                 except Exception:
                     pass
+        else:
+            # At most one API call needed — keep it simple/sequential
+            if sw_needs_fetch:
+                sw_data = await fetch_similarweb(working_domain)
+                if sw_data and username:
+                    try:
+                        from core.bigquery import increment_api_usage
+                        increment_api_usage(username, "similarweb")
+                    except Exception:
+                        pass
+                if sw_want:
+                    await asyncio.sleep(DELAY_BETWEEN_API_CALLS / 1000)
+            if bw_needs_fetch:
+                bw_data = await fetch_builtwith(working_domain)
+
+        # ── Parse SimilarWeb result ───────────────────────────────────────────
         if sw_data:
             p = parse_similarweb(sw_data)
             result.update({k: p.get(k) for k in ["sw_visits","sw_category","sw_subcategory","sw_description","sw_title","sw_top_countries","sw_primary_region","sw_primary_region_pct","company_name"]})
-        if "similarweb" in services:
-            await asyncio.sleep(DELAY_BETWEEN_API_CALLS / 1000)
 
-        # ── BuiltWith ─────────────────────────────────────────────────────────
-        bw_data = None
-        if not force_refresh:
-            bw_data = get_cached("builtwith_raw_data", working_domain, ignore_ttl=True)
-        if bw_data is None and "builtwith" in services:
-            bw_data = await fetch_builtwith(working_domain)
+        # ── Parse BuiltWith result ────────────────────────────────────────────
         if bw_data:
             p = parse_builtwith(bw_data)
             result["bw_technologies"]    = p.get("bw_technologies", "[]")
@@ -127,12 +150,15 @@ async def process_domain(
             result["osearch"]  = m.get("osearch")
             result["osearch_group"] = m.get("osearch_group")
             result["ems_list"] = m.get("ems_list")
-        if "builtwith" in services:
+
+        if bw_want:
             await asyncio.sleep(DELAY_BETWEEN_API_CALLS / 1000)
 
         # ── Claude AI — read corpBQ cache, write to corpBQ ────────────────────
+        # If AI is selected → always run fresh (don't use cache).
+        # If AI is NOT selected → pull from cache to enrich result.
         ai_cached = None
-        if not force_refresh:
+        if not force_refresh and "ai" not in services:
             ai_cached = get_corp_ai_cached(working_domain)
 
         if ai_cached:
