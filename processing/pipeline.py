@@ -90,11 +90,12 @@ async def process_domain(
         bw_want = "builtwith" in services
 
         # Cache strategy:
-        # - Selected service  → always fetch fresh (ignore cache), so user gets new data
-        # - Non-selected svc  → read from cache and enrich result (cross-job enrichment)
-        # Example: job1=SW only → job2=BW+AI: job2 results still include SW cache data
-        sw_data = None if (force_refresh or sw_want) else get_cached("similarweb_raw_data", working_domain, ignore_ttl=True)
-        bw_data = None if (force_refresh or bw_want) else get_cached("builtwith_raw_data", working_domain, ignore_ttl=True)
+        # - force_refresh=True  → ignore cache for selected services only; non-selected still enriched from cache
+        # - force_refresh=False → check cache first; fetch only if no cached data
+        # Non-selected services ALWAYS read from cache to enrich the result table.
+        # Example: job1=SW only → job2=BW+AI → job2 table includes SW data from cache.
+        sw_data = None if (force_refresh and sw_want) else get_cached("similarweb_raw_data", working_domain, ignore_ttl=True)
+        bw_data = None if (force_refresh and bw_want) else get_cached("builtwith_raw_data", working_domain, ignore_ttl=True)
 
         sw_needs_fetch = sw_data is None and sw_want
         bw_needs_fetch = bw_data is None and bw_want
@@ -155,10 +156,10 @@ async def process_domain(
             await asyncio.sleep(DELAY_BETWEEN_API_CALLS / 1000)
 
         # ── Claude AI — read corpBQ cache, write to corpBQ ────────────────────
-        # If AI is selected → always run fresh (don't use cache).
-        # If AI is NOT selected → pull from cache to enrich result.
+        # Read from cache unless force_refresh AND ai is selected.
+        # Non-selected AI always enriches from cache.
         ai_cached = None
-        if not force_refresh and "ai" not in services:
+        if not (force_refresh and "ai" in services):
             ai_cached = get_corp_ai_cached(working_domain)
 
         if ai_cached:
