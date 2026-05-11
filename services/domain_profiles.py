@@ -155,6 +155,54 @@ _PROFILE_SCHEMA = {"domain","updated_at","sw_visits","sw_category","sw_subcatego
                    "company_name","cms_list","osearch","osearch_group","ems_list",
                    "bw_vertical","ai_category","ai_is_ecommerce","ai_industry"}
 
+_SEP_TECH = "\x02"   # separator between tech entries in compact BW string
+_SEP_FIELD = "\x01"  # separator between name and lastDetected
+
+
+def _match_bw_compact(bw_vertical: str, techs_compact: str, catalog: dict) -> dict:
+    """
+    Match BW techs from compact SQL-extracted string instead of full JSON blob.
+    techs_compact format: "WordPress\x011234567\x02Shopify\x011234999\x02..."
+    This avoids downloading 50-200KB BW JSON per domain from BigQuery.
+    """
+    bw_index: dict[str, tuple[str, int]] = {}
+    for entry in techs_compact.split(_SEP_TECH):
+        if _SEP_FIELD in entry:
+            name, last_s = entry.split(_SEP_FIELD, 1)
+            if name:
+                key = name.lower()
+                last = int(last_s) if last_s.lstrip("-").isdigit() else 0
+                if key not in bw_index or last > bw_index[key][1]:
+                    bw_index[key] = (name, last)
+
+    cms_match, cms_last = "", 0
+    for cms in catalog.get("cms", []):
+        key = cms.lower()
+        if key in bw_index and bw_index[key][1] >= cms_last:
+            cms_match = bw_index[key][0]; cms_last = bw_index[key][1]
+
+    osearch_match, osearch_group, osearch_last = "", "", 0
+    for entry in catalog.get("osearch", []):
+        key = entry["technology"].lower()
+        if key in bw_index and bw_index[key][1] >= osearch_last:
+            osearch_match = bw_index[key][0]
+            osearch_group = entry.get("group", "")
+            osearch_last = bw_index[key][1]
+
+    ems_match, ems_last = "", 0
+    for ems in catalog.get("ems", []):
+        key = ems.lower()
+        if key in bw_index and bw_index[key][1] >= ems_last:
+            ems_match = bw_index[key][0]; ems_last = bw_index[key][1]
+
+    return {
+        "cms_list":      cms_match,
+        "osearch":       osearch_match,
+        "osearch_group": osearch_group,
+        "ems_list":      ems_match,
+        "bw_vertical":   bw_vertical or "",
+    }
+
 
 def _build_profile(domain: str, sw_raw, bw_raw,
                    ai_rec: dict, catalog: dict, updated_at: str) -> dict:
@@ -217,64 +265,119 @@ def sync_domain_profiles() -> dict:
         # pct budget:  SW 5-35 | BW 35-70 | AI 70-80 | write 80-95 | upload 95-100
         # We set pct BEFORE each blocking .result() so the bar moves immediately.
 
-        # Phase 1 — SW (5 → 35%)
-        _sync_status.update({"progress": "1/4 · Запит SW до BigQuery…", "pct": 5})
+        # ── SQL-side extraction — only needed fields, NOT full JSON blobs ──────
+        # BW JSON can be 50-200KB per domain × 100K domains = up to 20GB transfer.
+        # We extract only the fields we need in SQL; Python receives small values.
+
+        # Phase 1 — SW (5 → 35%): extract ~7 fields per domain in SQL
+        _sync_status.update({"progress": "1/4 · SW запит…", "pct": 5})
         sw_parsed: dict[str, dict] = {}
         sw_job = corp.query(f"""
-            SELECT domain, response_json FROM {sw_table}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
-                                       ORDER BY fetched_at DESC) = 1
+            SELECT
+                domain,
+                COALESCE(
+                    SAFE_CAST(JSON_VALUE(response_json, '$.Engagments.Visits') AS FLOAT64),
+                    0
+                ) AS sw_visits,
+                COALESCE(
+                    JSON_VALUE(response_json, '$.CategoryRank.Category'),
+                    JSON_VALUE(response_json, '$.Category'), ''
+                ) AS sw_category_raw,
+                COALESCE(SUBSTR(JSON_VALUE(response_json, '$.Description'), 1, 500), '') AS sw_description,
+                COALESCE(
+                    JSON_VALUE(response_json, '$.Title'),
+                    JSON_VALUE(response_json, '$.SiteName'), ''
+                ) AS sw_title,
+                COALESCE(JSON_VALUE(response_json, '$.TopCountryShares[0].CountryCode'), '') AS sw_region,
+                SAFE_CAST(JSON_VALUE(response_json, '$.TopCountryShares[0].Value') AS FLOAT64) AS sw_region_val
+            FROM {sw_table}
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
+                ORDER BY fetched_at DESC) = 1
         """)
-        _sync_status.update({"progress": "1/4 · Отримуємо SW дані…", "pct": 8})
+        _sync_status.update({"progress": "1/4 · SW отримуємо…", "pct": 8})
         for r in sw_job.result():
-            key = normalize_domain(r["domain"])
-            if key:
-                sw_parsed[key] = _parse_sw(_safe_json(r["response_json"]))
-                if len(sw_parsed) % 10000 == 0:
-                    _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,} доменів…", "pct": 10 + min(25, len(sw_parsed) // 1000)})
-        _sync_status.update({"progress": f"1/4 · SW готово: {len(sw_parsed):,}", "pct": 35})
-        logger.info(f"SW parsed: {len(sw_parsed)}")
-
-        # Phase 2 — BW (35 → 70%)
-        _sync_status.update({"progress": "2/4 · Запит BW до BigQuery…", "pct": 35})
-        bw_parsed: dict[str, dict] = {}
-        bw_job = corp.query(f"""
-            SELECT domain, response_json FROM {bw_table}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
-                                       ORDER BY fetched_at DESC) = 1
-        """)
-        _sync_status.update({"progress": "2/4 · Отримуємо BW дані…", "pct": 38})
-        for r in bw_job.result():
-            key = normalize_domain(r["domain"])
-            if key:
-                bw_parsed[key] = _parse_bw(_safe_json(r["response_json"]), catalog)
-                if len(bw_parsed) % 10000 == 0:
-                    _sync_status.update({"progress": f"2/4 · BW: {len(bw_parsed):,} доменів…", "pct": 40 + min(28, len(bw_parsed) // 1000)})
-        _sync_status.update({"progress": f"2/4 · BW готово: {len(bw_parsed):,}", "pct": 70})
-        logger.info(f"BW parsed: {len(bw_parsed)}")
-
-        # Phase 3 — AI (70 → 80%)
-        _sync_status.update({"progress": "3/4 · Запит AI до BigQuery…", "pct": 70})
-        ai_data: dict[str, dict] = {}
-        ai_job = corp.query(f"""
-            SELECT domain, response_json FROM {corp_ai_table}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """)
-        _sync_status.update({"progress": "3/4 · Отримуємо AI дані…", "pct": 72})
-        for r in ai_job.result():
             key = normalize_domain(r["domain"])
             if not key:
                 continue
-            rj = r["response_json"]
-            data = rj if isinstance(rj, dict) else _safe_json(rj)
-            if data:
-                is_ecom = data.get("is_ecommerce")
+            cat_raw = r["sw_category_raw"] or ""
+            sw_parsed[key] = {
+                "sw_visits":             r["sw_visits"] or 0,
+                "sw_category":           cat_raw.split("/")[0] if "/" in cat_raw else cat_raw,
+                "sw_subcategory":        cat_raw.split("/")[1] if "/" in cat_raw else "",
+                "sw_description":        r["sw_description"] or "",
+                "sw_title":              r["sw_title"] or "",
+                "sw_primary_region":     r["sw_region"] or "",
+                "sw_primary_region_pct": round((r["sw_region_val"] or 0) * 100, 1) or None,
+                "company_name":          r["sw_title"] or "",
+            }
+            if len(sw_parsed) % 10000 == 0:
+                _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,}…", "pct": 10 + min(24, len(sw_parsed) // 1000)})
+        _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,} доменів ✓", "pct": 35})
+        logger.info(f"SW parsed: {len(sw_parsed)}")
+
+        # Phase 2 — BW (35 → 70%): extract ONLY tech names + lastDetected + vertical.
+        # Reduces data transfer from ~10-20 GB → ~100-200 MB (100x less data).
+        _sync_status.update({"progress": "2/4 · BW запит (SQL extraction)…", "pct": 35})
+        bw_parsed: dict[str, dict] = {}
+        sep1 = _SEP_FIELD   # \x01 between name and lastDetected
+        sep2 = _SEP_TECH    # \x02 between tech entries
+        bw_job = corp.query(f"""
+            SELECT
+                domain,
+                COALESCE(JSON_VALUE(response_json, '$.Results[0].Result.Vertical'), '') AS bw_vertical,
+                IFNULL((
+                    SELECT STRING_AGG(
+                        JSON_VALUE(tech, '$.Name')
+                        || '{sep1}'
+                        || IFNULL(JSON_VALUE(tech, '$.LastDetected'), '0'),
+                        '{sep2}'
+                    )
+                    FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
+                    UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
+                    WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
+                ), '') AS techs_compact
+            FROM {bw_table}
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
+                ORDER BY fetched_at DESC) = 1
+        """)
+        _sync_status.update({"progress": "2/4 · BW отримуємо…", "pct": 38})
+        for r in bw_job.result():
+            key = normalize_domain(r["domain"])
+            if key:
+                bw_parsed[key] = _match_bw_compact(
+                    r["bw_vertical"] or "",
+                    r["techs_compact"] or "",
+                    catalog,
+                )
+                if len(bw_parsed) % 10000 == 0:
+                    _sync_status.update({"progress": f"2/4 · BW: {len(bw_parsed):,}…", "pct": 40 + min(28, len(bw_parsed) // 1000)})
+        _sync_status.update({"progress": f"2/4 · BW: {len(bw_parsed):,} доменів ✓", "pct": 70})
+        logger.info(f"BW parsed: {len(bw_parsed)}")
+
+        # Phase 3 — AI (70 → 80%): extract 3 fields directly in SQL
+        _sync_status.update({"progress": "3/4 · AI запит…", "pct": 70})
+        ai_data: dict[str, dict] = {}
+        ai_job = corp.query(f"""
+            SELECT
+                domain,
+                COALESCE(JSON_VALUE(response_json, '$.category'), '')        AS ai_category,
+                LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
+                COALESCE(JSON_VALUE(response_json, '$.subcategory'), '')      AS ai_industry
+            FROM {corp_ai_table}
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+        """)
+        _sync_status.update({"progress": "3/4 · AI отримуємо…", "pct": 72})
+        for r in ai_job.result():
+            key = normalize_domain(r["domain"])
+            if key:
                 ai_data[key] = {
-                    "ai_category":     data.get("category", ""),
-                    "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
-                    "ai_industry":     data.get("subcategory", ""),
+                    "ai_category":     r["ai_category"] or "",
+                    "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
+                    "ai_industry":     r["ai_industry"] or "",
                 }
-        _sync_status.update({"progress": f"3/4 · AI готово: {len(ai_data):,}", "pct": 80})
+        _sync_status.update({"progress": f"3/4 · AI: {len(ai_data):,} доменів ✓", "pct": 80})
         logger.info(f"AI data total: {len(ai_data)} domains")
 
         all_domains = {d for d in sw_parsed.keys() | bw_parsed.keys() | ai_data.keys() if d}
@@ -394,44 +497,71 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
 
         sw_parsed: dict[str, dict] = {}
         for r in corp.query(f"""
-            SELECT domain, response_json FROM {sw_table}
+            SELECT
+                domain,
+                COALESCE(SAFE_CAST(JSON_VALUE(response_json, '$.Engagments.Visits') AS FLOAT64), 0) AS sw_visits,
+                COALESCE(JSON_VALUE(response_json, '$.CategoryRank.Category'), JSON_VALUE(response_json, '$.Category'), '') AS sw_category_raw,
+                COALESCE(SUBSTR(JSON_VALUE(response_json, '$.Description'), 1, 500), '') AS sw_description,
+                COALESCE(JSON_VALUE(response_json, '$.Title'), JSON_VALUE(response_json, '$.SiteName'), '') AS sw_title,
+                COALESCE(JSON_VALUE(response_json, '$.TopCountryShares[0].CountryCode'), '') AS sw_region,
+                SAFE_CAST(JSON_VALUE(response_json, '$.TopCountryShares[0].Value') AS FLOAT64) AS sw_region_val
+            FROM {sw_table}
             WHERE {in_clause}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
-                                       ORDER BY fetched_at DESC) = 1
-        """).result():
-            key = normalize_domain(r["domain"])
-            if key:
-                sw_parsed[key] = _parse_sw(_safe_json(r["response_json"]))
-
-        bw_parsed: dict[str, dict] = {}
-        for r in corp.query(f"""
-            SELECT domain, response_json FROM {bw_table}
-            WHERE {in_clause}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
-                                       ORDER BY fetched_at DESC) = 1
-        """).result():
-            key = normalize_domain(r["domain"])
-            if key:
-                bw_parsed[key] = _parse_bw(_safe_json(r["response_json"]), catalog)
-
-        ai_data: dict[str, dict] = {}
-        ai_in = f"domain IN ({dom_list_sql}, {www_variants})"
-        for r in corp.query(f"""
-            SELECT domain, response_json FROM {corp_ai_table}
-            WHERE {ai_in}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) ORDER BY fetched_at DESC) = 1
         """).result():
             key = normalize_domain(r["domain"])
             if not key:
                 continue
-            rj = r["response_json"]
-            data = rj if isinstance(rj, dict) else _safe_json(rj)
-            if data:
-                is_ecom = data.get("is_ecommerce")
+            cat_raw = r["sw_category_raw"] or ""
+            sw_parsed[key] = {
+                "sw_visits":             r["sw_visits"] or 0,
+                "sw_category":           cat_raw.split("/")[0] if "/" in cat_raw else cat_raw,
+                "sw_subcategory":        cat_raw.split("/")[1] if "/" in cat_raw else "",
+                "sw_description":        r["sw_description"] or "",
+                "sw_title":              r["sw_title"] or "",
+                "sw_primary_region":     r["sw_region"] or "",
+                "sw_primary_region_pct": round((r["sw_region_val"] or 0) * 100, 1) or None,
+                "company_name":          r["sw_title"] or "",
+            }
+
+        bw_parsed: dict[str, dict] = {}
+        sep1, sep2 = _SEP_FIELD, _SEP_TECH
+        for r in corp.query(f"""
+            SELECT
+                domain,
+                COALESCE(JSON_VALUE(response_json, '$.Results[0].Result.Vertical'), '') AS bw_vertical,
+                IFNULL((
+                    SELECT STRING_AGG(JSON_VALUE(tech, '$.Name') || '{sep1}' || IFNULL(JSON_VALUE(tech, '$.LastDetected'), '0'), '{sep2}')
+                    FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
+                    UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
+                    WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
+                ), '') AS techs_compact
+            FROM {bw_table}
+            WHERE {in_clause}
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) ORDER BY fetched_at DESC) = 1
+        """).result():
+            key = normalize_domain(r["domain"])
+            if key:
+                bw_parsed[key] = _match_bw_compact(r["bw_vertical"] or "", r["techs_compact"] or "", catalog)
+
+        ai_data: dict[str, dict] = {}
+        ai_in = f"LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({dom_list_sql})"
+        for r in corp.query(f"""
+            SELECT
+                domain,
+                COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
+                LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
+                COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry
+            FROM {corp_ai_table}
+            WHERE {ai_in}
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+        """).result():
+            key = normalize_domain(r["domain"])
+            if key:
                 ai_data[key] = {
-                    "ai_category":     data.get("category", ""),
-                    "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
-                    "ai_industry":     data.get("subcategory", ""),
+                    "ai_category":     r["ai_category"] or "",
+                    "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
+                    "ai_industry":     r["ai_industry"] or "",
                 }
 
         updated_at = datetime.now(timezone.utc).isoformat()
