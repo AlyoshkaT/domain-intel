@@ -278,6 +278,28 @@ def create_job(job_id: str, total_domains: int, services: list[str], filename: s
     """).result()
 
 
+def reset_stale_jobs() -> int:
+    """Mark running/pending jobs as failed — called on startup after server restart."""
+    bq = client()
+    try:
+        rows = list(bq.query(
+            f"SELECT COUNT(*) as c FROM `{table_ref(BQ_JOBS_TABLE)}` WHERE status IN ('running','pending')"
+        ).result())
+        count = int(rows[0]["c"]) if rows else 0
+        if count:
+            bq.query(
+                f"UPDATE `{table_ref(BQ_JOBS_TABLE)}` "
+                f"SET status='failed', error_message='Interrupted by server restart', "
+                f"updated_at=CURRENT_TIMESTAMP() "
+                f"WHERE status IN ('running','pending')"
+            ).result()
+            logger.info(f"Reset {count} stale jobs (running/pending → failed)")
+        return count
+    except Exception as e:
+        logger.error(f"reset_stale_jobs error: {e}")
+        return 0
+
+
 def update_job(job_id: str, **kwargs):
     bq = client()
     kwargs["updated_at"] = datetime.now(timezone.utc).isoformat()

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core.bigquery import ensure_tables_exist, list_jobs, get_job, get_results
+from core.bigquery import ensure_tables_exist, list_jobs, get_job, get_results, reset_stale_jobs, update_job
 from services.technology_catalog import sync_catalog
 from services.redirect_resolver import ensure_redirects_table
 from services.credits import ensure_app_settings_table, fetch_builtwith_credits, get_cached_credits
@@ -38,6 +38,14 @@ async def lifespan(app: FastAPI):
         logger.info("BigQuery tables verified")
     except Exception as e:
         logger.error(f"BQ init error: {e}")
+
+    # Reset any jobs that were left running from previous instance
+    try:
+        stale = reset_stale_jobs()
+        if stale:
+            logger.warning(f"Reset {stale} stale running/pending jobs from previous instance")
+    except Exception as e:
+        logger.warning(f"Stale job reset error: {e}")
 
     try:
         await fetch_builtwith_credits()
@@ -238,7 +246,29 @@ async def get_job_endpoint(job_id: str):
 
 @app.post("/api/jobs/{job_id}/cancel")
 async def cancel_job_endpoint(job_id: str):
-    return {"cancelled": cancel_job(job_id)}
+    cancelled = cancel_job(job_id)
+    if not cancelled:
+        # Task not found in memory (e.g. after restart) — force status update
+        job = get_job(job_id)
+        if job and job.get("status") in ("running", "pending"):
+            update_job(job_id, status="cancelled", error_message="Manually cancelled")
+            return {"cancelled": True}
+    return {"cancelled": cancelled}
+
+@app.post("/api/jobs/{job_id}/force_complete", dependencies=[require_permission("admin")])
+async def force_complete_job(job_id: str):
+    """Force-mark a stuck running job as completed with whatever was processed so far."""
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("status") not in ("running", "pending"):
+        raise HTTPException(status_code=400, detail=f"Job is already '{job.get('status')}'")
+    cancel_job(job_id)  # cancel task if still in memory
+    done = (job.get("processed_domains") or 0) + (job.get("failed_domains") or 0)
+    total = job.get("total_domains") or 0
+    status = "completed" if (job.get("failed_domains") or 0) == 0 else "completed_with_errors"
+    update_job(job_id, status=status, error_message=f"Force-completed by admin ({done}/{total} processed)")
+    return {"ok": True, "status": status, "processed": done, "total": total}
 
 
 # ─── Results ──────────────────────────────────────────────────────────────────

@@ -266,14 +266,31 @@ function NewJobPage({ onJobCreated, lang }: { onJobCreated: (id: string) => void
 }
 
 // ─── Page: Jobs ────────────────────────────────────────────────────────────────
-function JobsPage({ onSelect, lang }: { onSelect: (id: string) => void; lang: Lang }) {
+function JobsPage({ onSelect, can, lang }: { onSelect: (id: string) => void; can: (p: string) => boolean; lang: Lang }) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
+  const [acting, setActing] = useState<string | null>(null)
   const load = useCallback(async () => {
     try { const d = await apiFetch("/api/jobs"); setJobs(d.jobs) } catch {} finally { setLoading(false) }
   }, [])
   useEffect(() => { load(); const iv = setInterval(load, 3000); return () => clearInterval(iv) }, [load])
   const hasRunning = jobs.some(j => j.status === "running" || j.status === "pending")
+
+  const handleCancel = async (e: React.MouseEvent, jobId: string) => {
+    e.stopPropagation()
+    if (!window.confirm(t('jobs_cancel_confirm', lang))) return
+    setActing(jobId)
+    try { await apiFetch(`/api/jobs/${jobId}/cancel`, { method: "POST" }); await load() } catch {}
+    finally { setActing(null) }
+  }
+
+  const handleForce = async (e: React.MouseEvent, jobId: string) => {
+    e.stopPropagation()
+    if (!window.confirm(t('jobs_force_confirm', lang))) return
+    setActing(jobId)
+    try { await apiFetch(`/api/jobs/${jobId}/force_complete`, { method: "POST" }); await load() } catch {}
+    finally { setActing(null) }
+  }
 
   return (
     <div className="page">
@@ -285,22 +302,44 @@ function JobsPage({ onSelect, lang }: { onSelect: (id: string) => void; lang: La
         : jobs.length === 0 ? <div className="empty-state">{t('jobs_empty', lang)}</div>
         : (
           <div className="jobs-list">
-            {jobs.map(job => (
-              <div key={job.job_id} className="job-card" onClick={() => onSelect(job.job_id)}>
-                <div className="job-card-header">
-                  <div>
-                    <div className="job-filename">{job.filename}</div>
-                    <div className="job-meta">
-                      <span className="job-id">{job.job_id.slice(0, 8)}</span>
-                      <span className="job-date">{new Date(job.created_at).toLocaleString("uk-UA")}</span>
+            {jobs.map(job => {
+              const isActive = job.status === "running" || job.status === "pending"
+              const isActing = acting === job.job_id
+              return (
+                <div key={job.job_id} className="job-card" onClick={() => onSelect(job.job_id)}>
+                  <div className="job-card-header">
+                    <div>
+                      <div className="job-filename">{job.filename}</div>
+                      <div className="job-meta">
+                        <span className="job-id">{job.job_id.slice(0, 8)}</span>
+                        <span className="job-date">{new Date(job.created_at).toLocaleString("uk-UA")}</span>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {isActive && (
+                        <>
+                          <button className="btn-export" disabled={isActing}
+                            style={{ color: "var(--danger)", borderColor: "var(--danger)", fontSize: 11 }}
+                            onClick={e => handleCancel(e, job.job_id)}>
+                            {isActing ? "…" : t('jobs_cancel', lang)}
+                          </button>
+                          {can("admin") && (
+                            <button className="btn-export" disabled={isActing}
+                              style={{ color: "var(--accent)", borderColor: "var(--accent)", fontSize: 11 }}
+                              onClick={e => handleForce(e, job.job_id)}>
+                              {isActing ? "…" : t('jobs_force', lang)}
+                            </button>
+                          )}
+                        </>
+                      )}
+                      <StatusBadge status={job.status} />
                     </div>
                   </div>
-                  <StatusBadge status={job.status} />
+                  <JobStatusLine job={job} lang={lang} />
+                  <ProgressBar value={(job.processed_domains || 0) + (job.failed_domains || 0)} total={job.total_domains || 0} />
                 </div>
-                <JobStatusLine job={job} lang={lang} />
-                <ProgressBar value={(job.processed_domains || 0) + (job.failed_domains || 0)} total={job.total_domains || 0} />
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
     </div>
@@ -323,6 +362,7 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
   const [results, setResults] = useState<Result[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState("")
+  const [acting, setActing] = useState(false)
 
   const loadData = useCallback(async () => {
     try {
@@ -359,6 +399,32 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
         <h1 className="page-title">{job?.filename}</h1>
         <div className="page-header-actions">
           {job && <StatusBadge status={job.status} />}
+          {job && (job.status === "running" || job.status === "pending") && (
+            <>
+              <button className="btn-export" disabled={acting}
+                style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
+                onClick={async () => {
+                  if (!window.confirm(t('jobs_cancel_confirm', lang))) return
+                  setActing(true)
+                  try { await apiFetch(`/api/jobs/${jobId}/cancel`, { method: "POST" }); await loadData() } catch {}
+                  finally { setActing(false) }
+                }}>
+                {acting ? "…" : t('jobs_cancel', lang)}
+              </button>
+              {can("admin") && (
+                <button className="btn-export" disabled={acting}
+                  style={{ color: "var(--accent)", borderColor: "var(--accent)" }}
+                  onClick={async () => {
+                    if (!window.confirm(t('jobs_force_confirm', lang))) return
+                    setActing(true)
+                    try { await apiFetch(`/api/jobs/${jobId}/force_complete`, { method: "POST" }); await loadData() } catch {}
+                    finally { setActing(false) }
+                  }}>
+                  {acting ? "…" : t('jobs_force', lang)}
+                </button>
+              )}
+            </>
+          )}
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/csv`, "_blank")}>CSV</button>}
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/xlsx`, "_blank")}>XLSX</button>}
         </div>
@@ -469,7 +535,7 @@ export default function App() {
         {view === "redirects" && <RedirectsPage lang={lang} />}
         {view === "setup" && <SetupPage lang={lang} />}
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} lang={lang} />}
-        {view === "jobs" && <JobsPage onSelect={handleSelectJob} lang={lang} />}
+        {view === "jobs" && <JobsPage onSelect={handleSelectJob} can={can} lang={lang} />}
         {view === "results" && selectedJobId && <ResultsPage jobId={selectedJobId} onBack={() => setView("jobs")} can={can} lang={lang} />}
         {view === "explorer" && <ExplorerPage
           onFilteredDomainsChange={setExplorerFilteredDomains}

@@ -54,6 +54,10 @@ const T = {
     // ── Jobs list ──
     jobs_title: 'Jobs',
     jobs_empty: 'No jobs yet.',
+    jobs_cancel: '✕ Cancel',
+    jobs_force: '⚡ Force complete',
+    jobs_cancel_confirm: 'Cancel this job?',
+    jobs_force_confirm: 'Force-complete this job? Processing will stop, results already saved will remain.',
 
     // ── Results page ──
     results_back: '← Back',
@@ -251,6 +255,10 @@ const T = {
     // ── Jobs list ──
     jobs_title: 'Job-и',
     jobs_empty: 'Ще немає job-ів.',
+    jobs_cancel: '✕ Скасувати',
+    jobs_force: '⚡ Завершити примусово',
+    jobs_cancel_confirm: 'Скасувати цей job?',
+    jobs_force_confirm: 'Завершити примусово? Обробка зупиниться, вже збережені результати залишаться.',
 
     // ── Results page ──
     results_back: '← Назад',
