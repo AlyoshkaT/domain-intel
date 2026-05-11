@@ -727,7 +727,10 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, onF
                     <td>{cell(r.ai_category)}</td><td>{cell(r.ai_is_ecommerce)}</td>
                     <td>{cell(r.ai_industry)}</td><td>{cell(r.sw_category)}</td>
                     <td>{cell(r.sw_subcategory)}</td>
-                    <td className="td-desc" title={r.sw_description || ""}>{cell(r.sw_description)}</td>
+                    <td className="td-desc"
+                      title={r.sw_description || ""}
+                      style={{ cursor: r.sw_description === undefined ? "help" : undefined }}
+                    >{r.sw_description !== undefined ? cell(r.sw_description) : "—"}</td>
                     <td>{cell(r.sw_primary_region)}</td>
                     <td>{r.sw_primary_region_pct != null ? `${r.sw_primary_region_pct}%` : "—"}</td>
                   </tr>
@@ -737,7 +740,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, onF
           </div>
         )}
         {!loading && pageResults.length === 0 && (
-          <div className="empty-state">Нічого не знайдено.</div>
+          <div className="empty-state">{t('expl_no_results', lang)}</div>
         )}
       </main>
     </div>

@@ -64,6 +64,7 @@ const T = {
     // ── Explorer ──
     expl_filters_title: 'Filters',
     expl_reset: 'Reset',
+    expl_no_results: 'Nothing found.',
     expl_domain_search_ph: 'Type domain to search',
     expl_refresh_cache_label: '↻ Refresh cache',
     expl_apply: 'Apply',
@@ -260,6 +261,7 @@ const T = {
     // ── Explorer ──
     expl_filters_title: 'Фільтри',
     expl_reset: 'Скинути',
+    expl_no_results: 'Нічого не знайдено.',
     expl_domain_search_ph: 'Введіть домен для пошуку',
     expl_refresh_cache_label: '↻ Оновити КЕШ',
     expl_apply: 'Застосувати',

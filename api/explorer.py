@@ -32,14 +32,21 @@ _SEARCH_CACHE_MAX = 30
 # {"columns": [...], "rows": [[...], ...]}
 _profiles_cache: dict = {}
 _profiles_cache_ts: float = 0
-_PROFILES_CACHE_TTL = 300  # 5 min
+_PROFILES_CACHE_TTL = 1800  # 30 min — BQ fetch of 100K rows takes ~30-60s, cache aggressively
 
+# Columns loaded for in-memory filtering. sw_description excluded here because:
+# • Explorer doesn't filter/search by description
+# • At 100K rows × 300 chars avg it adds ~30MB to every load
+# • Fetched separately on demand via /api/explore/domain/<domain>
 PROFILE_COLUMNS = [
     "domain", "sw_visits", "cms_list", "osearch", "osearch_group",
     "ems_list", "ai_category", "ai_is_ecommerce", "ai_industry",
-    "sw_category", "sw_subcategory", "sw_description", "sw_title",
+    "sw_category", "sw_subcategory", "sw_title",
     "company_name", "sw_primary_region", "sw_primary_region_pct",
 ]
+
+# Full column list including description — used only in detail/export endpoints
+PROFILE_COLUMNS_FULL = PROFILE_COLUMNS + ["sw_description"]
 
 
 def _make_cache_key(body: dict) -> str:
@@ -115,15 +122,17 @@ async def get_all_profiles():
     try:
         bq_client = client()
         cols_sql = ", ".join(PROFILE_COLUMNS)
-        bq_rows = list(bq_client.query(f"""
+        # Use large page_size to reduce HTTP round-trips (default ~10K → 50K per request)
+        job = bq_client.query(f"""
             SELECT {cols_sql}
             FROM `{table_ref(PROFILES_TABLE)}`
             ORDER BY sw_visits DESC NULLS LAST
-        """).result())
+        """)
+        result_iter = job.result(page_size=50000)
 
         # Build compact columnar structure: list of lists, no repeated keys
         rows = []
-        for r in bq_rows:
+        for r in result_iter:
             row = []
             for col in PROFILE_COLUMNS:
                 v = r[col]
@@ -146,6 +155,25 @@ def invalidate_profiles_cache():
     """Call this after domain_profiles sync to force fresh load."""
     global _profiles_cache_ts
     _profiles_cache_ts = 0
+
+
+@router.get("/domain/{domain}")
+async def get_domain_detail(domain: str):
+    """Fetch full profile for a single domain including sw_description."""
+    try:
+        bq_client = client()
+        cols_sql = ", ".join(PROFILE_COLUMNS_FULL)
+        rows = list(bq_client.query(
+            f"SELECT {cols_sql} FROM `{table_ref(PROFILES_TABLE)}` WHERE domain = @d LIMIT 1",
+            job_config=bq.QueryJobConfig(query_parameters=[bq.ScalarQueryParameter("d", "STRING", domain)])
+        ).result())
+        if not rows:
+            return {"error": "not found"}
+        r = rows[0]
+        return {col: (float(r[col]) if hasattr(r[col], 'is_integer') else r[col])
+                for col in PROFILE_COLUMNS_FULL}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @router.get("/stats")
