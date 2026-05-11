@@ -103,7 +103,8 @@ async def fetch_builtwith_credits() -> Optional[int]:
             if remaining is not None:
                 remaining = int(remaining)
                 _credits_cache["builtwith"] = remaining
-                _save_setting("builtwith_credits_remaining", str(remaining))
+                from core.bigquery import set_setting
+                set_setting("builtwith_credits_remaining", str(remaining))
                 logger.info(f"BuiltWith credits: {remaining}")
             return remaining
     except Exception as e:
@@ -118,32 +119,43 @@ def update_similarweb_credits_from_headers(headers: dict):
         try:
             remaining = int(remaining)
             _credits_cache["similarweb"] = remaining
-            _save_setting("similarweb_credits_remaining", str(remaining))
+            from core.bigquery import set_setting
+            set_setting("similarweb_credits_remaining", str(remaining))
             logger.info(f"SimilarWeb credits updated: {remaining}")
         except ValueError:
             pass
+        except Exception as e:
+            logger.error(f"SimilarWeb credits save error: {e}")
+
 
 
 def get_cached_credits() -> dict:
     """Get credits from in-memory cache, fallback to BQ."""
+    from core.bigquery import get_setting
     result = {}
 
     # BuiltWith
     if "builtwith" in _credits_cache:
         result["builtwith"] = _credits_cache["builtwith"]
     else:
-        val = _get_setting("builtwith_credits_remaining")
+        val = get_setting("builtwith_credits_remaining")
         if val is not None:
-            result["builtwith"] = int(val)
-            _credits_cache["builtwith"] = int(val)
+            try:
+                result["builtwith"] = int(val)
+                _credits_cache["builtwith"] = int(val)
+            except ValueError:
+                pass
 
     # SimilarWeb
     if "similarweb" in _credits_cache:
         result["similarweb"] = _credits_cache["similarweb"]
     else:
-        val = _get_setting("similarweb_credits_remaining")
+        val = get_setting("similarweb_credits_remaining")
         if val is not None:
-            result["similarweb"] = int(val)
-            _credits_cache["similarweb"] = int(val)
+            try:
+                result["similarweb"] = int(val)
+                _credits_cache["similarweb"] = int(val)
+            except ValueError:
+                pass
 
     return result
