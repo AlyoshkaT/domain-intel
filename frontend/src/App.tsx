@@ -406,6 +406,8 @@ export default function App() {
   const [view, setView] = useState<View>("new")
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [techDomains, setTechDomains] = useState<string[]>([])
+  // Always tracks current Explorer filtered domains (updated live as filters change)
+  const [explorerFilteredDomains, setExplorerFilteredDomains] = useState<string[]>([])
   const [permissions, setPermissions] = useState<string[]>(["explorer", "jobs", "download", "sheets", "admin"])
   const [dark, setDark] = useState(() => {
     const s = localStorage.getItem("theme")
@@ -451,7 +453,7 @@ export default function App() {
           {can("jobs") && <button className={`nav-link ${view === "new" ? "active" : ""}`} onClick={() => setView("new")}>{t('nav_new', lang)}</button>}
           {can("jobs") && <button className={`nav-link ${view === "jobs" ? "active" : ""}`} onClick={() => setView("jobs")}>{t('nav_jobs', lang)}</button>}
           {can("explorer") && <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>{t('nav_explorer', lang)}</button>}
-          {can("explorer") && <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => setView("technologies")}>{t('nav_technologies', lang)}</button>}
+          {can("explorer") && <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => { setTechDomains(explorerFilteredDomains); setView("technologies") }}>{t('nav_technologies', lang)}</button>}
           {can("explorer") && <button className={`nav-link ${view === "redirects" ? "active" : ""}`} onClick={() => setView("redirects")}>{t('nav_redirects', lang)}</button>}
           {can("admin") && <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>{t('nav_setup', lang)}</button>}
         </div>
@@ -469,7 +471,11 @@ export default function App() {
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} lang={lang} />}
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} lang={lang} />}
         {view === "results" && selectedJobId && <ResultsPage jobId={selectedJobId} onBack={() => setView("jobs")} can={can} lang={lang} />}
-        {view === "explorer" && <ExplorerPage onViewTechnologies={(domains: string[]) => { setTechDomains(domains); setView("technologies") }} onNavigateToJobs={() => setView("jobs")} can={can} lang={lang} />}
+        {view === "explorer" && <ExplorerPage
+          onViewTechnologies={(domains: string[]) => { setTechDomains(domains); setView("technologies") }}
+          onFilteredDomainsChange={setExplorerFilteredDomains}
+          onNavigateToJobs={() => setView("jobs")}
+          can={can} lang={lang} />}
       </main>
     </div>
   )

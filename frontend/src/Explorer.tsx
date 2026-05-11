@@ -402,8 +402,9 @@ function FilterPanel({ filters, fieldValues, onChange, onReset, onSearch, loadin
 function cell(v?: string | null) { return v && v.trim() ? v : "—" }
 
 // ─── Main Explorer ─────────────────────────────────────────────────────────────
-export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can, lang }: {
+export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, onFilteredDomainsChange, can, lang }: {
   onViewTechnologies?: (domains: string[]) => void; onNavigateToJobs?: () => void
+  onFilteredDomainsChange?: (domains: string[]) => void
   can?: (p: string) => boolean; lang: Lang
 }) {
   const canDo = can || (() => true)  // default: allow all
@@ -463,6 +464,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
       }
       _cachedProfiles = profiles; _cachedProfilesTs = Date.now()
       setAllProfiles(profiles); setFilteredProfiles(profiles)
+      onFilteredDomainsChange?.(profiles.map(r => r.domain))
     } catch (e) { console.error("Failed to load profiles", e) }
     finally { setLoading(false) }
   }, [])
@@ -471,9 +473,12 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
 
   // ── Apply filters in-memory (instant, no BQ) ─────────────────────────────
   const applyFilters = useCallback((f: FilterState, profiles: ExploreResult[]) => {
-    setFilteredProfiles(filterProfiles(f, profiles))
+    const result = filterProfiles(f, profiles)
+    setFilteredProfiles(result)
     setOffset(0)
-  }, [])
+    // Notify App of current filtered domains (for Technologies nav button)
+    onFilteredDomainsChange?.(result.map(r => r.domain))
+  }, [onFilteredDomainsChange])
 
   const handleSearch = () => applyFilters(filters, allProfiles)
   const handleReset = useCallback(() => {
