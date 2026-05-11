@@ -155,7 +155,7 @@ async def aggregate_technologies(body: dict):
         series = sorted([{
             "name": name,
             "data": [len(periods.get(p, set())) for p in all_periods],
-            "total": sum(len(v) for v in periods.values()),
+            "total": len(set(d for v in periods.values() for d in v)),
         } for name, periods in tech_timeline.items()], key=lambda x: -x["total"])
 
         table_rows = []
