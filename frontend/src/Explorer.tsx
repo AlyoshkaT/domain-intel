@@ -329,20 +329,27 @@ function SyncButton({ onSync }: { onSync: () => void }) {
       </div>
 
       {isRunning && (
-        <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 2 }}>
-          {/* Progress bar */}
-          <div style={{ width: "100%", height: 4, background: "var(--border)", borderRadius: 2, overflow: "hidden" }}>
+        <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 3 }}>
+          {/* Bar track */}
+          <div style={{ width: "100%", height: 5, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
             <div style={{
               height: "100%", background: "var(--accent)",
-              width: `${pct}%`,
-              transition: "width 0.4s ease",
-              borderRadius: 2,
+              width: pct > 0 ? `${pct}%` : "6%",   // show a sliver even at 0 so it's visible
+              transition: "width 0.6s ease",
+              borderRadius: 3,
             }} />
           </div>
-          {/* Progress text */}
-          <span style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--mono)", textAlign: "right" }}>
-            {status.progress || "…"}{pct > 0 && pct < 100 ? "" : ""}
-          </span>
+          {/* Phase text + pct */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: "var(--text-2)", fontFamily: "var(--mono)" }}>
+              {status.progress || "…"}
+            </span>
+            {pct > 0 && (
+              <span style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--mono)", fontWeight: 600 }}>
+                {pct}%
+              </span>
+            )}
+          </div>
         </div>
       )}
 

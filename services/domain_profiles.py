@@ -213,55 +213,55 @@ def sync_domain_profiles() -> dict:
         from services.technology_catalog import get_catalog
         catalog = get_catalog()
 
-        # Fetch domain lists — derived from main queries to save 3 BQ round trips
-        _sync_status["progress"] = "Отримуємо список доменів..."
-        sw_domains: set[str] = set()
-        bw_domains: set[str] = set()
-        corp_ai_domains: set[str] = set()
-        for r in corp.query(f"SELECT DISTINCT LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) AS domain FROM {sw_table}").result():
-            if r["domain"]: sw_domains.add(r["domain"])
-        for r in corp.query(f"SELECT DISTINCT LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) AS domain FROM {bw_table}").result():
-            if r["domain"]: bw_domains.add(r["domain"])
-        for r in corp.query(f"SELECT DISTINCT domain FROM {corp_ai_table}").result():
-            if r["domain"]: corp_ai_domains.add(normalize_domain(r["domain"]))
-        all_domains = {d for d in sw_domains | bw_domains | corp_ai_domains if d}
-        logger.info(f"Unique normalized domains: {len(all_domains)}")
-
         # ── Memory-efficient data loading ──────────────────────────────────
-        # IMPORTANT: we parse JSON immediately and store only the small parsed
-        # dicts — raw response_json blobs (up to 100KB each for BW) are never
-        # accumulated in RAM.  This reduces peak memory by ~100x.
+        # pct budget:  SW 5-35 | BW 35-70 | AI 70-80 | write 80-95 | upload 95-100
+        # We set pct BEFORE each blocking .result() so the bar moves immediately.
 
-        _sync_status["progress"] = f"Завантажуємо SW ({len(sw_domains):,})..."
+        # Phase 1 — SW (5 → 35%)
+        _sync_status.update({"progress": "1/4 · Запит SW до BigQuery…", "pct": 5})
         sw_parsed: dict[str, dict] = {}
-        for r in corp.query(f"""
+        sw_job = corp.query(f"""
             SELECT domain, response_json FROM {sw_table}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
                                        ORDER BY fetched_at DESC) = 1
-        """).result():
+        """)
+        _sync_status.update({"progress": "1/4 · Отримуємо SW дані…", "pct": 8})
+        for r in sw_job.result():
             key = normalize_domain(r["domain"])
             if key:
                 sw_parsed[key] = _parse_sw(_safe_json(r["response_json"]))
+                if len(sw_parsed) % 10000 == 0:
+                    _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,} доменів…", "pct": 10 + min(25, len(sw_parsed) // 1000)})
+        _sync_status.update({"progress": f"1/4 · SW готово: {len(sw_parsed):,}", "pct": 35})
         logger.info(f"SW parsed: {len(sw_parsed)}")
 
-        _sync_status["progress"] = f"Завантажуємо BW ({len(bw_domains):,})..."
+        # Phase 2 — BW (35 → 70%)
+        _sync_status.update({"progress": "2/4 · Запит BW до BigQuery…", "pct": 35})
         bw_parsed: dict[str, dict] = {}
-        for r in corp.query(f"""
+        bw_job = corp.query(f"""
             SELECT domain, response_json FROM {bw_table}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(REGEXP_REPLACE(domain, r'^www\\.', ''))
                                        ORDER BY fetched_at DESC) = 1
-        """).result():
+        """)
+        _sync_status.update({"progress": "2/4 · Отримуємо BW дані…", "pct": 38})
+        for r in bw_job.result():
             key = normalize_domain(r["domain"])
             if key:
                 bw_parsed[key] = _parse_bw(_safe_json(r["response_json"]), catalog)
+                if len(bw_parsed) % 10000 == 0:
+                    _sync_status.update({"progress": f"2/4 · BW: {len(bw_parsed):,} доменів…", "pct": 40 + min(28, len(bw_parsed) // 1000)})
+        _sync_status.update({"progress": f"2/4 · BW готово: {len(bw_parsed):,}", "pct": 70})
         logger.info(f"BW parsed: {len(bw_parsed)}")
 
-        _sync_status["progress"] = "Завантажуємо Corp AI (claude_responses)..."
+        # Phase 3 — AI (70 → 80%)
+        _sync_status.update({"progress": "3/4 · Запит AI до BigQuery…", "pct": 70})
         ai_data: dict[str, dict] = {}
-        for r in corp.query(f"""
-            SELECT domain, response_json, fetched_at FROM {corp_ai_table}
+        ai_job = corp.query(f"""
+            SELECT domain, response_json FROM {corp_ai_table}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """).result():
+        """)
+        _sync_status.update({"progress": "3/4 · Отримуємо AI дані…", "pct": 72})
+        for r in ai_job.result():
             key = normalize_domain(r["domain"])
             if not key:
                 continue
@@ -274,14 +274,18 @@ def sync_domain_profiles() -> dict:
                     "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
                     "ai_industry":     data.get("subcategory", ""),
                 }
+        _sync_status.update({"progress": f"3/4 · AI готово: {len(ai_data):,}", "pct": 80})
         logger.info(f"AI data total: {len(ai_data)} domains")
 
-        # ── Stream profiles directly to temp file (no rows[] list in RAM) ──
+        all_domains = {d for d in sw_parsed.keys() | bw_parsed.keys() | ai_data.keys() if d}
+        logger.info(f"Unique normalized domains: {len(all_domains)}")
+
+        # ── Phase 4: Stream profiles directly to temp file (80 → 95%) ──
         updated_at = datetime.now(timezone.utc).isoformat()
         domains_list = sorted(all_domains)
         total_count = len(domains_list)
 
-        _sync_status["progress"] = f"Записуємо {total_count:,} профілів на диск..."
+        _sync_status.update({"progress": f"4/4 · Записуємо {total_count:,} профілів…", "pct": 80})
         tmp_file = None
         written = 0
         try:
@@ -302,8 +306,9 @@ def sync_domain_profiles() -> dict:
                         logger.warning(f"Build error for {domain}: {e}")
 
                     if (i + 1) % 5000 == 0 or (i + 1) == total_count:
-                        pct = int((i + 1) / total_count * 100)
-                        _sync_status["progress"] = f"Записуємо: {i+1:,}/{total_count:,} ({pct}%)"
+                        # map write progress to 80-95% range
+                        pct = 80 + int((i + 1) / total_count * 15)
+                        _sync_status["progress"] = f"4/4 · {i+1:,}/{total_count:,} ({int((i+1)/total_count*100)}%)"
                         _sync_status["pct"] = pct
 
             logger.info(f"Written {written} profiles to {tmp_file} in {time.time()-t0:.0f}s")
@@ -313,7 +318,7 @@ def sync_domain_profiles() -> dict:
             bw_parsed.clear()
             ai_data.clear()
 
-            _sync_status["progress"] = f"Завантажуємо {written:,} профілів у BigQuery..."
+            _sync_status.update({"progress": f"Завантажуємо {written:,} профілів у BigQuery…", "pct": 95})
             job_config = bigquery.LoadJobConfig(
                 schema=PROFILES_SCHEMA,
                 write_disposition="WRITE_TRUNCATE",
@@ -323,7 +328,7 @@ def sync_domain_profiles() -> dict:
                 load_job = our.load_table_from_file(
                     f, table_ref(PROFILES_TABLE), job_config=job_config
                 )
-            _sync_status["progress"] = "BigQuery завантажує файл..."
+            _sync_status.update({"progress": "BigQuery завантажує файл…", "pct": 97})
             load_job.result()
         finally:
             if tmp_file and os.path.exists(tmp_file):
