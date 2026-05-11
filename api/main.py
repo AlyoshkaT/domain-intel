@@ -255,6 +255,21 @@ async def cancel_job_endpoint(job_id: str):
             return {"cancelled": True}
     return {"cancelled": cancelled}
 
+@app.post("/api/jobs/{job_id}/retry_errors", dependencies=[require_permission("jobs")])
+async def retry_errors(request: Request, job_id: str):
+    """Create a new job retrying only the error-status domains from a previous job."""
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    results = get_results(job_id)
+    error_domains = [r["domain"] for r in results if r.get("status") == "error"]
+    if not error_domains:
+        return {"count": 0, "job_id": None}
+    services = job.get("services") or []
+    username = getattr(request.state, "username", "unknown")
+    new_job_id = start_job(error_domains, services, f"retry_{job_id[:8]}.txt", username=username)
+    return {"count": len(error_domains), "job_id": new_job_id}
+
 @app.post("/api/jobs/{job_id}/force_complete", dependencies=[require_permission("admin")])
 async def force_complete_job(job_id: str):
     """Force-mark a stuck running job as completed with whatever was processed so far."""

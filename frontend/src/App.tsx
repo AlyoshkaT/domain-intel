@@ -292,6 +292,18 @@ function JobsPage({ onSelect, can, lang }: { onSelect: (id: string) => void; can
     finally { setActing(null) }
   }
 
+  const handleRetry = async (e: React.MouseEvent, jobId: string) => {
+    e.stopPropagation()
+    setActing(jobId)
+    try {
+      const d = await apiFetch(`/api/jobs/${jobId}/retry_errors`, { method: "POST" })
+      if (!d.count) { alert(t('jobs_retry_none', lang)); return }
+      if (!window.confirm(t('jobs_retry_confirm', lang)(d.count))) return
+      await load()
+    } catch {}
+    finally { setActing(null) }
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -304,7 +316,11 @@ function JobsPage({ onSelect, can, lang }: { onSelect: (id: string) => void; can
           <div className="jobs-list">
             {jobs.map(job => {
               const isActive = job.status === "running" || job.status === "pending"
+              const isDone = ["completed", "completed_with_errors", "failed", "cancelled"].includes(job.status)
               const isActing = acting === job.job_id
+              const totalDone = (job.processed_domains || 0) + (job.failed_domains || 0)
+              const notProcessed = (job.total_domains || 0) - totalDone
+              const hasErrors = (job.failed_domains || 0) > 0
               return (
                 <div key={job.job_id} className="job-card" onClick={() => onSelect(job.job_id)}>
                   <div className="job-card-header">
@@ -332,11 +348,23 @@ function JobsPage({ onSelect, can, lang }: { onSelect: (id: string) => void; can
                           )}
                         </>
                       )}
+                      {isDone && hasErrors && (
+                        <button className="btn-export" disabled={isActing}
+                          style={{ color: "var(--warning, #f59e0b)", borderColor: "var(--warning, #f59e0b)", fontSize: 11 }}
+                          onClick={e => handleRetry(e, job.job_id)}>
+                          {isActing ? "…" : t('jobs_retry', lang)(job.failed_domains || 0)}
+                        </button>
+                      )}
                       <StatusBadge status={job.status} />
                     </div>
                   </div>
                   <JobStatusLine job={job} lang={lang} />
-                  <ProgressBar value={(job.processed_domains || 0) + (job.failed_domains || 0)} total={job.total_domains || 0} />
+                  <ProgressBar value={totalDone} total={job.total_domains || 0} />
+                  {isDone && notProcessed > 0 && (
+                    <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
+                      ⚠ {t('jobs_unprocessed', lang)(notProcessed)}
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -424,6 +452,22 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
                 </button>
               )}
             </>
+          )}
+          {job && ["completed_with_errors","failed","cancelled"].includes(job.status) && (job.failed_domains || 0) > 0 && (
+            <button className="btn-export" disabled={acting}
+              style={{ color: "var(--warning, #f59e0b)", borderColor: "var(--warning, #f59e0b)" }}
+              onClick={async () => {
+                setActing(true)
+                try {
+                  const d = await apiFetch(`/api/jobs/${jobId}/retry_errors`, { method: "POST" })
+                  if (!d.count) { alert(t('jobs_retry_none', lang)); return }
+                  if (!window.confirm(t('jobs_retry_confirm', lang)(d.count))) return
+                  await loadData()
+                } catch {}
+                finally { setActing(false) }
+              }}>
+              {acting ? "…" : t('jobs_retry', lang)(job.failed_domains || 0)}
+            </button>
           )}
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/csv`, "_blank")}>CSV</button>}
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/xlsx`, "_blank")}>XLSX</button>}

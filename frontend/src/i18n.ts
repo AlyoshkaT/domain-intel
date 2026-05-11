@@ -56,8 +56,12 @@ const T = {
     jobs_empty: 'No jobs yet.',
     jobs_cancel: '✕ Cancel',
     jobs_force: '⚡ Force complete',
+    jobs_retry: (n: number) => `↻ Retry errors (${n})`,
     jobs_cancel_confirm: 'Cancel this job?',
     jobs_force_confirm: 'Force-complete this job? Processing will stop, results already saved will remain.',
+    jobs_retry_confirm: (n: number) => `Retry ${n} failed domain(s) with the same services?`,
+    jobs_retry_none: 'No failed domains to retry.',
+    jobs_unprocessed: (n: number) => `${n} domains not processed`,
 
     // ── Results page ──
     results_back: '← Back',
@@ -257,8 +261,12 @@ const T = {
     jobs_empty: 'Ще немає job-ів.',
     jobs_cancel: '✕ Скасувати',
     jobs_force: '⚡ Завершити примусово',
+    jobs_retry: (n: number) => `↻ Повтор помилок (${n})`,
     jobs_cancel_confirm: 'Скасувати цей job?',
     jobs_force_confirm: 'Завершити примусово? Обробка зупиниться, вже збережені результати залишаться.',
+    jobs_retry_confirm: (n: number) => `Запустити повторну обробку ${n} доменів з помилками (з тими самими сервісами)?`,
+    jobs_retry_none: 'Немає доменів з помилками для повтору.',
+    jobs_unprocessed: (n: number) => `${n} доменів не оброблено`,
 
     // ── Results page ──
     results_back: '← Назад',
