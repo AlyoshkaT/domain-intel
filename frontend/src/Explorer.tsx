@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import Dashboard, { TRAFFIC_GROUPS } from "./Dashboard"
+import { t, type Lang } from "./i18n"
 
 const API = ""
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -98,8 +99,8 @@ function filterProfiles(f: FilterState, profiles: ExploreResult[]): ExploreResul
 }
 
 // ─── Domain filter with multi-select ─────────────────────────────────────────
-function DomainFilter({ filter, allValues, onChange }: {
-  filter: TextFilter; allValues: FilterValue[]; onChange: (f: TextFilter) => void
+function DomainFilter({ filter, allValues, onChange, lang }: {
+  filter: TextFilter; allValues: FilterValue[]; onChange: (f: TextFilter) => void; lang: Lang
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -119,18 +120,18 @@ function DomainFilter({ filter, allValues, onChange }: {
     <div className="flt-text" ref={ref}>
       <select className="flt-select-sm" value={filter.type}
         onChange={e => onChange({ ...filter, type: e.target.value as TextFilterType, selected: [], value: "" })}>
-        <option value="all">Всі</option>
-        <option value="in">Мультивибір</option>
-        <option value="contains">Містить</option>
-        <option value="not_contains">Не містить</option>
-        <option value="empty">Порожнє</option>
-        <option value="not_empty">Не порожнє</option>
+        <option value="all">{t('expl_filter_all', lang)}</option>
+        <option value="in">{t('expl_filter_multi', lang)}</option>
+        <option value="contains">{t('expl_filter_contains', lang)}</option>
+        <option value="not_contains">{t('expl_filter_not_contains', lang)}</option>
+        <option value="empty">{t('expl_filter_empty', lang)}</option>
+        <option value="not_empty">{t('expl_filter_not_empty', lang)}</option>
       </select>
 
       {filter.type === "in" && (
         <div className="flt-dropdown-wrap">
           <button className={`flt-dropdown-btn ${filter.selected.length > 0 ? "active" : ""}`} onClick={() => setOpen(!open)}>
-            <span>{filter.selected.length === 0 ? "Вибрати домени..." : `Вибрано: ${filter.selected.length}`}</span>
+            <span>{filter.selected.length === 0 ? t('expl_select_ph', lang) : t('expl_selected', lang)(filter.selected.length)}</span>
             <span className="flt-chevron">{open ? "▴" : "▾"}</span>
           </button>
           {open && (
@@ -139,7 +140,7 @@ function DomainFilter({ filter, allValues, onChange }: {
                 value={filter.value} onChange={e => onChange({ ...filter, value: e.target.value })} autoFocus />
               {filter.selected.length > 0 && (
                 <div className="flt-clear-sel" onClick={() => onChange({ ...filter, selected: [], type: "all", value: "" })}>
-                  ✕ Скинути вибір ({filter.selected.length})
+                  {t('expl_clear_sel', lang)(filter.selected.length)}
                 </div>
               )}
               <div className="flt-options">
@@ -194,8 +195,8 @@ function DomainFilter({ filter, allValues, onChange }: {
 }
 
 // ─── Multi-select ─────────────────────────────────────────────────────────────
-function MultiSelect({ field, filter, allValues, onChange }: {
-  field: string; filter: MultiFilter; allValues: FilterValue[]; onChange: (f: MultiFilter) => void
+function MultiSelect({ field, filter, allValues, onChange, lang }: {
+  field: string; filter: MultiFilter; allValues: FilterValue[]; onChange: (f: MultiFilter) => void; lang: Lang
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -212,14 +213,16 @@ function MultiSelect({ field, filter, allValues, onChange }: {
     <div className="flt-multi" ref={ref}>
       <select className="flt-select-sm" value={filter.type}
         onChange={e => onChange({ ...filter, type: e.target.value as MultiFilterType, selected: [] })}>
-        <option value="all">Всі</option><option value="in">Включити</option>
-        <option value="not_in">Виключити</option><option value="empty">Порожнє</option>
-        <option value="not_empty">Не порожнє</option>
+        <option value="all">{t('expl_filter_all', lang)}</option>
+        <option value="in">{t('expl_filter_include', lang)}</option>
+        <option value="not_in">{t('expl_filter_exclude', lang)}</option>
+        <option value="empty">{t('expl_filter_empty', lang)}</option>
+        <option value="not_empty">{t('expl_filter_not_empty', lang)}</option>
       </select>
       {(filter.type === "in" || filter.type === "not_in") && (
         <div className="flt-dropdown-wrap">
           <button className={`flt-dropdown-btn ${filter.selected.length > 0 ? "active" : ""}`} onClick={() => setOpen(!open)}>
-            <span>{filter.selected.length === 0 ? `Всі (${allValues.length})` : `Вибрано: ${filter.selected.length}`}</span>
+            <span>{filter.selected.length === 0 ? t('expl_all_values', lang)(allValues.length) : t('expl_selected', lang)(filter.selected.length)}</span>
             <span className="flt-chevron">{open ? "▴" : "▾"}</span>
           </button>
           {open && (
@@ -228,7 +231,7 @@ function MultiSelect({ field, filter, allValues, onChange }: {
                 onChange={e => onChange({ ...filter, search: e.target.value })} autoFocus />
               {filter.selected.length > 0 && (
                 <div className="flt-clear-sel" onClick={() => onChange({ ...filter, selected: [], type: "all", search: "" })}>
-                  ✕ Скинути ({filter.selected.length})
+                  {t('expl_clear', lang)(filter.selected.length)}
                 </div>
               )}
               <div className="flt-options">
@@ -256,12 +259,14 @@ function MultiSelect({ field, filter, allValues, onChange }: {
 }
 
 // ─── Numeric filter ───────────────────────────────────────────────────────────
-function NumericFilter({ filter, onChange }: { filter: NumFilter; onChange: (f: NumFilter) => void }) {
+function NumericFilter({ filter, onChange, lang }: { filter: NumFilter; onChange: (f: NumFilter) => void; lang: Lang }) {
   return (
     <div className="flt-num">
       <select className="flt-select-sm" value={filter.type} onChange={e => onChange({ ...filter, type: e.target.value as NumFilterType })}>
-        <option value="all">Всі</option><option value="gt">Більше</option>
-        <option value="lt">Менше</option><option value="between">Від — До</option>
+        <option value="all">{t('expl_filter_all', lang)}</option>
+        <option value="gt">{t('expl_filter_gt', lang)}</option>
+        <option value="lt">{t('expl_filter_lt', lang)}</option>
+        <option value="between">{t('expl_filter_between', lang)}</option>
       </select>
       {(filter.type === "gt" || filter.type === "lt") && (
         <input className="flt-num-input" type="number" placeholder="Значення"
@@ -329,9 +334,9 @@ function SyncButton({ onSync }: { onSync: () => void }) {
 }
 
 // ─── Filter panel ─────────────────────────────────────────────────────────────
-function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, activeCount }: {
+function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, activeCount, lang }: {
   filters: FilterState; fieldValues: Record<string, FilterValue[]>
-  onChange: (f: FilterState) => void; onSearch: () => void; loading: boolean; activeCount: number
+  onChange: (f: FilterState) => void; onSearch: () => void; loading: boolean; activeCount: number; lang: Lang
 }) {
   const upd = (key: keyof FilterState, val: any) => onChange({ ...filters, [key]: val })
   const sections = [
@@ -355,14 +360,14 @@ function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, active
       {sections.map(s => (
         <div key={s.key} className="filter-section">
           <div className="filter-section-label">{s.label}</div>
-          {s.type === "domain" && <DomainFilter filter={filters.domain} allValues={fieldValues.domain || []} onChange={v => upd("domain", v)} />}
-          {s.type === "num"    && <NumericFilter filter={filters[s.key] as NumFilter} onChange={v => upd(s.key, v)} />}
-          {s.type === "multi"  && <MultiSelect field={s.key} filter={filters[s.key] as MultiFilter} allValues={fieldValues[s.key] || []} onChange={v => upd(s.key, v)} />}
+          {s.type === "domain" && <DomainFilter filter={filters.domain} allValues={fieldValues.domain || []} onChange={v => upd("domain", v)} lang={lang} />}
+          {s.type === "num"    && <NumericFilter filter={filters[s.key] as NumFilter} onChange={v => upd(s.key, v)} lang={lang} />}
+          {s.type === "multi"  && <MultiSelect field={s.key} filter={filters[s.key] as MultiFilter} allValues={fieldValues[s.key] || []} onChange={v => upd(s.key, v)} lang={lang} />}
         </div>
       ))}
       <button className="btn-primary explorer-search-btn" onClick={onSearch} disabled={loading}>
         {loading ? <span className="spinner" /> : "🔍"}
-        {loading ? "Завантаження..." : "Застосувати"}
+        {loading ? t('expl_loading', lang) : t('expl_apply', lang)}
         {activeCount > 0 && <span className="flt-count-badge">{activeCount}</span>}
       </button>
     </div>
@@ -372,9 +377,9 @@ function FilterPanel({ filters, fieldValues, onChange, onSearch, loading, active
 function cell(v?: string | null) { return v && v.trim() ? v : "—" }
 
 // ─── Main Explorer ─────────────────────────────────────────────────────────────
-export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can }: {
+export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can, lang }: {
   onViewTechnologies?: (domains: string[]) => void; onNavigateToJobs?: () => void
-  can?: (p: string) => boolean
+  can?: (p: string) => boolean; lang: Lang
 }) {
   const canDo = can || (() => true)  // default: allow all
   const [filters, setFilters] = useState<FilterState>(defaultFilters())
@@ -508,8 +513,8 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
         if (d.url) { setSheetsUrl(d.url); found = true; break }
         if (d.error) throw new Error(d.error)
       }
-      if (!found) throw new Error("Timeout — перевір налаштування Google Sheets API")
-    } catch (e: any) { alert(`Sheets export помилка: ${e.message}`) }
+      if (!found) throw new Error(t('expl_sheets_timeout', lang))
+    } catch (e: any) { alert(t('expl_sheets_err', lang)(e.message)) }
     finally { setSheetsExporting(false) }
   }
 
@@ -524,7 +529,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
   const handleDashboardFilter = useCallback((field: string, label: string) => {
     const next = { ...filters }
     if (field === "sw_visits") {
-      if (label === "(порожнє)") return
+      if (label === t('expl_empty_val', lang)) return
       const group = TRAFFIC_GROUPS.find(g => g.label === label)
       if (!group) return
       const idx = TRAFFIC_GROUPS.indexOf(group)
@@ -532,7 +537,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
       if (label === "Nano <10k") next.sw_visits = { type: "lt", value: "10000", min: "", max: "" }
       else if (!nextGroup) next.sw_visits = { type: "gt", value: String(group.min), min: "", max: "" }
       else next.sw_visits = { type: "between", value: "", min: String(group.min), max: String(nextGroup.min) }
-    } else if (label === "(порожнє)") {
+    } else if (label === t('expl_empty_val', lang)) {
       const cur = next[field as keyof FilterState] as MultiFilter
       next[field as keyof FilterState] = { ...cur, type: "empty", selected: [] } as any
     } else {
@@ -542,7 +547,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
     }
     setFilters(next)
     applyFilters(next, allProfiles)
-  }, [filters, allProfiles, applyFilters])
+  }, [filters, allProfiles, applyFilters, lang])
 
   const handleForceRefresh = async () => {
     if (!refreshServices.length || !filteredProfiles.length) return
@@ -554,9 +559,9 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
       fd.append("file", file); fd.append("services", JSON.stringify(refreshServices)); fd.append("force_refresh", "true")
       const res = await fetch("/api/jobs", { method: "POST", body: fd })
       if (!res.ok) throw new Error("Failed")
-      setRefreshMsg(`Запущено оновлення ${filteredProfiles.length.toLocaleString()} доменів (${refreshServices.join(", ")})`)
+      setRefreshMsg(t('expl_refresh_started', lang)(filteredProfiles.length.toLocaleString(), refreshServices.join(", ")))
       setTimeout(() => { if (onNavigateToJobs) onNavigateToJobs() }, 1500)
-    } catch { setRefreshMsg("Помилка запуску") }
+    } catch { setRefreshMsg(t('expl_refresh_err', lang)) }
     finally { setRefreshing(false) }
   }
 
@@ -570,7 +575,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
     <div className="explorer-layout">
       <aside className="explorer-sidebar">
         <FilterPanel filters={filters} fieldValues={fieldValues} onChange={setFilters}
-          onSearch={handleSearch} loading={loading} activeCount={activeCount} />
+          onSearch={handleSearch} loading={loading} activeCount={activeCount} lang={lang} />
       </aside>
 
       <main className="explorer-main">
@@ -578,11 +583,11 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
         <div style={{ display: "flex", alignItems: "stretch", gap: 8, marginBottom: 12 }}>
           <div className="stats-grid" style={{ flex: 1, margin: 0 }}>
             {[
-              { label: "Доменів",    value: stats.total_domains },
-              { label: "З трафіком", value: stats.with_traffic },
-              { label: "З CMS",      value: stats.with_cms },
-              { label: "З EMS",      value: stats.with_ems },
-              { label: "З AI",       value: stats.with_ai },
+              { label: t('expl_stat_domains', lang), value: stats.total_domains },
+              { label: t('expl_stat_traffic', lang), value: stats.with_traffic },
+              { label: t('expl_stat_cms', lang),     value: stats.with_cms },
+              { label: t('expl_stat_ems', lang),     value: stats.with_ems },
+              { label: t('expl_stat_ai', lang),      value: stats.with_ai },
             ].map(s => (
               <div key={s.label} className="stat-card">
                 <div className="stat-label">{s.label}</div>
@@ -623,7 +628,7 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
         <div className="explorer-results-header" style={{ marginTop: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span className="explorer-total">
-              {loading ? "Завантаження даних..." : `Знайдено: ${total.toLocaleString()} доменів`}
+              {loading ? t('expl_loading_data', lang) : t('expl_found', lang)(total.toLocaleString())}
             </span>
             <SyncButton onSync={handleSync} />
           </div>
@@ -637,13 +642,13 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, can
                 </button>}
                 {canDo("sheets") && sheetsUrl && (
                   <a href={sheetsUrl} target="_blank" rel="noopener"
-                    style={{fontSize:11,color:"var(--accent)",textDecoration:"none"}}>✓ Відкрити →</a>
+                    style={{fontSize:11,color:"var(--accent)",textDecoration:"none"}}>{t('expl_open', lang)}</a>
                 )}
                 {onViewTechnologies && (
                   <button className="btn-export"
                     style={{background:"var(--accent)",color:"white",borderColor:"var(--accent)"}}
                     onClick={() => onViewTechnologies(filteredProfiles.map(r => r.domain))}>
-                    📊 Технології →
+                    {t('expl_technologies', lang)}
                   </button>
                 )}
               </>

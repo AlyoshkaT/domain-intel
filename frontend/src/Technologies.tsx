@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from "react"
+import { t, type Lang } from "./i18n"
 
 const API = ""
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -116,11 +117,11 @@ function MonthPicker({ value, onChange }: { value: string; onChange: (v: string)
   )
 }
 
-export default function TechnologiesPage({ domains = [], onBack, can }: { domains?: string[]; onBack?: () => void; can?: (p: string) => boolean }) {
+export default function TechnologiesPage({ domains = [], onBack, can, lang }: { domains?: string[]; onBack?: () => void; can?: (p: string) => boolean; lang: Lang }) {
   const now = new Date()
-  const defaultTo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`
+  const defaultTo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"00")}`
   const ago = new Date(now); ago.setMonth(ago.getMonth()-12)
-  const defaultFrom = `${ago.getFullYear()}-${String(ago.getMonth()+1).padStart(2,"0")}`
+  const defaultFrom = `${ago.getFullYear()}-${String(ago.getMonth()+1).padStart(2,"00")}`
 
   const [dateFrom, setDateFrom] = useState(defaultFrom)
   const [dateTo, setDateTo] = useState(defaultTo)
@@ -189,49 +190,49 @@ export default function TechnologiesPage({ domains = [], onBack, can }: { domain
   return (
     <div className="page page-wide">
       <div className="page-header">
-        <h1 className="page-title">Used Technologies</h1>
-        <span style={{fontSize:12,color:"var(--text-3)"}}>{domains.length > 0 ? `${domains.length.toLocaleString()} відфільтрованих доменів` : "Всі домени"}</span>
-        {onBack && <button className="back-btn" onClick={onBack}>&#8592; Назад до Explorer</button>}
+        <h1 className="page-title">{t('tech_title', lang)}</h1>
+        <span style={{fontSize:12,color:"var(--text-3)"}}>{domains.length > 0 ? t('tech_filtered', lang)(domains.length.toLocaleString()) : t('tech_all', lang)}</span>
+        {onBack && <button className="back-btn" onClick={onBack}>{t('tech_back', lang)}</button>}
       </div>
       <div className="card" style={{marginBottom:12}}>
         <div className="tech-filters">
           <div className="tech-filter-group">
-            <label className="tech-filter-label">Від</label>
+            <label className="tech-filter-label">{t('tech_from', lang)}</label>
             <MonthPicker value={dateFrom} onChange={setDateFrom} />
           </div>
           <div className="tech-filter-group">
-            <label className="tech-filter-label">До</label>
+            <label className="tech-filter-label">{t('tech_to', lang)}</label>
             <MonthPicker value={dateTo} onChange={setDateTo} />
           </div>
           <div className="tech-filter-group">
-            <label className="tech-filter-label">Деталізація</label>
+            <label className="tech-filter-label">{t('tech_gran', lang)}</label>
             <div className="gran-btns">
               {(["month","quarter","year"] as const).map(g=>(
                 <button key={g} className={`gran-btn${granularity===g?" active":""}`} onClick={()=>setGranularity(g)}>
-                  {g==="month"?"Місяці":g==="quarter"?"Квартали":"Роки"}
+                  {g==="month" ? t('tech_months', lang) : g==="quarter" ? t('tech_quarters', lang) : t('tech_years', lang)}
                 </button>
               ))}
             </div>
           </div>
           <div className="tech-filter-group">
-            <label className="tech-filter-label">Невідомі</label>
+            <label className="tech-filter-label">{t('tech_unknown', lang)}</label>
             <button className={`service-toggle ${showUnknown?"active":""}`} style={{padding:"5px 12px"}} onClick={()=>setShowUnknown(!showUnknown)}>
               <div className="service-toggle-dot"/>
-              <span className="service-toggle-label">Показати</span>
+              <span className="service-toggle-label">{t('tech_show', lang)}</span>
             </button>
           </div>
-          <button className="btn-search" onClick={load} disabled={loading}>{loading?"⏳":"🔍"} Застосувати</button>
+          <button className="btn-search" onClick={load} disabled={loading}>{loading?"⏳":"🔍"} {t('tech_apply', lang)}</button>
           <div className="tech-filter-group">
-            <label className="tech-filter-label">Унікальність</label>
+            <label className="tech-filter-label">{t('tech_unique', lang)}</label>
             <button className={`service-toggle ${uniqueOnly?"active":""}`} style={{padding:"5px 12px"}} onClick={()=>setUniqueOnly(!uniqueOnly)}>
               <div className="service-toggle-dot"/>
-              <span className="service-toggle-label">Тільки остання</span>
+              <span className="service-toggle-label">{t('tech_latest', lang)}</span>
             </button>
           </div>
         </div>
         {result?.unknown_count?<div style={{fontSize:11,color:"var(--text-3)",marginTop:8}}>
-          Невідомих: {result.unknown_count.toLocaleString()}
-          {result.unknown_top.length>0&&` (топ: ${result.unknown_top.slice(0,5).map(([n])=>n).join(", ")})`}
+          {t('tech_unknown_count', lang)(result.unknown_count.toLocaleString())}
+          {result.unknown_top.length>0&&` (${t('tech_unknown_top', lang)(result.unknown_top.slice(0,5).map(([n])=>n).join(", "))})`}
         </div>:null}
       </div>
 
@@ -240,7 +241,7 @@ export default function TechnologiesPage({ domains = [], onBack, can }: { domain
       {!loading&&result&&result.series.length>0&&(
         <>
           <div className="card" style={{marginBottom:12}}>
-            <div className="card-section-title">Використання технологій у часі</div>
+            <div className="card-section-title">{t('tech_chart_title', lang)}</div>
             <div style={{overflowX:"auto"}}>
               <LineChart periods={result.periods} series={filteredSeries}
                 hovered={hoveredSeries} onHover={setHoveredSeries}/>
@@ -248,12 +249,12 @@ export default function TechnologiesPage({ domains = [], onBack, can }: { domain
             <Legend series={result.series} visibleSet={visible} onToggle={toggleVisible}
               hovered={hoveredSeries} onHover={setHoveredSeries}/>
             <div style={{fontSize:11,color:"var(--text-3)",marginTop:8}}>
-              Натисніть на технологію щоб сховати/показати лінію · Наведіть щоб підсвітити
+              {t('tech_hint', lang)}
             </div>
           </div>
           <div className="filter-row" style={{marginBottom:8}}>
-            <input className="filter-input" placeholder="Фільтр по домену, технології, тегу..." value={tableFilter} onChange={e=>setTableFilter(e.target.value)}/>
-            <span className="filter-count">{filteredTable.length.toLocaleString()} записів</span>
+            <input className="filter-input" placeholder={t('tech_filter_ph', lang)} value={tableFilter} onChange={e=>setTableFilter(e.target.value)}/>
+            <span className="filter-count">{t('tech_records', lang)(filteredTable.length.toLocaleString())}</span>
             {(!can || can("download")) && (
               <div style={{display:"flex",gap:6}}>
                 <button className="btn-export" onClick={exportCSV}>&#8595; CSV</button>
@@ -284,8 +285,8 @@ export default function TechnologiesPage({ domains = [], onBack, can }: { domain
           </div>
         </>
       )}
-      {!loading&&result&&result.series.length===0&&<div className="empty-state">Немає даних для обраного періоду.</div>}
-      {!loading&&!result&&<div className="empty-state">Натисніть "Застосувати" для завантаження даних.</div>}
+      {!loading&&result&&result.series.length===0&&<div className="empty-state">{t('tech_empty_period', lang)}</div>}
+      {!loading&&!result&&<div className="empty-state">{t('tech_empty_apply', lang)}</div>}
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
+import { t, type Lang } from "./i18n"
 
 const API = ""
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -12,7 +13,7 @@ async function apiFetch(path: string, opts?: RequestInit) {
 type Sheet = "cms" | "ems" | "osearch"
 const SHEET_LABELS: Record<Sheet, string> = { cms: "CMS", ems: "EMS", osearch: "OnSiteSearch" }
 
-function CatalogSection() {
+function CatalogSection({ lang }: { lang: Lang }) {
   const [tab, setTab] = useState<Sheet>("cms")
   const [catalog, setCatalog] = useState<{ cms: string[]; ems: string[]; osearch: { technology: string; group: string }[] }>({ cms: [], ems: [], osearch: [] })
   const [loading, setLoading] = useState(false)
@@ -34,9 +35,9 @@ function CatalogSection() {
     setSyncing(true); setMsg("")
     try {
       const r = await apiFetch("/api/setup/catalog/sync", { method: "POST" })
-      setMsg(`Синхронізовано: CMS ${r.counts.cms}, EMS ${r.counts.ems}, OSearch ${r.counts.osearch}`)
+      setMsg(t('setup_synced', lang)(String(r.counts.cms), String(r.counts.ems), String(r.counts.osearch)))
       await load()
-    } catch (e: any) { setMsg("Помилка: " + e.message) }
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
     finally { setSyncing(false) }
   }
 
@@ -49,17 +50,17 @@ function CatalogSection() {
         body: JSON.stringify({ sheet: tab, technology: addVal.trim(), group_name: addGroup.trim() })
       })
       setAddVal(""); setAddGroup(""); await load()
-    } catch (e: any) { setMsg("Помилка: " + e.message) }
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
   }
 
   const remove = async (technology: string) => {
-    if (!window.confirm(`Видалити "${technology}" з ${SHEET_LABELS[tab]}?`)) return
+    if (!window.confirm(t('setup_confirm_delete_tech', lang)(technology, SHEET_LABELS[tab]))) return
     setMsg(""); setRemoving(technology)
     try {
       await apiFetch(`/api/setup/catalog?sheet=${tab}&technology=${encodeURIComponent(technology)}`, { method: "DELETE" })
       await load()
-      setMsg(`✓ Видалено: ${technology}`)
-    } catch (e: any) { setMsg("Помилка: " + e.message) }
+      setMsg(t('setup_tech_deleted', lang)(technology))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
     finally { setRemoving(null) }
   }
 
@@ -73,7 +74,7 @@ function CatalogSection() {
       <div className="setup-section-header">
         <div className="card-section-title">Каталог технологій</div>
         <button className="btn-export" onClick={sync} disabled={syncing}>
-          {syncing ? "⏳ Синхронізація..." : "↻ Sync з Google Sheets"}
+          {syncing ? t('setup_syncing', lang) : t('setup_sync_btn', lang)}
         </button>
       </div>
       <div className="setup-tabs">
@@ -109,7 +110,7 @@ function CatalogSection() {
                 </span>
               )}
               <button className="setup-remove-btn" onClick={() => remove(tech)}
-                disabled={removing === tech} title="Видалити">
+                disabled={removing === tech} title={t('setup_delete', lang)}>
                 {removing === tech ? "⏳" : "✕"}
               </button>
             </div>
@@ -123,11 +124,11 @@ function CatalogSection() {
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 const ALL_PERMISSIONS = [
-  { key: "explorer", label: "Explorer",  desc: "Перегляд Explorer та дашборду" },
-  { key: "jobs",     label: "Jobs",      desc: "Створення та запуск завдань" },
-  { key: "download", label: "Download",  desc: "Скачати CSV / XLSX" },
-  { key: "sheets",   label: "Sheets",    desc: "Експорт у Google Sheets" },
-  { key: "admin",    label: "Admin",     desc: "Керування системою та юзерами" },
+  { key: "explorer", label: "Explorer",  descKey: "setup_perm_explorer" as const },
+  { key: "jobs",     label: "Jobs",      descKey: "setup_perm_jobs" as const },
+  { key: "download", label: "Download",  descKey: "setup_perm_download" as const },
+  { key: "sheets",   label: "Sheets",    descKey: "setup_perm_sheets" as const },
+  { key: "admin",    label: "Admin",     descKey: "setup_perm_admin" as const },
 ]
 
 const PRESETS = [
@@ -156,13 +157,13 @@ function parsePerms(s?: string): string[] {
   return PERM_ORDER.filter(k => valid.includes(k))
 }
 
-function PermissionToggle({ value, onChange }: { value: string[], onChange: (v: string[]) => void }) {
+function PermissionToggle({ value, onChange, lang }: { value: string[], onChange: (v: string[]) => void; lang: Lang }) {
   const toggle = (key: string) =>
     onChange(value.includes(key) ? value.filter(k => k !== key) : [...value, key])
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
       {ALL_PERMISSIONS.map(p => (
-        <button key={p.key} title={p.desc}
+        <button key={p.key} title={t(p.descKey, lang)}
           onClick={() => toggle(p.key)}
           style={{
             padding: "3px 10px", fontSize: 12, borderRadius: 4, cursor: "pointer", border: "1px solid",
@@ -202,7 +203,7 @@ const emptyNew = () => ({
   first_name: "", last_name: "", email: "", google_folder: "",
 })
 
-function UsersSection() {
+function UsersSection({ lang }: { lang: Lang }) {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
   const [newUser, setNewUser] = useState(emptyNew())
@@ -214,14 +215,14 @@ function UsersSection() {
   const load = useCallback(async () => {
     setLoading(true)
     try { const r = await apiFetch("/api/setup/users"); setUsers(r.users) }
-    catch (e: any) { setMsg("Помилка завантаження користувачів: " + e.message) }
+    catch (e: any) { setMsg(t('setup_err_load_users', lang)(e.message)) }
     finally { setLoading(false) }
-  }, [])
+  }, [lang])
 
   useEffect(() => { load() }, [load])
 
   const add = async () => {
-    if (!newUser.username.trim() || !newUser.password.trim()) { setMsg("Введіть логін та пароль"); return }
+    if (!newUser.username.trim() || !newUser.password.trim()) { setMsg(t('setup_err_login_pwd', lang)); return }
     setMsg("")
     try {
       await apiFetch("/api/setup/users", {
@@ -230,8 +231,8 @@ function UsersSection() {
       })
       setNewUser(emptyNew())
       await load()
-      setMsg("✓ Користувача додано")
-    } catch (e: any) { setMsg("Помилка: " + e.message) }
+      setMsg(t('setup_user_added', lang))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
   }
 
   const startEdit = (u: User) => {
@@ -258,17 +259,18 @@ function UsersSection() {
       })
       setEditingUser(null)
       await load()
-      setMsg("✓ Збережено")
-    } catch (e: any) { setMsg("Помилка: " + e.message) }
+      setMsg(t('setup_saved', lang))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
   }
 
   const remove = async (username: string) => {
-    if (!window.confirm(`Видалити користувача "${username}"?`)) return
+    if (!window.confirm(t('setup_confirm_delete_user', lang)(username))) return
     setMsg("")
     try {
       await apiFetch(`/api/setup/users/${encodeURIComponent(username)}`, { method: "DELETE" })
       await load()
-    } catch (e: any) { setMsg("Помилка: " + e.message) }
+      setMsg(t('setup_user_deleted', lang))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
   }
 
   return (
@@ -277,7 +279,7 @@ function UsersSection() {
 
       {/* Add form */}
       <div style={{ background: "var(--bg-2)", borderRadius: 8, padding: "12px 14px", marginBottom: 16 }}>
-        <div style={{ fontWeight: 600, fontSize: 11, color: "var(--text-3)", marginBottom: 8, textTransform: "uppercase", letterSpacing: .5 }}>Новий користувач</div>
+        <div style={{ fontWeight: 600, fontSize: 11, color: "var(--text-3)", marginBottom: 8, textTransform: "uppercase", letterSpacing: .5 }}>{t('setup_new_user', lang)}</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
           <input className="filter-input" placeholder="Ім'я..." value={newUser.first_name}
             onChange={e => setNewUser(p => ({ ...p, first_name: e.target.value }))} />
@@ -296,9 +298,9 @@ function UsersSection() {
           <button className="btn-primary" style={{ padding: "6px 16px", fontSize: 13, whiteSpace: "nowrap" }} onClick={add}>+ Додати</button>
         </div>
         <div style={{ marginTop: 8 }}>
-          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>Права доступу:</div>
+          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>{t('setup_access_rights', lang)}</div>
           <PermissionToggle value={newUser.permissions}
-            onChange={v => setNewUser(p => ({ ...p, permissions: v }))} />
+            onChange={v => setNewUser(p => ({ ...p, permissions: v }))} lang={lang} />
         </div>
       </div>
 
@@ -307,7 +309,7 @@ function UsersSection() {
       <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
         <input
           className="filter-input"
-          placeholder="🔍 Пошук за ім'ям, логіном, email..."
+          placeholder={t('setup_search_ph', lang)}
           value={userSearch}
           onChange={e => setUserSearch(e.target.value)}
           style={{ flex: 1 }}
@@ -328,19 +330,19 @@ function UsersSection() {
         <table className="results-table">
           <thead>
             <tr>
-              <th>Ім'я / Прізвище</th>
-              <th>Логін</th>
+              <th>{t('setup_col_name', lang)}</th>
+              <th>{t('setup_col_login', lang)}</th>
               <th>Email</th>
-              <th>Доступ</th>
+              <th>{t('setup_col_access', lang)}</th>
               <th>Google Folder</th>
-              <th>Створено</th>
+              <th>{t('setup_col_created', lang)}</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             {users.length === 0 && (
               <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-3)", padding: 16 }}>
-                Немає користувачів — авторизація вимкнена
+                {t('setup_no_users', lang)}
               </td></tr>
             )}
             {users.length > 0 && userSearch.trim() && users.filter(u => {
@@ -351,7 +353,7 @@ function UsersSection() {
                 (u.email || "").toLowerCase().includes(q)
             }).length === 0 && (
               <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-3)", padding: 16 }}>
-                Нічого не знайдено
+                {t('setup_no_match', lang)}
               </td></tr>
             )}
             {users.filter(u => {
@@ -379,7 +381,7 @@ function UsersSection() {
                 <td colSpan={2}>
                   <PermissionToggle
                     value={(editFields as any)._perms || parsePerms(editFields.permissions)}
-                    onChange={v => setEditFields(p => ({ ...p, _perms: v as any }))} />
+                    onChange={v => setEditFields(p => ({ ...p, _perms: v as any }))} lang={lang} />
                 </td>
                 <td>
                   <input className="filter-input" placeholder="Folder ID..." value={editFields.google_folder || ""}
@@ -423,7 +425,7 @@ function UsersSection() {
         {ALL_PERMISSIONS.map(p => (
           <div key={p.key} className="setup-perm-row">
             <span className="service-tag">{p.label}</span>
-            <span style={{ fontSize: 12, color: "var(--text-2)" }}>{p.desc}</span>
+            <span style={{ fontSize: 12, color: "var(--text-2)" }}>{t(p.descKey, lang)}</span>
           </div>
         ))}
       </div>
@@ -433,7 +435,7 @@ function UsersSection() {
 
 // ── Activity Logs ─────────────────────────────────────────────────────────────
 
-function LogsSection() {
+function LogsSection({ lang }: { lang: Lang }) {
   const [logs, setLogs] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [testMsg, setTestMsg] = useState("")
@@ -445,18 +447,18 @@ function LogsSection() {
   }, [])
 
   const testLog = async () => {
-    setTestMsg("⏳ Тестуємо...")
+    setTestMsg(t('setup_log_testing', lang))
     try {
       const r = await apiFetch("/api/setup/logs/test", { method: "POST" })
-      setTestMsg(`✓ Записано. Останні логи: ${r.recent_logs?.length ?? 0}`)
+      setTestMsg(t('setup_log_ok', lang)(r.recent_logs?.length ?? 0))
       setLogs(r.recent_logs || [])
-    } catch (e: any) { setTestMsg("✗ Помилка: " + e.message) }
+    } catch (e: any) { setTestMsg(t('setup_log_err', lang)(e.message)) }
   }
 
   useEffect(() => {
     load()
-    const t = setInterval(load, 30000)
-    return () => clearInterval(t)
+    const ti = setInterval(load, 30000)
+    return () => clearInterval(ti)
   }, [load])
 
   const ACTION_LABELS: Record<string, string> = {
@@ -473,7 +475,7 @@ function LogsSection() {
         <div className="card-section-title">Лог дій</div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {testMsg && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{testMsg}</span>}
-          <button className="btn-export" onClick={testLog}>🧪 Тест</button>
+          <button className="btn-export" onClick={testLog}>{t('setup_log_test_btn', lang)}</button>
           <button className="btn-export" onClick={load} disabled={loading}>↻ Оновити</button>
         </div>
       </div>
@@ -482,7 +484,7 @@ function LogsSection() {
           <thead><tr><th>Дата / Час</th><th>Користувач</th><th>Дія</th><th>Деталі</th></tr></thead>
           <tbody>
             {logs.length === 0 && (
-              <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--text-3)", padding: 16 }}>Логів немає</td></tr>
+              <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--text-3)", padding: 16 }}>{t('setup_log_none', lang)}</td></tr>
             )}
             {logs.map((l, i) => {
               let details = ""
@@ -507,7 +509,7 @@ function LogsSection() {
 
 // ── Cache TTL ─────────────────────────────────────────────────────────────────
 
-function CacheSection() {
+function CacheSection({ lang }: { lang: Lang }) {
   const [days, setDays] = useState(90)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -520,15 +522,15 @@ function CacheSection() {
   }, [])
 
   const save = async () => {
-    if (days < 1 || days > 3650) { setMsg("Введіть значення від 1 до 3650 днів"); return }
+    if (days < 1 || days > 3650) { setMsg(t('setup_cache_days_err', lang)); return }
     setSaving(true); setMsg("")
     try {
       await apiFetch("/api/setup/settings", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cache_ttl_days: days })
       })
-      setMsg("Збережено")
-    } catch (e: any) { setMsg("Помилка: " + e.message) }
+      setMsg(t('setup_saved', lang))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
     finally { setSaving(false) }
   }
 
@@ -536,18 +538,18 @@ function CacheSection() {
     <div className="card">
       <div className="card-section-title">Термін актуальності кешу</div>
       <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, marginBottom: 12 }}>
-        Дані старше зазначеного терміну вважаються застарілими і будуть оновлені при наступному аналізі.
+        {t('setup_cache_desc', lang)}
       </p>
       {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (
         <div className="setup-add-row">
           <input className="flt-num-input" type="number" min={1} max={3650} value={days}
             onChange={e => setDays(parseInt(e.target.value) || 90)} style={{ width: 90 }} />
-          <span style={{ fontSize: 13, color: "var(--text-2)" }}>днів</span>
+          <span style={{ fontSize: 13, color: "var(--text-2)" }}>{t('setup_days', lang)}</span>
           <span style={{ fontSize: 12, color: "var(--text-3)" }}>
-            ({Math.round(days / 30)} міс. / {(days / 365).toFixed(1)} р.)
+            {t('setup_months_years', lang)(Math.round(days / 30), (days / 365).toFixed(1))}
           </span>
           <button className="btn-primary" style={{ padding: "6px 16px", fontSize: 13 }} onClick={save} disabled={saving}>
-            {saving ? "Зберігаємо..." : "Зберегти"}
+            {saving ? t('setup_saving', lang) : t('setup_save', lang)}
           </button>
         </div>
       )}
@@ -558,7 +560,7 @@ function CacheSection() {
 
 // ── Job History ───────────────────────────────────────────────────────────────
 
-function JobsSection() {
+function JobsSection({ lang }: { lang: Lang }) {
   const [count, setCount] = useState<number | null>(null)
   const [clearing, setClearing] = useState(false)
   const [msg, setMsg] = useState("")
@@ -570,13 +572,13 @@ function JobsSection() {
   useEffect(() => { loadCount() }, [loadCount])
 
   const clear = async () => {
-    if (!window.confirm(`Видалити ${count} завершених job-ів? Активні (running/pending) залишаться.`)) return
+    if (!window.confirm(t('setup_confirm_clear_jobs', lang)(String(count)))) return
     setClearing(true); setMsg("")
     try {
       await apiFetch("/api/setup/jobs/clear", { method: "POST" })
-      setMsg("Historія очищена")
+      setMsg(t('setup_history_cleared', lang))
       setCount(0)
-    } catch (e: any) { setMsg("Помилка: " + e.message) }
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
     finally { setClearing(false) }
   }
 
@@ -584,16 +586,16 @@ function JobsSection() {
     <div className="card">
       <div className="card-section-title">Історія Job-ів</div>
       <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, marginBottom: 12 }}>
-        Видаляє всі завершені/скасовані job-и та їх результати. Активні job-и (running/pending) не зачіпаються.
+        {t('setup_clear_desc', lang)}
       </p>
       <div className="setup-add-row">
         {count !== null && (
           <span style={{ fontSize: 14, color: "var(--text-2)" }}>
-            Завершених job-ів: <strong>{count}</strong>
+            {t('setup_completed_count', lang)(String(count))}
           </span>
         )}
         <button className="btn-danger" onClick={clear} disabled={clearing || count === 0}>
-          {clearing ? "⏳ Очищення..." : "&#128465; Очистити історію"}
+          {clearing ? t('setup_clearing', lang) : t('setup_clear_btn', lang)}
         </button>
       </div>
       {msg && <div className="setup-msg">{msg}</div>}
@@ -603,22 +605,22 @@ function JobsSection() {
 
 // ── Main Setup Page ───────────────────────────────────────────────────────────
 
-export default function SetupPage() {
+export default function SetupPage({ lang }: { lang: Lang }) {
   return (
     <div className="page-wide">
       <div className="page-header">
-        <h1 className="page-title">Setup</h1>
-        <span style={{ fontSize: 12, color: "var(--text-3)" }}>Налаштування системи</span>
+        <h1 className="page-title">{t('setup_title', lang)}</h1>
+        <span style={{ fontSize: 12, color: "var(--text-3)" }}>{t('setup_subtitle', lang)}</span>
       </div>
-      <CatalogSection />
+      <CatalogSection lang={lang} />
       <div style={{ height: 16 }} />
-      <UsersSection />
+      <UsersSection lang={lang} />
       <div style={{ height: 16 }} />
-      <CacheSection />
+      <CacheSection lang={lang} />
       <div style={{ height: 16 }} />
-      <JobsSection />
+      <JobsSection lang={lang} />
       <div style={{ height: 16 }} />
-      <LogsSection />
+      <LogsSection lang={lang} />
     </div>
   )
 }

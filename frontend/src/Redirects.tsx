@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
+import { t, type Lang } from "./i18n"
 
 const API = ""
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -31,7 +32,7 @@ const TYPE_COLORS: Record<string, string> = {
   known: "#6b7280",
 }
 
-export default function RedirectsPage() {
+export default function RedirectsPage({ lang }: { lang: Lang }) {
   const [search, setSearch] = useState("")
   const [typeFilter, setTypeFilter] = useState("")
   const [jobFilter, setJobFilter] = useState("")
@@ -110,9 +111,9 @@ export default function RedirectsPage() {
   return (
     <div className="page page-wide">
       <div className="page-header">
-        <h1 className="page-title">Redirects</h1>
+        <h1 className="page-title">{t('redir_title', lang)}</h1>
         <span style={{ fontSize: 12, color: "var(--text-3)" }}>
-          Записи про редіректи доменів
+          {t('redir_subtitle', lang)}
         </span>
       </div>
 
@@ -120,19 +121,19 @@ export default function RedirectsPage() {
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="tech-filters" style={{ flexWrap: "wrap", gap: 10 }}>
           <div className="tech-filter-group">
-            <label className="tech-filter-label">Тип</label>
+            <label className="tech-filter-label">{t('redir_type', lang)}</label>
             <select style={selStyle} value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
-              <option value="">Всі типи</option>
-              {availableTypes.map(t => (
-                <option key={t} value={t}>{TYPE_LABELS[t] || t}</option>
+              <option value="">{t('redir_all_types', lang)}</option>
+              {availableTypes.map(tp => (
+                <option key={tp} value={tp}>{TYPE_LABELS[tp] || tp}</option>
               ))}
             </select>
           </div>
 
           <div className="tech-filter-group">
-            <label className="tech-filter-label">Job</label>
+            <label className="tech-filter-label">{t('redir_job', lang)}</label>
             <select style={{ ...selStyle, maxWidth: 160 }} value={jobFilter} onChange={e => setJobFilter(e.target.value)}>
-              <option value="">Всі job-и</option>
+              <option value="">{t('redir_all_jobs', lang)}</option>
               {jobs.map(j => (
                 <option key={j.job_id} value={j.job_id}>
                   {j.job_id.slice(0, 8)}… ({j.first_seen.slice(0, 10)})
@@ -142,7 +143,7 @@ export default function RedirectsPage() {
           </div>
 
           <div className="tech-filter-group">
-            <label className="tech-filter-label">Від</label>
+            <label className="tech-filter-label">{t('redir_from', lang)}</label>
             <input
               type="date"
               style={selStyle}
@@ -152,7 +153,7 @@ export default function RedirectsPage() {
           </div>
 
           <div className="tech-filter-group">
-            <label className="tech-filter-label">До</label>
+            <label className="tech-filter-label">{t('redir_to', lang)}</label>
             <input
               type="date"
               style={selStyle}
@@ -162,7 +163,7 @@ export default function RedirectsPage() {
           </div>
 
           <button className="btn-search" onClick={load} disabled={loading}>
-            {loading ? "⏳" : "🔍"} Завантажити
+            {loading ? t('redir_loading', lang) : "🔍"} {t('redir_load', lang)}
           </button>
         </div>
         {error && <div style={{ marginTop: 8, color: "var(--danger)", fontSize: 12 }}>⚠ {error}</div>}
@@ -173,11 +174,11 @@ export default function RedirectsPage() {
         <div className="filter-row" style={{ marginBottom: 8 }}>
           <input
             className="filter-input"
-            placeholder="Пошук по original, resolved, job_id..."
+            placeholder={t('redir_search_ph', lang)}
             value={localSearch}
             onChange={e => setLocalSearch(e.target.value)}
           />
-          <span className="filter-count">{filtered.length.toLocaleString()} з {rows.length.toLocaleString()}</span>
+          <span className="filter-count">{t('redir_count', lang)(filtered.length.toLocaleString(), rows.length.toLocaleString())}</span>
           <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
         </div>
       )}
@@ -192,7 +193,7 @@ export default function RedirectsPage() {
               <tr>
                 <th>Original</th>
                 <th>Resolved</th>
-                <th>Тип</th>
+                <th>{t('redir_type', lang)}</th>
                 <th>Detected</th>
                 <th>Job ID</th>
               </tr>
@@ -226,10 +227,10 @@ export default function RedirectsPage() {
       )}
 
       {!loading && rows.length === 0 && (
-        <div className="empty-state">Немає даних. Натисніть "Завантажити".</div>
+        <div className="empty-state">{t('redir_empty', lang)}</div>
       )}
       {!loading && rows.length > 0 && filtered.length === 0 && (
-        <div className="empty-state">Нічого не знайдено за фільтром.</div>
+        <div className="empty-state">{t('redir_no_match', lang)}</div>
       )}
     </div>
   )
