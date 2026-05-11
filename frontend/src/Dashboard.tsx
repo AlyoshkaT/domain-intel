@@ -1,5 +1,5 @@
 // Dashboard.tsx — Charts reacting to Explorer filters, all clickable → filter
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 
 interface Profile {
   domain: string; sw_visits?: number; sw_category?: string; sw_subcategory?: string
@@ -43,6 +43,7 @@ type OnFilter = (field: string, label: string) => void
 function Donut({ data, title, field, onFilter }: {
   data: Slice[]; title: string; field?: string; onFilter?: OnFilter
 }) {
+  const [hovered, setHovered] = useState<string | null>(null)
   const total = data.reduce((s, d) => s + d.count, 0)
   if (!total) return null
   const sz = 120, cx = 60, cy = 60, r = 44, ir = 26
@@ -71,30 +72,50 @@ function Donut({ data, title, field, onFilter }: {
       <div className="dash-chart-title">{title}{clickable && <span className="dash-filter-hint"> ↗ фільтр</span>}</div>
       <div className="dash-chart-body">
         <svg width={sz} height={sz} style={{ flexShrink: 0 }}>
-          {slices.map((s, i) => (
-            <path key={i} d={s.d} fill={s.color} stroke="var(--bg)" strokeWidth={1.5}
-              style={{ cursor: clickable && s.label !== "Інші" ? "pointer" : "default", transition: "opacity 0.15s" }}
-              onClick={() => handleClick(s.label)}
-              onMouseEnter={e => { if (clickable && s.label !== "Інші") (e.target as SVGPathElement).style.opacity = "0.75" }}
-              onMouseLeave={e => { (e.target as SVGPathElement).style.opacity = "1" }}>
-              <title>{s.label}: {s.count.toLocaleString()} ({(s.pct * 100).toFixed(1)}%){clickable && s.label !== "Інші" ? " — натисніть для фільтру" : ""}</title>
-            </path>
-          ))}
+          {slices.map((s, i) => {
+            const isHov = hovered === s.label
+            const isDim = hovered !== null && !isHov
+            return (
+              <path key={i} d={s.d} fill={s.color} stroke="var(--bg)" strokeWidth={isDim ? 1 : 1.5}
+                style={{ cursor: clickable && s.label !== "Інші" ? "pointer" : "default", transition: "opacity 0.15s, stroke-width 0.15s" }}
+                opacity={isDim ? 0.13 : isHov ? 1 : 0.9}
+                onClick={() => handleClick(s.label)}
+                onMouseEnter={() => setHovered(s.label)}
+                onMouseLeave={() => setHovered(null)}>
+                <title>{s.label}: {s.count.toLocaleString()} ({(s.pct * 100).toFixed(1)}%){clickable && s.label !== "Інші" ? " — натисніть для фільтру" : ""}</title>
+              </path>
+            )
+          })}
           <text x={cx} y={cy - 4} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--text)">{total.toLocaleString()}</text>
           <text x={cx} y={cy + 11} textAnchor="middle" fontSize={8} fill="var(--text-3)">доменів</text>
         </svg>
         <table className="dash-legend-table">
           <tbody>
-            {data.map((item, i) => (
-              <tr key={i} className={`dash-legend-row${clickable && item.label !== "Інші" ? " dash-row-clickable" : ""}`}
-                onClick={() => handleClick(item.label)}>
-                <td style={{width:14,paddingRight:4,verticalAlign:"middle"}}><span className="dash-legend-dot" style={{ background: item.color }} /></td>
-                <td className="dash-legend-label">{item.label}</td>
-                <td className="dash-legend-sep">–</td>
-                <td className="dash-legend-count">{item.count.toLocaleString()}</td>
-                <td className="dash-legend-pct">{((item.count / total) * 100).toFixed(1)}%</td>
-              </tr>
-            ))}
+            {data.map((item, i) => {
+              const isHov = hovered === item.label
+              const isDim = hovered !== null && !isHov
+              return (
+                <tr key={i}
+                  className={`dash-legend-row${clickable && item.label !== "Інші" ? " dash-row-clickable" : ""}`}
+                  style={{ opacity: isDim ? 0.25 : 1, transition: "opacity 0.15s" }}
+                  onClick={() => handleClick(item.label)}
+                  onMouseEnter={() => setHovered(item.label)}
+                  onMouseLeave={() => setHovered(null)}>
+                  <td style={{width:14,paddingRight:4,verticalAlign:"middle"}}>
+                    <span className="dash-legend-dot" style={{
+                      background: item.color,
+                      transform: isHov ? "scale(1.4)" : "scale(1)",
+                      transition: "transform 0.15s",
+                      display: "inline-block",
+                    }} />
+                  </td>
+                  <td className="dash-legend-label">{item.label}</td>
+                  <td className="dash-legend-sep">–</td>
+                  <td className="dash-legend-count">{item.count.toLocaleString()}</td>
+                  <td className="dash-legend-pct">{((item.count / total) * 100).toFixed(1)}%</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -103,6 +124,7 @@ function Donut({ data, title, field, onFilter }: {
 }
 
 function CountryBars({ data, onFilter }: { data: Slice[]; onFilter?: OnFilter }) {
+  const [hovered, setHovered] = useState<string | null>(null)
   if (!data.length) return null
   const max = data[0]?.count || 1
   const total = data.reduce((s, d) => s + d.count, 0)
@@ -112,9 +134,14 @@ function CountryBars({ data, onFilter }: { data: Slice[]; onFilter?: OnFilter })
       <div className="dash-country-list">
         {data.slice(0, 12).map((item, i) => {
           const clickable = !!onFilter && item.label !== "(без регіону)"
+          const isHov = hovered === item.label
+          const isDim = hovered !== null && !isHov
           return (
             <div key={i} className={`dash-country-row${clickable ? " dash-row-clickable" : ""}`}
+              style={{ opacity: isDim ? 0.25 : 1, transition: "opacity 0.15s" }}
               onClick={() => clickable && onFilter!("sw_primary_region", item.label)}
+              onMouseEnter={() => setHovered(item.label)}
+              onMouseLeave={() => setHovered(null)}
               title={clickable ? "Натисніть для фільтру" : undefined}>
               <span className="dash-country-flag">{flag(item.label)}</span>
               <span className="dash-country-code">{item.label}</span>

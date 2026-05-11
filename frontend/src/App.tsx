@@ -472,7 +472,6 @@ export default function App() {
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} lang={lang} />}
         {view === "results" && selectedJobId && <ResultsPage jobId={selectedJobId} onBack={() => setView("jobs")} can={can} lang={lang} />}
         {view === "explorer" && <ExplorerPage
-          onViewTechnologies={(domains: string[]) => { setTechDomains(domains); setView("technologies") }}
           onFilteredDomainsChange={setExplorerFilteredDomains}
           onNavigateToJobs={() => setView("jobs")}
           can={can} lang={lang} />}

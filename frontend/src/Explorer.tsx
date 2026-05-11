@@ -402,8 +402,8 @@ function FilterPanel({ filters, fieldValues, onChange, onReset, onSearch, loadin
 function cell(v?: string | null) { return v && v.trim() ? v : "—" }
 
 // ─── Main Explorer ─────────────────────────────────────────────────────────────
-export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, onFilteredDomainsChange, can, lang }: {
-  onViewTechnologies?: (domains: string[]) => void; onNavigateToJobs?: () => void
+export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange, can, lang }: {
+  onNavigateToJobs?: () => void
   onFilteredDomainsChange?: (domains: string[]) => void
   can?: (p: string) => boolean; lang: Lang
 }) {
@@ -678,13 +678,6 @@ export default function ExplorerPage({ onViewTechnologies, onNavigateToJobs, onF
                 {canDo("sheets") && sheetsUrl && (
                   <a href={sheetsUrl} target="_blank" rel="noopener"
                     style={{fontSize:11,color:"var(--accent)",textDecoration:"none"}}>{t('expl_open', lang)}</a>
-                )}
-                {onViewTechnologies && (
-                  <button className="btn-export"
-                    style={{background:"var(--accent)",color:"white",borderColor:"var(--accent)"}}
-                    onClick={() => onViewTechnologies(filteredProfiles.map(r => r.domain))}>
-                    {t('expl_technologies', lang)}
-                  </button>
                 )}
               </>
             )}
