@@ -18,7 +18,7 @@ from core.bigquery import (
 )
 from services.technology_catalog import sync_catalog
 from services.redirect_resolver import ensure_redirects_table
-from services.credits import ensure_app_settings_table, fetch_builtwith_credits, get_cached_credits
+from services.credits import fetch_builtwith_credits, get_cached_credits
 from services.sheets_export import export_job_to_sheets
 from services.domain_profiles import ensure_profiles_table, get_sync_status
 from processing.batch import start_job, cancel_job
@@ -36,7 +36,6 @@ async def lifespan(app: FastAPI):
     try:
         ensure_tables_exist()
         ensure_redirects_table()
-        ensure_app_settings_table()
         ensure_profiles_table()
         logger.info("BigQuery tables verified")
     except Exception as e:
@@ -262,6 +261,19 @@ async def get_job_endpoint(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
+def _sync_processed_domains(job_id: str):
+    """Trigger incremental profiles sync for all processed domains of a job (non-blocking)."""
+    try:
+        from processing.batch import _trigger_profiles_sync
+        from core.bigquery import get_results
+        results = get_results(job_id)
+        domains = [r["domain"] for r in results if r.get("domain") and r.get("status") != "error"]
+        if domains:
+            _trigger_profiles_sync(job_id, domains)
+    except Exception as e:
+        logger.warning(f"Post-cancel sync failed for job {job_id}: {e}")
+
+
 @app.post("/api/jobs/{job_id}/cancel")
 async def cancel_job_endpoint(job_id: str):
     cancelled = cancel_job(job_id)
@@ -270,7 +282,9 @@ async def cancel_job_endpoint(job_id: str):
         job = get_job(job_id)
         if job and job.get("status") in ("running", "pending"):
             update_job(job_id, status="cancelled", error_message="Manually cancelled")
-            return {"cancelled": True}
+            cancelled = True
+    if cancelled:
+        _sync_processed_domains(job_id)
     return {"cancelled": cancelled}
 
 @app.post("/api/jobs/{job_id}/resume", dependencies=[require_permission("jobs")])
@@ -316,6 +330,7 @@ async def force_complete_job(job_id: str):
     total = job.get("total_domains") or 0
     status = "completed" if (job.get("failed_domains") or 0) == 0 else "completed_with_errors"
     update_job(job_id, status=status, error_message=f"Force-completed by admin ({done}/{total} processed)")
+    _sync_processed_domains(job_id)
     return {"ok": True, "status": status, "processed": done, "total": total}
 
 
