@@ -2,11 +2,12 @@
 SimilarWeb API service — via RapidAPI
 POST https://similarweb-api1.p.rapidapi.com/v1/visitsInfo
 """
+import asyncio
 import httpx
 import json
 import logging
 from typing import Optional
-from config.settings import SIMILARWEB_RAPIDAPI_KEY, REQUEST_TIMEOUT
+from config.settings import SIMILARWEB_RAPIDAPI_KEY, REQUEST_TIMEOUT, RATE_LIMIT_WAIT, SW_CONCURRENCY
 from core.bigquery import get_cached, save_cache
 
 logger = logging.getLogger(__name__)
@@ -14,9 +15,20 @@ logger = logging.getLogger(__name__)
 SIMILARWEB_CACHE_TABLE = "similarweb_raw_data"
 SIMILARWEB_URL = "https://similarweb-api1.p.rapidapi.com/v1/visitsInfo"
 
+# Global semaphore — limits concurrent SW API calls regardless of BATCH_CONCURRENCY.
+# Prevents flooding the RapidAPI endpoint and triggering 429s.
+# Value tunable via SW_CONCURRENCY env var (default 3).
+_sw_semaphore: asyncio.Semaphore | None = None
 
-async def fetch_similarweb(domain: str) -> Optional[dict]:
-    """Fetch SimilarWeb data via RapidAPI. Returns cached if available."""
+def _get_sw_semaphore() -> asyncio.Semaphore:
+    global _sw_semaphore
+    if _sw_semaphore is None:
+        _sw_semaphore = asyncio.Semaphore(SW_CONCURRENCY)
+    return _sw_semaphore
+
+
+async def fetch_similarweb(domain: str, _retries: int = 3) -> Optional[dict]:
+    """Fetch SimilarWeb data via RapidAPI with rate-limit retry + concurrency cap."""
     if not SIMILARWEB_RAPIDAPI_KEY:
         logger.warning("SIMILARWEB_RAPIDAPI_KEY not set")
         return None
@@ -28,29 +40,40 @@ async def fetch_similarweb(domain: str) -> Optional[dict]:
     }
     payload = {"q": domain}
 
-    try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            resp = await client.post(SIMILARWEB_URL, json=payload, headers=headers)
-            if resp.status_code == 429:
-                logger.warning(f"SimilarWeb rate limit for {domain}")
-                return None
-            resp.raise_for_status()
-
-            # Extract credits from headers
+    async with _get_sw_semaphore():
+        for attempt in range(_retries):
             try:
-                from services.credits import update_similarweb_credits_from_headers
-                update_similarweb_credits_from_headers(dict(resp.headers))
-            except Exception:
-                pass
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                    resp = await client.post(SIMILARWEB_URL, json=payload, headers=headers)
 
-            data = resp.json()
-            # Fire-and-forget: save cache in thread so it doesn't block SW response
-            import asyncio as _asyncio
-            _asyncio.get_event_loop().run_in_executor(None, save_cache, SIMILARWEB_CACHE_TABLE, domain, data)
-            return data
-    except Exception as e:
-        logger.error(f"SimilarWeb error for {domain}: {e}")
-        return None
+                    if resp.status_code == 429:
+                        wait = RATE_LIMIT_WAIT * (attempt + 1)  # 10s, 20s, 30s
+                        logger.warning(f"SW rate limit for {domain} — waiting {wait}s (attempt {attempt+1}/{_retries})")
+                        await asyncio.sleep(wait)
+                        continue  # retry
+
+                    resp.raise_for_status()
+
+                    try:
+                        from services.credits import update_similarweb_credits_from_headers
+                        update_similarweb_credits_from_headers(dict(resp.headers))
+                    except Exception:
+                        pass
+
+                    data = resp.json()
+                    asyncio.get_event_loop().run_in_executor(None, save_cache, SIMILARWEB_CACHE_TABLE, domain, data)
+                    return data
+
+            except httpx.TimeoutException:
+                logger.warning(f"SW timeout for {domain} (attempt {attempt+1}/{_retries})")
+                if attempt < _retries - 1:
+                    await asyncio.sleep(2)
+            except Exception as e:
+                logger.error(f"SimilarWeb error for {domain}: {e}")
+                break
+
+    logger.warning(f"SW failed for {domain} after {_retries} attempts")
+    return None
 
 
 def parse_similarweb(data: dict) -> dict:

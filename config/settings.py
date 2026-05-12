@@ -28,6 +28,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DELAY_BETWEEN_DOMAINS = float(os.getenv("DELAY_BETWEEN_DOMAINS", "0"))
 DELAY_BETWEEN_API_CALLS = int(os.getenv("DELAY_BETWEEN_API_CALLS", "300"))  # ms
 RATE_LIMIT_WAIT = int(os.getenv("RATE_LIMIT_WAIT", "10"))  # seconds after 429
+SW_CONCURRENCY = int(os.getenv("SW_CONCURRENCY", "3"))    # max parallel SW API calls
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "12"))
 
 # Cache TTL
