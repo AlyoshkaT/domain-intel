@@ -4,84 +4,21 @@ Stores in app_settings table in our BQ.
 """
 import httpx
 import logging
-from datetime import datetime, timezone
 from typing import Optional
-from google.cloud import bigquery
-
-from core.bigquery import client, table_ref
 
 logger = logging.getLogger(__name__)
-
-APP_SETTINGS_TABLE = "app_settings"
-
-APP_SETTINGS_SCHEMA = [
-    bigquery.SchemaField("key", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("value", "STRING"),
-    bigquery.SchemaField("updated_at", "TIMESTAMP"),
-]
 
 # In-memory cache to avoid BQ reads on every request
 _credits_cache: dict = {}
 
 
-def ensure_app_settings_table():
-    bq = client()
-    from config.settings import GCP_PROJECT_ID, BIGQUERY_DATASET
-    table_obj = bigquery.Table(
-        f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{APP_SETTINGS_TABLE}",
-        schema=APP_SETTINGS_SCHEMA
-    )
-    try:
-        bq.get_table(table_obj)
-    except Exception:
-        bq.create_table(table_obj)
-        logger.info(f"Created table {APP_SETTINGS_TABLE}")
-
-
 def _save_setting(key: str, value: str):
-    """Save or update a setting in BQ."""
-    bq = client()
-    updated_at = datetime.now(timezone.utc).isoformat()
+    """Save or update a setting in BQ (delegates to core set_setting for MERGE upsert)."""
     try:
-        # Try UPDATE first
-        result = bq.query(f"""
-            UPDATE `{table_ref(APP_SETTINGS_TABLE)}`
-            SET value = @value, updated_at = @updated_at
-            WHERE key = @key
-        """, job_config=bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("key", "STRING", key),
-            bigquery.ScalarQueryParameter("value", "STRING", value),
-            bigquery.ScalarQueryParameter("updated_at", "TIMESTAMP", updated_at),
-        ])).result()
-
-        # If no rows updated — INSERT
-        bq.query(f"""
-            INSERT INTO `{table_ref(APP_SETTINGS_TABLE)}` (key, value, updated_at)
-            SELECT @key, @value, @updated_at
-            WHERE NOT EXISTS (
-                SELECT 1 FROM `{table_ref(APP_SETTINGS_TABLE)}` WHERE key = @key
-            )
-        """, job_config=bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("key", "STRING", key),
-            bigquery.ScalarQueryParameter("value", "STRING", value),
-            bigquery.ScalarQueryParameter("updated_at", "TIMESTAMP", updated_at),
-        ])).result()
+        from core.bigquery import set_setting
+        set_setting(key, value)
     except Exception as e:
         logger.error(f"app_settings save error ({key}): {e}")
-
-
-def _get_setting(key: str) -> Optional[str]:
-    bq = client()
-    try:
-        rows = list(bq.query(f"""
-            SELECT value FROM `{table_ref(APP_SETTINGS_TABLE)}`
-            WHERE key = @key LIMIT 1
-        """, job_config=bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("key", "STRING", key),
-        ])).result())
-        return rows[0]["value"] if rows else None
-    except Exception:
-        return None
 
 
 # ─── BuiltWith credits ────────────────────────────────────────────────────────

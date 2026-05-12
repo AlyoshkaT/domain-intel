@@ -480,20 +480,25 @@ def get_setting(key: str, default: str = "") -> str:
 
 
 def set_setting(key: str, value: str):
+    """Upsert a setting via MERGE (pure DML — avoids streaming buffer conflicts)."""
     global _settings_cache, _settings_cached_at
     _ensure_settings_table()
     bq = client()
-    bq.query(
-        f"DELETE FROM `{table_ref('app_settings')}` WHERE key = @key",
-        job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("key", "STRING", key)])
-    ).result()
-    errors = bq.insert_rows_json(table_ref("app_settings"), [{
-        "key": key, "value": value,
-        "updated_at": datetime.now(timezone.utc).isoformat()
-    }])
-    if errors:
-        logger.error(f"set_setting errors: {errors}")
-        raise RuntimeError(f"BQ insert error: {errors[0].get('errors', errors[0])}")
+    tref = table_ref("app_settings")
+    updated_at = datetime.now(timezone.utc).isoformat()
+    bq.query(f"""
+        MERGE `{tref}` T
+        USING (SELECT @key AS key, @value AS value, CAST(@updated_at AS TIMESTAMP) AS updated_at) S
+        ON T.key = S.key
+        WHEN MATCHED THEN
+            UPDATE SET T.value = S.value, T.updated_at = S.updated_at
+        WHEN NOT MATCHED THEN
+            INSERT (key, value, updated_at) VALUES (S.key, S.value, S.updated_at)
+    """, job_config=bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("key", "STRING", key),
+        bigquery.ScalarQueryParameter("value", "STRING", value),
+        bigquery.ScalarQueryParameter("updated_at", "STRING", updated_at),
+    ])).result()
     _settings_cache[key] = value
     _settings_cached_at = 0  # invalidate cache
 
