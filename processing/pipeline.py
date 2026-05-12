@@ -187,7 +187,7 @@ async def process_domain(
                 result["ai_category"]     = ai_result.get("ai_category")
                 result["ai_is_ecommerce"] = ai_result.get("ai_is_ecommerce")
                 result["ai_industry"]     = ai_result.get("ai_industry")
-                save_corp_ai_result(working_domain, ai_result, input_hash)
+                asyncio.create_task(asyncio.to_thread(save_corp_ai_result, working_domain, ai_result, input_hash))
 
     except Exception as e:
         logger.error(f"Pipeline error for {domain}: {e}")
