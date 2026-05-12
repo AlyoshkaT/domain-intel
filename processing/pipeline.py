@@ -61,6 +61,7 @@ async def process_domain(
     services: list[str],
     force_refresh: bool = False,
     username: str = "",
+    skip_redirect: bool = False,
 ) -> dict:
     domain = _clean_domain(domain)
 
@@ -78,11 +79,15 @@ async def process_domain(
     }
 
     try:
-        resolved_domain, _ = await resolve_domain(domain, job_id)
-        if resolved_domain != domain:
-            logger.info(f"Redirect: {domain} → {resolved_domain}")
-            result["domain"] = resolved_domain
-        working_domain = resolved_domain
+        if skip_redirect:
+            # Domains from Explorer/DB are already canonical — no need to resolve
+            working_domain = domain
+        else:
+            resolved_domain, _ = await resolve_domain(domain, job_id)
+            if resolved_domain != domain:
+                logger.info(f"Redirect: {domain} → {resolved_domain}")
+                result["domain"] = resolved_domain
+            working_domain = resolved_domain
         catalog = _get_catalog()
 
         # ── SimilarWeb + BuiltWith ────────────────────────────────────────────

@@ -77,25 +77,35 @@ async def run_batch_job(
         logger.info(f"Job {job_id} resumed: {total} remaining, already done={processed_offset+failed_offset}, services={services}")
         await _update_job_safe(job_id, status="running")
 
-    # Batch-prefetch all corp BQ cache in 3 queries (SW + BW + AI)
-    # This avoids N×3 individual BQ queries (~2-5s each) during processing.
-    if not force_refresh:
-        try:
-            from config.settings import BQ_SIMILARWEB_CACHE, BQ_BUILTWITH_CACHE
-            tables = [BQ_SIMILARWEB_CACHE, BQ_BUILTWITH_CACHE]
-            # AI cache: read from latest_categories_claude (deduplicated view)
-            from services.claude_ai import CORP_AI_CACHE_KEY
-            tables.append(CORP_AI_CACHE_KEY)
-            prefetch_corp_cache(domains, tables)
-        except Exception as e:
-            logger.warning(f"Prefetch failed (will fall back to per-domain queries): {e}")
+    # Batch-prefetch only the tables we'll actually read from cache.
+    # force_refresh=True means selected services skip cache → no point prefetching them.
+    # Non-selected services always read from cache → always prefetch those.
+    try:
+        from config.settings import BQ_SIMILARWEB_CACHE, BQ_BUILTWITH_CACHE
+        from services.claude_ai import CORP_AI_CACHE_KEY
+        tables_to_prefetch = []
+        if not (force_refresh and "similarweb" in services):
+            tables_to_prefetch.append(BQ_SIMILARWEB_CACHE)
+        if not (force_refresh and "builtwith" in services):
+            tables_to_prefetch.append(BQ_BUILTWITH_CACHE)
+        if not (force_refresh and "ai" in services):
+            tables_to_prefetch.append(CORP_AI_CACHE_KEY)
+        if tables_to_prefetch:
+            prefetch_corp_cache(domains, tables_to_prefetch)
+    except Exception as e:
+        logger.warning(f"Prefetch failed (will fall back to per-domain queries): {e}")
 
     semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
 
     async def process_one(domain: str):
         nonlocal processed, failed
         async with semaphore:
-            result = await process_domain(domain, job_id, services, force_refresh=force_refresh, username=username)
+            result = await process_domain(
+                domain, job_id, services,
+                force_refresh=force_refresh,
+                username=username,
+                skip_redirect=force_refresh,  # force-refresh → domains already canonical
+            )
             # Run sync BQ write in thread — doesn't block the event loop
             await asyncio.to_thread(save_result, result)
 
