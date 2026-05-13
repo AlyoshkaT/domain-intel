@@ -625,3 +625,85 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
     except Exception as e:
         logger.error(f"Incremental sync error: {e}", exc_info=True)
         return {"error": str(e)}
+
+
+def sync_profiles_from_job_results(job_id: str) -> dict:
+    """
+    Sync domain_profiles directly from analysis_results for a given job.
+    Bypasses corpBQ cache — useful when save_cache failed silently during job.
+    Only updates non-empty fields (COALESCE logic preserves existing values).
+    """
+    t0 = time.time()
+    try:
+        ensure_profiles_table()
+        bq = client()
+        results_full   = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.analysis_results`"
+        profiles_full  = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{PROFILES_TABLE}`"
+
+        # MERGE: for each field — use new value only if non-empty, else keep existing
+        bq.query(f"""
+            MERGE {profiles_full} T
+            USING (
+                SELECT
+                    domain,
+                    processed_at                                        AS updated_at,
+                    sw_visits,
+                    NULLIF(TRIM(COALESCE(sw_category, '')), '')         AS sw_category,
+                    NULLIF(TRIM(COALESCE(sw_subcategory, '')), '')      AS sw_subcategory,
+                    NULLIF(TRIM(COALESCE(sw_description, '')), '')      AS sw_description,
+                    NULLIF(TRIM(COALESCE(sw_title, '')), '')            AS sw_title,
+                    NULLIF(TRIM(COALESCE(sw_primary_region, '')), '')   AS sw_primary_region,
+                    sw_primary_region_pct,
+                    NULLIF(TRIM(COALESCE(company_name, '')), '')        AS company_name,
+                    NULLIF(TRIM(COALESCE(cms_list, '')), '')            AS cms_list,
+                    NULLIF(TRIM(COALESCE(osearch, '')), '')             AS osearch,
+                    NULLIF(TRIM(COALESCE(osearch_group, '')), '')       AS osearch_group,
+                    NULLIF(TRIM(COALESCE(ems_list, '')), '')            AS ems_list,
+                    NULLIF(TRIM(COALESCE(bw_vertical, '')), '')         AS bw_vertical,
+                    NULLIF(TRIM(COALESCE(ai_category, '')), '')         AS ai_category,
+                    NULLIF(TRIM(COALESCE(ai_is_ecommerce, '')), '')     AS ai_is_ecommerce,
+                    NULLIF(TRIM(COALESCE(ai_industry, '')), '')         AS ai_industry
+                FROM {results_full}
+                WHERE job_id = @job_id AND status != 'error'
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY processed_at DESC) = 1
+            ) S
+            ON T.domain = S.domain
+            WHEN MATCHED THEN UPDATE SET
+                updated_at            = S.updated_at,
+                sw_visits             = COALESCE(S.sw_visits,             T.sw_visits),
+                sw_category           = COALESCE(S.sw_category,           T.sw_category),
+                sw_subcategory        = COALESCE(S.sw_subcategory,        T.sw_subcategory),
+                sw_description        = COALESCE(S.sw_description,        T.sw_description),
+                sw_title              = COALESCE(S.sw_title,              T.sw_title),
+                sw_primary_region     = COALESCE(S.sw_primary_region,     T.sw_primary_region),
+                sw_primary_region_pct = COALESCE(S.sw_primary_region_pct, T.sw_primary_region_pct),
+                company_name          = COALESCE(S.company_name,          T.company_name),
+                cms_list              = COALESCE(S.cms_list,              T.cms_list),
+                osearch               = COALESCE(S.osearch,               T.osearch),
+                osearch_group         = COALESCE(S.osearch_group,         T.osearch_group),
+                ems_list              = COALESCE(S.ems_list,              T.ems_list),
+                bw_vertical           = COALESCE(S.bw_vertical,           T.bw_vertical),
+                ai_category           = COALESCE(S.ai_category,           T.ai_category),
+                ai_is_ecommerce       = COALESCE(S.ai_is_ecommerce,       T.ai_is_ecommerce),
+                ai_industry           = COALESCE(S.ai_industry,           T.ai_industry)
+            WHEN NOT MATCHED THEN INSERT (
+                domain, updated_at, sw_visits, sw_category, sw_subcategory,
+                sw_description, sw_title, sw_primary_region, sw_primary_region_pct,
+                company_name, cms_list, osearch, osearch_group, ems_list,
+                bw_vertical, ai_category, ai_is_ecommerce, ai_industry
+            ) VALUES (
+                S.domain, S.updated_at, S.sw_visits, S.sw_category, S.sw_subcategory,
+                S.sw_description, S.sw_title, S.sw_primary_region, S.sw_primary_region_pct,
+                S.company_name, S.cms_list, S.osearch, S.osearch_group, S.ems_list,
+                S.bw_vertical, S.ai_category, S.ai_is_ecommerce, S.ai_industry
+            )
+        """, job_config=bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("job_id", "STRING", job_id)
+        ])).result()
+
+        elapsed = time.time() - t0
+        logger.info(f"sync_from_results job={job_id} done in {elapsed:.1f}s")
+        return {"status": "ok", "elapsed": round(elapsed, 1)}
+    except Exception as e:
+        logger.error(f"sync_from_results error job={job_id}: {e}", exc_info=True)
+        return {"error": str(e)}

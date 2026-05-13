@@ -40,7 +40,7 @@ async def fetch_builtwith(domain: str, mode: str = "direct") -> Optional[dict]:
 
     if data:
         import asyncio as _asyncio
-        _asyncio.get_event_loop().run_in_executor(None, save_cache, BUILTWITH_CACHE_TABLE, domain, data)
+        await _asyncio.to_thread(save_cache, BUILTWITH_CACHE_TABLE, domain, data)
     return data
 
 

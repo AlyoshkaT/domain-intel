@@ -507,6 +507,21 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
           )}
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/csv`, "_blank")}>CSV</button>}
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/xlsx`, "_blank")}>XLSX</button>}
+          {can("jobs") && (
+            <button className="btn-export" disabled={acting}
+              style={{ color: "var(--accent)", borderColor: "var(--accent)" }}
+              onClick={async () => {
+                if (!window.confirm(t('jobs_sync_results_confirm', lang))) return
+                setActing(true)
+                try {
+                  await apiFetch(`/api/jobs/${jobId}/sync_from_results`, { method: "POST" })
+                  alert(t('jobs_sync_results_done', lang))
+                } catch {}
+                finally { setActing(false) }
+              }}>
+              {acting ? "…" : t('jobs_sync_results', lang)}
+            </button>
+          )}
         </div>
       </div>
       {job && <JobStatusLine job={job} lang={lang} />}

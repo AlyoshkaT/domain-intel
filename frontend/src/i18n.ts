@@ -66,6 +66,9 @@ const T = {
     jobs_retry_confirm: (n: number) => `Retry ${n} failed domain(s) with the same services?`,
     jobs_retry_none: 'No failed domains to retry.',
     jobs_unprocessed: (n: number) => `${n} domains not processed`,
+    jobs_sync_results: '↑ Sync → Explorer',
+    jobs_sync_results_confirm: 'Sync results of this job to Explorer (domain_profiles)?',
+    jobs_sync_results_done: 'Sync started in background.',
 
     // ── Results page ──
     results_back: '← Back',
@@ -275,6 +278,9 @@ const T = {
     jobs_retry_confirm: (n: number) => `Запустити повторну обробку ${n} доменів з помилками (з тими самими сервісами)?`,
     jobs_retry_none: 'Немає доменів з помилками для повтору.',
     jobs_unprocessed: (n: number) => `${n} доменів не оброблено`,
+    jobs_sync_results: '↑ Sync → Explorer',
+    jobs_sync_results_confirm: 'Синхронізувати результати цього job-у в Explorer (domain_profiles)?',
+    jobs_sync_results_done: 'Синхронізацію запущено у фоні.',
 
     // ── Results page ──
     results_back: '← Назад',

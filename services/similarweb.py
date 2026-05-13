@@ -61,7 +61,7 @@ async def fetch_similarweb(domain: str, _retries: int = 3) -> Optional[dict]:
                         pass
 
                     data = resp.json()
-                    asyncio.get_event_loop().run_in_executor(None, save_cache, SIMILARWEB_CACHE_TABLE, domain, data)
+                    await asyncio.to_thread(save_cache, SIMILARWEB_CACHE_TABLE, domain, data)
                     return data
 
             except httpx.TimeoutException:
