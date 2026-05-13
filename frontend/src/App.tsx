@@ -555,8 +555,8 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
                 if (!window.confirm(t('jobs_sync_results_confirm', lang))) return
                 setActing(true)
                 try {
-                  await apiFetch(`/api/jobs/${jobId}/sync_from_results`, { method: "POST" })
-                  alert(t('jobs_sync_results_done', lang))
+                  const d = await apiFetch(`/api/jobs/${jobId}/sync_from_results`, { method: "POST" })
+                  alert(t('jobs_sync_results_done', lang)(d.total ?? 0, d.elapsed ?? 0))
                 } catch {}
                 finally { setActing(false) }
               }}>

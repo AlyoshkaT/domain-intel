@@ -338,19 +338,17 @@ async def retry_errors(request: Request, job_id: str):
     return {"count": len(error_domains), "job_id": new_job_id}
 
 @app.post("/api/jobs/{job_id}/sync_from_results", dependencies=[require_permission("jobs")])
-async def sync_from_results(job_id: str, background_tasks: BackgroundTasks):
-    """Sync domain_profiles directly from analysis_results for this job (bypasses corpBQ)."""
+async def sync_from_results(job_id: str):
+    """Sync domain_profiles directly from analysis_results for this job (bypasses corpBQ).
+    Runs synchronously — client waits and receives the result."""
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     from services.domain_profiles import sync_profiles_from_job_results
     from api.explorer import invalidate_profiles_cache
-    def _run():
-        result = sync_profiles_from_job_results(job_id)
-        invalidate_profiles_cache()
-        return result
-    background_tasks.add_task(_run)
-    return {"ok": True, "message": "Sync started in background"}
+    result = await asyncio.to_thread(sync_profiles_from_job_results, job_id)
+    invalidate_profiles_cache()
+    return {"ok": True, **result}
 
 
 @app.post("/api/jobs/{job_id}/force_complete", dependencies=[require_permission("admin")])
