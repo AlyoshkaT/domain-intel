@@ -411,6 +411,7 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState("")
   const [acting, setActing] = useState(false)
+  const [sheetUrl, setSheetUrl] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -424,6 +425,35 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
     const iv = setInterval(() => { if (job?.status === "running" || job?.status === "pending") loadData() }, 3000)
     return () => clearInterval(iv)
   }, [loadData, job?.status])
+
+  // Poll for sheet URL after export is triggered
+  const pollSheetUrl = useCallback(() => {
+    let attempts = 0
+    const iv = setInterval(async () => {
+      attempts++
+      try {
+        const d = await apiFetch(`/api/jobs/${jobId}/export/sheets/url`)
+        if (d.url) { setSheetUrl(d.url); clearInterval(iv) }
+      } catch {}
+      if (attempts >= 20) clearInterval(iv) // stop after ~60s
+    }, 3000)
+  }, [jobId])
+
+  const handleSheetsExport = useCallback(async () => {
+    const folder = window.prompt(t('jobs_sheets_folder_prompt', lang), '') ?? null
+    if (folder === null) return // cancelled
+    setActing(true)
+    try {
+      await apiFetch(`/api/jobs/${jobId}/export/sheets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder_id: folder })
+      })
+      alert(t('jobs_sheets_exporting', lang))
+      pollSheetUrl()
+    } catch {}
+    finally { setActing(false) }
+  }, [jobId, lang, pollSheetUrl])
 
   const filtered = results.filter(r =>
     !filter || r.domain.includes(filter.toLowerCase()) ||
@@ -507,6 +537,17 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
           )}
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/csv`, "_blank")}>CSV</button>}
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/xlsx`, "_blank")}>XLSX</button>}
+          {can("sheets") && (
+            <button className="btn-export" disabled={acting} onClick={handleSheetsExport}>
+              {acting ? "…" : t('jobs_sheets', lang)}
+            </button>
+          )}
+          {sheetUrl && (
+            <a className="btn-export" href={sheetUrl} target="_blank" rel="noreferrer"
+               style={{ color: "#22c55e", borderColor: "#22c55e" }}>
+              {t('jobs_sheets_open', lang)}
+            </a>
+          )}
           {can("jobs") && (
             <button className="btn-export" disabled={acting}
               style={{ color: "var(--accent)", borderColor: "var(--accent)" }}

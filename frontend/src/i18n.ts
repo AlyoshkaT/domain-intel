@@ -69,6 +69,10 @@ const T = {
     jobs_sync_results: '↑ Sync → Explorer',
     jobs_sync_results_confirm: 'Sync results of this job to Explorer (domain_profiles)?',
     jobs_sync_results_done: 'Sync started in background.',
+    jobs_sheets: 'GSheet',
+    jobs_sheets_folder_prompt: 'Paste your Google Drive folder URL (leave empty to use admin folder):',
+    jobs_sheets_exporting: 'Export started. The link will appear shortly.',
+    jobs_sheets_open: '↗ Open Sheet',
 
     // ── Results page ──
     results_back: '← Back',
@@ -281,6 +285,10 @@ const T = {
     jobs_sync_results: '↑ Sync → Explorer',
     jobs_sync_results_confirm: 'Синхронізувати результати цього job-у в Explorer (domain_profiles)?',
     jobs_sync_results_done: 'Синхронізацію запущено у фоні.',
+    jobs_sheets: 'GSheet',
+    jobs_sheets_folder_prompt: 'Вставте URL вашої папки Google Drive (залиште порожнім для використання адмін-папки):',
+    jobs_sheets_exporting: 'Експорт розпочато. Посилання зʼявиться незабаром.',
+    jobs_sheets_open: '↗ Відкрити Sheet',
 
     // ── Results page ──
     results_back: '← Назад',

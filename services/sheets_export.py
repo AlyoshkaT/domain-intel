@@ -167,25 +167,36 @@ def _export_as_new_file(folder_id: str, title: str, rows: list[list]) -> str:
     return sheet_url
 
 
+def _folder_id_from_url(url_or_id: str) -> str:
+    """Extract folder ID from a Google Drive URL or return as-is if already an ID."""
+    import re
+    if not url_or_id:
+        return ""
+    # https://drive.google.com/drive/folders/<ID>
+    m = re.search(r"/folders/([a-zA-Z0-9_-]+)", url_or_id)
+    if m:
+        return m.group(1)
+    return url_or_id.strip()
+
+
 def _create_sheet(title: str, tab_title: str, results: list[dict],
-                  columns: list[tuple] = None) -> str:
-    """Route to tab-mode or new-file-mode depending on env vars."""
+                  columns: list[tuple] = None,
+                  folder_id: str = "") -> str:
+    """Route to tab-mode or new-file-mode depending on env vars or provided folder_id."""
     cols = columns or EXPORT_COLUMNS
     rows = _build_rows(results, cols)
 
     # Tab mode: append to one existing sheet (no Drive quota needed)
     sheet_id = os.getenv("GOOGLE_EXPORT_SHEET_ID", "").strip()
-    if sheet_id:
+    if sheet_id and not folder_id:
         return _export_as_tab(sheet_id, tab_title, rows)
 
-    # New-file mode: create separate file
-    # With OAuth credentials → use folder if set, otherwise root Drive
-    # With SA credentials   → folder required (SA has no Drive storage)
+    # New-file mode: use provided folder_id, env var, or OAuth root Drive
+    effective_folder = _folder_id_from_url(folder_id) or os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
     using_oauth = bool(os.getenv("GOOGLE_OAUTH_TOKEN_JSON", "").strip())
-    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
 
-    if using_oauth or folder_id:
-        return _export_as_new_file(folder_id, title, rows)
+    if effective_folder or using_oauth:
+        return _export_as_new_file(effective_folder, title, rows)
 
     raise ValueError(
         "Google Sheets export not configured. "
@@ -194,13 +205,14 @@ def _create_sheet(title: str, tab_title: str, results: list[dict],
     )
 
 
-def export_job_to_sheets(job_id: str, filename: str, results: list[dict]) -> Optional[str]:
-    """Export job results to Google Sheets."""
+def export_job_to_sheets(job_id: str, filename: str, results: list[dict],
+                         folder_id: str = "") -> Optional[str]:
+    """Export job results to Google Sheets. folder_id overrides env var."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
     title = f"Domain Intel — {filename} — {ts}"
     tab_title = f"{filename[:25]} {ts[11:]}"  # short tab name
     try:
-        return _create_sheet(title, tab_title, results)
+        return _create_sheet(title, tab_title, results, folder_id=folder_id)
     except Exception as e:
         logger.error(f"Sheets export error: {e}")
         raise

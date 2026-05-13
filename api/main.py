@@ -8,6 +8,7 @@ import csv
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, BackgroundTasks
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -262,7 +263,7 @@ async def get_job_endpoint(job_id: str):
     return job
 
 def _sync_processed_domains(job_id: str):
-    """Trigger incremental profiles sync for all processed domains of a job (non-blocking)."""
+    """Trigger profiles sync + GSheet auto-export after Cancel/Force Complete (non-blocking)."""
     try:
         from processing.batch import _trigger_profiles_sync
         from core.bigquery import get_results
@@ -272,6 +273,25 @@ def _sync_processed_domains(job_id: str):
             _trigger_profiles_sync(job_id, domains)
     except Exception as e:
         logger.warning(f"Post-cancel sync failed for job {job_id}: {e}")
+
+    # Auto GSheet export (same as normal job completion)
+    def _do_sheets():
+        try:
+            from core.bigquery import get_results as _get_results, get_job
+            from services.sheets_export import export_job_to_sheets
+            from core.bigquery import set_setting
+            job = get_job(job_id)
+            results = _get_results(job_id)
+            if results:
+                url = export_job_to_sheets(job_id, job.get("filename", "results"), results)
+                if url:
+                    set_setting(f"sheet_url_{job_id}", url)
+                    logger.info(f"Auto-exported cancelled job {job_id} to Sheets: {url}")
+        except Exception as e:
+            logger.warning(f"Auto Sheets export failed for cancelled job {job_id}: {e}")
+
+    import threading
+    threading.Thread(target=_do_sheets, daemon=True, name=f"sheets-{job_id[:8]}").start()
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -413,8 +433,13 @@ async def export_xlsx(request: Request, job_id: str):
         headers={"Content-Disposition": f"attachment; filename=results_{job_id[:8]}.xlsx"}
     )
 
+class SheetsExportRequest(BaseModel):
+    folder_id: str = ""  # Google Drive folder URL or ID (overrides env var)
+
 @app.post("/api/jobs/{job_id}/export/sheets", dependencies=[require_permission("sheets")])
-async def export_sheets(request: Request, job_id: str, background_tasks: BackgroundTasks):
+async def export_sheets(request: Request, job_id: str,
+                        body: SheetsExportRequest = SheetsExportRequest(),
+                        background_tasks: BackgroundTasks = BackgroundTasks()):
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -428,20 +453,23 @@ async def export_sheets(request: Request, job_id: str, background_tasks: Backgro
     except Exception:
         pass
 
+    folder_id = body.folder_id
+
     def do_export():
-        url = export_job_to_sheets(job_id, job.get("filename", "results"), results)
+        url = export_job_to_sheets(job_id, job.get("filename", "results"), results,
+                                   folder_id=folder_id)
         if url:
-            from services.credits import _save_setting
-            _save_setting(f"sheet_url_{job_id}", url)
+            from core.bigquery import set_setting
+            set_setting(f"sheet_url_{job_id}", url)
 
     background_tasks.add_task(do_export)
     return {"status": "exporting"}
 
 @app.get("/api/jobs/{job_id}/export/sheets/url")
 async def get_sheets_url(job_id: str):
-    from services.credits import _get_setting
-    url = _get_setting(f"sheet_url_{job_id}")
-    return {"url": url}
+    from core.bigquery import get_setting
+    url = get_setting(f"sheet_url_{job_id}")
+    return {"url": url or None}
 
 
 # ─── Serve frontend ───────────────────────────────────────────────────────────
