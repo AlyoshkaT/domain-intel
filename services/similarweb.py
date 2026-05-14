@@ -62,6 +62,13 @@ async def fetch_similarweb(domain: str, _retries: int = 3) -> Optional[dict]:
 
                     data = resp.json()
                     await asyncio.to_thread(save_cache, SIMILARWEB_CACHE_TABLE, domain, data)
+                    # Also save parsed fields to privateBQ sw_parsed
+                    try:
+                        from core.bigquery import save_sw_parsed
+                        parsed = parse_similarweb(data)
+                        await asyncio.to_thread(save_sw_parsed, domain, parsed)
+                    except Exception as _e:
+                        logger.warning(f"save_sw_parsed failed for {domain}: {_e}")
                     return data
 
             except httpx.TimeoutException:

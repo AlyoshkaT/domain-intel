@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 
 from config.settings import DELAY_BETWEEN_API_CALLS
-from core.bigquery import get_cached
+from core.bigquery import get_cached, get_sw_parsed, get_bw_parsed, save_bw_parsed
 from services.similarweb import fetch_similarweb, parse_similarweb
 from services.builtwith import fetch_builtwith, parse_builtwith
 from services.claude_ai import (
@@ -95,15 +95,48 @@ async def process_domain(
         bw_want = "builtwith" in services
 
         # Cache strategy:
-        # - force_refresh=True  → ignore cache for selected services only; non-selected still enriched from cache
-        # - force_refresh=False → check cache first; fetch only if no cached data
-        # Non-selected services ALWAYS read from cache to enrich the result table.
-        # Example: job1=SW only → job2=BW+AI → job2 table includes SW data from cache.
-        sw_data = None if (force_refresh and sw_want) else get_cached("similarweb_raw_data", working_domain, ignore_ttl=True)
-        bw_data = None if (force_refresh and bw_want) else get_cached("builtwith_raw_data", working_domain, ignore_ttl=True)
+        # - force_refresh=True  → ignore privateBQ cache for selected services; non-selected still enriched
+        # - force_refresh=False → check privateBQ parsed cache first; fetch from API only on miss
+        # Non-selected services ALWAYS try privateBQ first, then fall back to corpBQ for enrichment.
 
-        sw_needs_fetch = sw_data is None and sw_want
-        bw_needs_fetch = bw_data is None and bw_want
+        if sw_want:
+            sw_parsed_cache = None if force_refresh else get_sw_parsed(working_domain)
+        else:
+            # Not selected — try privateBQ first, fall back to corpBQ raw for enrichment
+            sw_parsed_cache = get_sw_parsed(working_domain)
+            if sw_parsed_cache is None:
+                sw_raw = get_cached("similarweb_raw_data", working_domain, ignore_ttl=True)
+                if sw_raw:
+                    sw_parsed_cache = parse_similarweb(sw_raw)
+
+        if bw_want:
+            bw_parsed_cache = None if force_refresh else get_bw_parsed(working_domain)
+        else:
+            bw_parsed_cache = get_bw_parsed(working_domain)
+            if bw_parsed_cache is None:
+                bw_raw = get_cached("builtwith_raw_data", working_domain, ignore_ttl=True)
+                if bw_raw:
+                    p = parse_builtwith(bw_raw)
+                    try:
+                        bw_res = bw_raw.get("Results", [])
+                        vertical = bw_res[0].get("Result", {}).get("Vertical", "") if bw_res else ""
+                    except Exception:
+                        vertical = ""
+                    bw_parsed_cache = {
+                        "bw_vertical": vertical,
+                        "bw_cms_raw": p.get("bw_cms", ""),
+                        "bw_ecommerce": p.get("bw_ecommerce", ""),
+                        "bw_email_marketing": p.get("bw_email_marketing", ""),
+                        "bw_technologies": p.get("bw_technologies", "[]"),
+                        "techs_compact": "",
+                    }
+
+        sw_needs_fetch = sw_parsed_cache is None and sw_want
+        bw_needs_fetch = bw_parsed_cache is None and bw_want
+
+        # Raw API data (only used when fetching from API)
+        sw_data = None
+        bw_data = None
 
         if sw_needs_fetch and bw_needs_fetch:
             # Both uncached and requested — fetch concurrently
@@ -134,11 +167,19 @@ async def process_domain(
 
         # ── Parse SimilarWeb result ───────────────────────────────────────────
         if sw_data:
-            p = parse_similarweb(sw_data)
-            result.update({k: p.get(k) for k in ["sw_visits","sw_category","sw_subcategory","sw_description","sw_title","sw_top_countries","sw_primary_region","sw_primary_region_pct","company_name"]})
+            sw_parsed_cache = parse_similarweb(sw_data)
+
+        if sw_parsed_cache:
+            p = sw_parsed_cache
+            result.update({k: p.get(k) for k in [
+                "sw_visits", "sw_category", "sw_subcategory", "sw_description",
+                "sw_title", "sw_top_countries", "sw_primary_region", "sw_primary_region_pct",
+                "company_name",
+            ]})
 
         # ── Parse BuiltWith result ────────────────────────────────────────────
         if bw_data:
+            # Fresh from API — parse and save to privateBQ bw_parsed
             p = parse_builtwith(bw_data)
             result["bw_technologies"]    = p.get("bw_technologies", "[]")
             result["bw_cms_raw"]         = p.get("bw_cms")
@@ -156,6 +197,43 @@ async def process_domain(
             result["osearch"]  = m.get("osearch")
             result["osearch_group"] = m.get("osearch_group")
             result["ems_list"] = m.get("ems_list")
+            # Build techs_compact and save to privateBQ bw_parsed
+            _SEP_FIELD, _SEP_TECH = "\x01", "\x02"
+            try:
+                paths = bw_data.get("Results", [{}])[0].get("Result", {}).get("Paths", [])
+                techs = [
+                    f"{t.get('Name', '')}{_SEP_FIELD}{t.get('LastDetected', '0') or '0'}"
+                    for path in paths for t in path.get("Technologies", []) if t.get("Name")
+                ]
+                techs_compact = _SEP_TECH.join(techs)
+            except Exception:
+                techs_compact = ""
+            asyncio.create_task(asyncio.to_thread(save_bw_parsed, working_domain, {
+                "bw_vertical": result.get("bw_vertical", ""),
+                "bw_cms_raw": result.get("bw_cms_raw", ""),
+                "bw_ecommerce": result.get("bw_ecommerce", ""),
+                "bw_email_marketing": result.get("bw_email_marketing", ""),
+                "bw_technologies": result.get("bw_technologies", "[]"),
+                "techs_compact": techs_compact,
+            }))
+        elif bw_parsed_cache:
+            # Served from privateBQ parsed cache
+            result["bw_technologies"]    = bw_parsed_cache.get("bw_technologies", "[]")
+            result["bw_cms_raw"]         = bw_parsed_cache.get("bw_cms_raw")
+            result["bw_ecommerce"]       = bw_parsed_cache.get("bw_ecommerce")
+            result["bw_email_marketing"] = bw_parsed_cache.get("bw_email_marketing")
+            result["bw_vertical"] = result["bw_industry"] = bw_parsed_cache.get("bw_vertical", "")
+            # Catalog matching from techs_compact
+            from services.domain_profiles import _match_bw_compact
+            m = _match_bw_compact(
+                bw_parsed_cache.get("bw_vertical", ""),
+                bw_parsed_cache.get("techs_compact", ""),
+                catalog,
+            )
+            result["cms_list"]      = m.get("cms_list")
+            result["osearch"]       = m.get("osearch")
+            result["osearch_group"] = m.get("osearch_group")
+            result["ems_list"]      = m.get("ems_list")
 
         if bw_want:
             await asyncio.sleep(DELAY_BETWEEN_API_CALLS / 1000)

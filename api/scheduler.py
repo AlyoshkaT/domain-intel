@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 
 _scheduler_thread: threading.Thread | None = None
 _stop_event = threading.Event()
-_SYNC_HOUR_UTC = 4   # 04:00 UTC = 06:00 Kyiv (UTC+2 winter)
+_SYNC_HOUR_UTC = 4         # 04:00 UTC = 06:00 Kyiv (UTC+2 winter)
+_PARSED_SYNC_HOUR_UTC = 3  # 03:00 UTC — sync corpBQ raw → privateBQ parsed, 1 hour before profiles sync
 
 
 def _run_sync():
@@ -28,13 +29,27 @@ def _run_sync():
         pass
 
 
+def _run_parsed_sync():
+    """Sync corpBQ raw JSON → privateBQ parsed tables (sw_parsed, bw_parsed)."""
+    from core.bigquery import sync_parsed_from_corp
+    logger.info("Scheduled parsed sync started (corpBQ raw → privateBQ parsed)")
+    result = sync_parsed_from_corp()
+    logger.info(f"Scheduled parsed sync done: {result}")
+
+
 def _scheduler_loop():
-    """Check every 5 minutes if it's time to sync (daily at 04:00 UTC)."""
+    """Check every 5 minutes if it's time to sync (daily at 03:00 and 04:00 UTC)."""
     import time
     while not _stop_event.is_set():
         now = datetime.utcnow()
-        if now.hour == _SYNC_HOUR_UTC and now.minute < 5:
-            logger.info("Daily sync triggered")
+        if now.hour == _PARSED_SYNC_HOUR_UTC and now.minute < 5:
+            logger.info("Parsed sync triggered (corpBQ raw → privateBQ parsed)")
+            thread = threading.Thread(target=_run_parsed_sync, daemon=True, name="parsed-sync")
+            thread.start()
+            # Sleep 55 minutes to avoid double-trigger but still wake for profile sync at 04:00
+            _stop_event.wait(timeout=55 * 60)
+        elif now.hour == _SYNC_HOUR_UTC and now.minute < 5:
+            logger.info("Daily profiles sync triggered")
             thread = threading.Thread(target=_run_sync, daemon=True, name="daily-sync")
             thread.start()
             # Sleep 6 hours to avoid double-trigger within same hour
@@ -51,7 +66,7 @@ def start_scheduler():
     _stop_event.clear()
     _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name="sync-scheduler")
     _scheduler_thread.start()
-    logger.info(f"Sync scheduler started (daily at {_SYNC_HOUR_UTC:02d}:00 UTC)")
+    logger.info(f"Sync scheduler started (parsed at {_PARSED_SYNC_HOUR_UTC:02d}:00 UTC, profiles at {_SYNC_HOUR_UTC:02d}:00 UTC)")
 
 
 def stop_scheduler():

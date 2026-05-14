@@ -21,7 +21,34 @@ from config.settings import (
 
 BQ_JOB_DOMAINS_TABLE = "job_domain_lists"
 
+SW_PARSED_TABLE = "sw_parsed"
+BW_PARSED_TABLE = "bw_parsed"
+
 logger = logging.getLogger(__name__)
+
+_SW_PARSED_SCHEMA = [
+    bigquery.SchemaField("domain", "STRING"),
+    bigquery.SchemaField("fetched_at", "TIMESTAMP"),
+    bigquery.SchemaField("sw_visits", "FLOAT64"),
+    bigquery.SchemaField("sw_category", "STRING"),
+    bigquery.SchemaField("sw_subcategory", "STRING"),
+    bigquery.SchemaField("sw_description", "STRING"),
+    bigquery.SchemaField("sw_title", "STRING"),
+    bigquery.SchemaField("sw_primary_region", "STRING"),
+    bigquery.SchemaField("sw_primary_region_pct", "FLOAT64"),
+    bigquery.SchemaField("company_name", "STRING"),
+]
+
+_BW_PARSED_SCHEMA = [
+    bigquery.SchemaField("domain", "STRING"),
+    bigquery.SchemaField("fetched_at", "TIMESTAMP"),
+    bigquery.SchemaField("bw_vertical", "STRING"),
+    bigquery.SchemaField("bw_cms_raw", "STRING"),
+    bigquery.SchemaField("bw_ecommerce", "STRING"),
+    bigquery.SchemaField("bw_email_marketing", "STRING"),
+    bigquery.SchemaField("bw_technologies", "STRING"),
+    bigquery.SchemaField("techs_compact", "STRING"),
+]
 
 
 def _make_client(env_var: str, file_path: str, project_id: str) -> bigquery.Client:
@@ -127,6 +154,8 @@ def ensure_tables_exist():
         BQ_JOBS_TABLE: JOBS_SCHEMA,
         BQ_RESULTS_TABLE: RESULTS_SCHEMA,
         BQ_JOB_DOMAINS_TABLE: _JOB_DOMAINS_SCHEMA,
+        SW_PARSED_TABLE: _SW_PARSED_SCHEMA,
+        BW_PARSED_TABLE: _BW_PARSED_SCHEMA,
     }
     for table_name, schema in tables_to_create.items():
         table_ref_obj = bigquery.Table(f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{table_name}", schema=schema)
@@ -219,6 +248,370 @@ def prefetch_corp_cache(domains: list[str], tables: list[str]) -> None:
 def clear_prefetch_cache() -> None:
     """Clear the in-memory prefetch cache after a job finishes."""
     _prefetch_cache.clear()
+
+
+# ── Parsed cache (privateBQ sw_parsed / bw_parsed) ───────────────────────────
+
+_parsed_sw_cache: dict[str, Optional[dict]] = {}
+_parsed_bw_cache: dict[str, Optional[dict]] = {}
+
+
+def save_sw_parsed(domain: str, parsed: dict) -> None:
+    """Stream-insert one parsed SW row into privateBQ sw_parsed."""
+    bq = client()
+    row = {
+        "domain": domain,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "sw_visits": parsed.get("sw_visits"),
+        "sw_category": parsed.get("sw_category", ""),
+        "sw_subcategory": parsed.get("sw_subcategory", ""),
+        "sw_description": parsed.get("sw_description", ""),
+        "sw_title": parsed.get("sw_title", ""),
+        "sw_primary_region": parsed.get("sw_primary_region", ""),
+        "sw_primary_region_pct": parsed.get("sw_primary_region_pct"),
+        "company_name": parsed.get("company_name", ""),
+    }
+    try:
+        errors = bq.insert_rows_json(table_ref(SW_PARSED_TABLE), [row])
+        if errors:
+            logger.error(f"save_sw_parsed error ({domain}): {errors}")
+        else:
+            _parsed_sw_cache[domain] = parsed
+            logger.debug(f"save_sw_parsed OK: {domain}")
+    except Exception as e:
+        logger.error(f"save_sw_parsed exception ({domain}): {e}")
+
+
+def save_bw_parsed(domain: str, bw_dict: dict) -> None:
+    """Stream-insert one parsed BW row into privateBQ bw_parsed."""
+    bq = client()
+    row = {
+        "domain": domain,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "bw_vertical": bw_dict.get("bw_vertical", ""),
+        "bw_cms_raw": bw_dict.get("bw_cms_raw", ""),
+        "bw_ecommerce": bw_dict.get("bw_ecommerce", ""),
+        "bw_email_marketing": bw_dict.get("bw_email_marketing", ""),
+        "bw_technologies": bw_dict.get("bw_technologies", "[]"),
+        "techs_compact": bw_dict.get("techs_compact", ""),
+    }
+    try:
+        errors = bq.insert_rows_json(table_ref(BW_PARSED_TABLE), [row])
+        if errors:
+            logger.error(f"save_bw_parsed error ({domain}): {errors}")
+        else:
+            _parsed_bw_cache[domain] = bw_dict
+            logger.debug(f"save_bw_parsed OK: {domain}")
+    except Exception as e:
+        logger.error(f"save_bw_parsed exception ({domain}): {e}")
+
+
+def prefetch_parsed(domains: list[str]) -> None:
+    """
+    Batch-fetch latest sw_parsed + bw_parsed rows from privateBQ for given domains.
+    Called once at job start — replaces per-domain BQ reads with 2 queries.
+    """
+    if not domains:
+        return
+    bq = client()
+    t_start = time.time()
+    unique_domains = list(dict.fromkeys(domains))
+    ph = ", ".join(f"@d{i}" for i in range(len(unique_domains)))
+    params = [bigquery.ScalarQueryParameter(f"d{i}", "STRING", d) for i, d in enumerate(unique_domains)]
+
+    # SW
+    try:
+        rows = list(bq.query(
+            f"""
+            SELECT domain, sw_visits, sw_category, sw_subcategory, sw_description,
+                   sw_title, sw_primary_region, sw_primary_region_pct, company_name
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                FROM `{table_ref(SW_PARSED_TABLE)}`
+                WHERE domain IN ({ph})
+            ) WHERE rn = 1
+            """,
+            job_config=bigquery.QueryJobConfig(query_parameters=params)
+        ).result())
+        sw_hits = 0
+        for row in rows:
+            d = row["domain"]
+            _parsed_sw_cache[d] = {
+                "sw_visits": row["sw_visits"],
+                "sw_category": row["sw_category"] or "",
+                "sw_subcategory": row["sw_subcategory"] or "",
+                "sw_description": row["sw_description"] or "",
+                "sw_title": row["sw_title"] or "",
+                "sw_primary_region": row["sw_primary_region"] or "",
+                "sw_primary_region_pct": row["sw_primary_region_pct"],
+                "company_name": row["company_name"] or "",
+            }
+            sw_hits += 1
+        for d in unique_domains:
+            if d not in _parsed_sw_cache:
+                _parsed_sw_cache[d] = None
+        logger.info(f"prefetch_parsed SW: {sw_hits}/{len(unique_domains)} hits in {time.time()-t_start:.1f}s")
+    except Exception as e:
+        logger.error(f"prefetch_parsed SW error: {e}")
+
+    # BW
+    t_bw = time.time()
+    try:
+        rows = list(bq.query(
+            f"""
+            SELECT domain, bw_vertical, bw_cms_raw, bw_ecommerce, bw_email_marketing,
+                   bw_technologies, techs_compact
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                FROM `{table_ref(BW_PARSED_TABLE)}`
+                WHERE domain IN ({ph})
+            ) WHERE rn = 1
+            """,
+            job_config=bigquery.QueryJobConfig(query_parameters=params)
+        ).result())
+        bw_hits = 0
+        for row in rows:
+            d = row["domain"]
+            _parsed_bw_cache[d] = {
+                "bw_vertical": row["bw_vertical"] or "",
+                "bw_cms_raw": row["bw_cms_raw"] or "",
+                "bw_ecommerce": row["bw_ecommerce"] or "",
+                "bw_email_marketing": row["bw_email_marketing"] or "",
+                "bw_technologies": row["bw_technologies"] or "[]",
+                "techs_compact": row["techs_compact"] or "",
+            }
+            bw_hits += 1
+        for d in unique_domains:
+            if d not in _parsed_bw_cache:
+                _parsed_bw_cache[d] = None
+        logger.info(f"prefetch_parsed BW: {bw_hits}/{len(unique_domains)} hits in {time.time()-t_bw:.1f}s")
+    except Exception as e:
+        logger.error(f"prefetch_parsed BW error: {e}")
+
+
+def get_sw_parsed(domain: str) -> Optional[dict]:
+    """Return parsed SW data from in-memory cache or fallback BQ query."""
+    if domain in _parsed_sw_cache:
+        return _parsed_sw_cache[domain]
+    # Slow path: individual BQ query
+    bq = client()
+    try:
+        rows = list(bq.query(
+            f"""
+            SELECT sw_visits, sw_category, sw_subcategory, sw_description,
+                   sw_title, sw_primary_region, sw_primary_region_pct, company_name
+            FROM `{table_ref(SW_PARSED_TABLE)}`
+            WHERE domain = @domain
+            ORDER BY fetched_at DESC LIMIT 1
+            """,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("domain", "STRING", domain)]
+            )
+        ).result())
+        if rows:
+            r = rows[0]
+            result = {
+                "sw_visits": r["sw_visits"],
+                "sw_category": r["sw_category"] or "",
+                "sw_subcategory": r["sw_subcategory"] or "",
+                "sw_description": r["sw_description"] or "",
+                "sw_title": r["sw_title"] or "",
+                "sw_primary_region": r["sw_primary_region"] or "",
+                "sw_primary_region_pct": r["sw_primary_region_pct"],
+                "company_name": r["company_name"] or "",
+            }
+            _parsed_sw_cache[domain] = result
+            return result
+        _parsed_sw_cache[domain] = None
+        return None
+    except Exception as e:
+        logger.error(f"get_sw_parsed error ({domain}): {e}")
+        return None
+
+
+def get_bw_parsed(domain: str) -> Optional[dict]:
+    """Return parsed BW data from in-memory cache or fallback BQ query."""
+    if domain in _parsed_bw_cache:
+        return _parsed_bw_cache[domain]
+    # Slow path: individual BQ query
+    bq = client()
+    try:
+        rows = list(bq.query(
+            f"""
+            SELECT bw_vertical, bw_cms_raw, bw_ecommerce, bw_email_marketing,
+                   bw_technologies, techs_compact
+            FROM `{table_ref(BW_PARSED_TABLE)}`
+            WHERE domain = @domain
+            ORDER BY fetched_at DESC LIMIT 1
+            """,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("domain", "STRING", domain)]
+            )
+        ).result())
+        if rows:
+            r = rows[0]
+            result = {
+                "bw_vertical": r["bw_vertical"] or "",
+                "bw_cms_raw": r["bw_cms_raw"] or "",
+                "bw_ecommerce": r["bw_ecommerce"] or "",
+                "bw_email_marketing": r["bw_email_marketing"] or "",
+                "bw_technologies": r["bw_technologies"] or "[]",
+                "techs_compact": r["techs_compact"] or "",
+            }
+            _parsed_bw_cache[domain] = result
+            return result
+        _parsed_bw_cache[domain] = None
+        return None
+    except Exception as e:
+        logger.error(f"get_bw_parsed error ({domain}): {e}")
+        return None
+
+
+def clear_parsed_cache() -> None:
+    """Clear the in-memory parsed cache after a job finishes."""
+    _parsed_sw_cache.clear()
+    _parsed_bw_cache.clear()
+
+
+def sync_parsed_from_corp() -> dict:
+    """
+    Daily sync: MERGE corpBQ raw JSON → privateBQ sw_parsed + bw_parsed.
+    Extracts parsed fields in SQL so we never transfer full JSON blobs.
+    Intended to run once per day at 03:00 UTC, 1 hour before domain_profiles sync.
+    """
+    t0 = time.time()
+    logger.info("sync_parsed_from_corp: starting SW merge")
+
+    sw_tbl = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.similarweb_raw_data`"
+    bw_tbl = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.builtwith_raw_data`"
+    our_sw = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{SW_PARSED_TABLE}`"
+    our_bw = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{BW_PARSED_TABLE}`"
+
+    bq = client()
+
+    # ── SW MERGE ─────────────────────────────────────────────────────────────
+    try:
+        sw_merge = f"""
+            MERGE {our_sw} T
+            USING (
+                SELECT
+                    domain,
+                    CURRENT_TIMESTAMP() AS fetched_at,
+                    COALESCE(
+                        SAFE_CAST(JSON_VALUE(response_json, '$.Engagments.Visits') AS FLOAT64),
+                        0
+                    ) AS sw_visits,
+                    COALESCE(
+                        JSON_VALUE(response_json, '$.CategoryRank.Category'),
+                        JSON_VALUE(response_json, '$.Category'), ''
+                    ) AS sw_category_raw,
+                    COALESCE(SUBSTR(JSON_VALUE(response_json, '$.Description'), 1, 500), '') AS sw_description,
+                    COALESCE(
+                        JSON_VALUE(response_json, '$.Title'),
+                        JSON_VALUE(response_json, '$.SiteName'), ''
+                    ) AS sw_title,
+                    COALESCE(JSON_VALUE(response_json, '$.TopCountryShares[0].CountryCode'), '') AS sw_primary_region,
+                    SAFE_CAST(JSON_VALUE(response_json, '$.TopCountryShares[0].Value') AS FLOAT64) AS sw_region_val
+                FROM {sw_tbl}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            ) S
+            ON T.domain = S.domain
+            WHEN MATCHED AND S.fetched_at > T.fetched_at THEN UPDATE SET
+                T.fetched_at           = S.fetched_at,
+                T.sw_visits            = S.sw_visits,
+                T.sw_category          = IF(STRPOS(S.sw_category_raw, '/') > 0, SPLIT(S.sw_category_raw, '/')[OFFSET(0)], S.sw_category_raw),
+                T.sw_subcategory       = IF(STRPOS(S.sw_category_raw, '/') > 0, SPLIT(S.sw_category_raw, '/')[OFFSET(1)], ''),
+                T.sw_description       = S.sw_description,
+                T.sw_title             = S.sw_title,
+                T.sw_primary_region    = S.sw_primary_region,
+                T.sw_primary_region_pct = ROUND((COALESCE(S.sw_region_val, 0)) * 100, 1),
+                T.company_name         = S.sw_title
+            WHEN NOT MATCHED THEN INSERT (
+                domain, fetched_at, sw_visits, sw_category, sw_subcategory,
+                sw_description, sw_title, sw_primary_region, sw_primary_region_pct, company_name
+            ) VALUES (
+                S.domain, S.fetched_at, S.sw_visits,
+                IF(STRPOS(S.sw_category_raw, '/') > 0, SPLIT(S.sw_category_raw, '/')[OFFSET(0)], S.sw_category_raw),
+                IF(STRPOS(S.sw_category_raw, '/') > 0, SPLIT(S.sw_category_raw, '/')[OFFSET(1)], ''),
+                S.sw_description, S.sw_title, S.sw_primary_region,
+                ROUND((COALESCE(S.sw_region_val, 0)) * 100, 1),
+                S.sw_title
+            )
+        """
+        sw_job = bq.query(sw_merge)
+        sw_job.result()
+        sw_elapsed = time.time() - t0
+        logger.info(f"sync_parsed_from_corp: SW merge done in {sw_elapsed:.1f}s, "
+                    f"rows_affected={sw_job.num_dml_affected_rows}")
+    except Exception as e:
+        logger.error(f"sync_parsed_from_corp SW error: {e}", exc_info=True)
+        return {"error": str(e)}
+
+    # ── BW MERGE ─────────────────────────────────────────────────────────────
+    logger.info("sync_parsed_from_corp: starting BW merge")
+    t_bw = time.time()
+    _SEP_FIELD = "\x01"
+    _SEP_TECH  = "\x02"
+    try:
+        bw_merge = f"""
+            MERGE {our_bw} T
+            USING (
+                SELECT
+                    domain,
+                    CURRENT_TIMESTAMP() AS fetched_at,
+                    COALESCE(JSON_VALUE(response_json, '$.Results[0].Result.Vertical'), '') AS bw_vertical,
+                    '' AS bw_cms_raw,
+                    '' AS bw_ecommerce,
+                    '' AS bw_email_marketing,
+                    '[]' AS bw_technologies,
+                    IFNULL((
+                        SELECT STRING_AGG(
+                            JSON_VALUE(tech, '$.Name')
+                            || '{_SEP_FIELD}'
+                            || IFNULL(JSON_VALUE(tech, '$.LastDetected'), '0'),
+                            '{_SEP_TECH}'
+                        )
+                        FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
+                        UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
+                        WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
+                    ), '') AS techs_compact
+                FROM {bw_tbl}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            ) S
+            ON T.domain = S.domain
+            WHEN MATCHED AND S.fetched_at > T.fetched_at THEN UPDATE SET
+                T.fetched_at         = S.fetched_at,
+                T.bw_vertical        = S.bw_vertical,
+                T.bw_cms_raw         = S.bw_cms_raw,
+                T.bw_ecommerce       = S.bw_ecommerce,
+                T.bw_email_marketing = S.bw_email_marketing,
+                T.bw_technologies    = S.bw_technologies,
+                T.techs_compact      = S.techs_compact
+            WHEN NOT MATCHED THEN INSERT (
+                domain, fetched_at, bw_vertical, bw_cms_raw, bw_ecommerce,
+                bw_email_marketing, bw_technologies, techs_compact
+            ) VALUES (
+                S.domain, S.fetched_at, S.bw_vertical, S.bw_cms_raw, S.bw_ecommerce,
+                S.bw_email_marketing, S.bw_technologies, S.techs_compact
+            )
+        """
+        bw_job = bq.query(bw_merge)
+        bw_job.result()
+        bw_elapsed = time.time() - t_bw
+        logger.info(f"sync_parsed_from_corp: BW merge done in {bw_elapsed:.1f}s, "
+                    f"rows_affected={bw_job.num_dml_affected_rows}")
+    except Exception as e:
+        logger.error(f"sync_parsed_from_corp BW error: {e}", exc_info=True)
+        return {"error": str(e)}
+
+    total_elapsed = time.time() - t0
+    logger.info(f"sync_parsed_from_corp: done in {total_elapsed:.1f}s total")
+    return {
+        "status": "ok",
+        "sw_rows": sw_job.num_dml_affected_rows,
+        "bw_rows": bw_job.num_dml_affected_rows,
+        "elapsed": round(total_elapsed, 1),
+    }
 
 
 def get_cached(table: str, domain: str, ttl_days: int = 90, force: bool = False, ignore_ttl: bool = False) -> Optional[dict]:

@@ -13,6 +13,7 @@ from processing.pipeline import process_domain
 from core.bigquery import (
     create_job, update_job, get_job, save_result,
     prefetch_corp_cache, clear_prefetch_cache,
+    prefetch_parsed, clear_parsed_cache,
     save_job_domains, get_job_domains, get_processed_domains_for_job,
 )
 
@@ -77,23 +78,21 @@ async def run_batch_job(
         logger.info(f"Job {job_id} resumed: {total} remaining, already done={processed_offset+failed_offset}, services={services}")
         await _update_job_safe(job_id, status="running")
 
-    # Batch-prefetch only the tables we'll actually read from cache.
+    # Batch-prefetch SW+BW from privateBQ parsed tables (cheap) and AI from corpBQ.
     # force_refresh=True means selected services skip cache → no point prefetching them.
     # Non-selected services always read from cache → always prefetch those.
     try:
-        from config.settings import BQ_SIMILARWEB_CACHE, BQ_BUILTWITH_CACHE
-        from services.claude_ai import CORP_AI_CACHE_KEY
-        tables_to_prefetch = []
-        if not (force_refresh and "similarweb" in services):
-            tables_to_prefetch.append(BQ_SIMILARWEB_CACHE)
-        if not (force_refresh and "builtwith" in services):
-            tables_to_prefetch.append(BQ_BUILTWITH_CACHE)
-        if not (force_refresh and "ai" in services):
-            tables_to_prefetch.append(CORP_AI_CACHE_KEY)
-        if tables_to_prefetch:
-            prefetch_corp_cache(domains, tables_to_prefetch)
+        # Prefetch SW + BW from privateBQ parsed tables
+        prefetch_parsed(domains)
     except Exception as e:
-        logger.warning(f"Prefetch failed (will fall back to per-domain queries): {e}")
+        logger.warning(f"prefetch_parsed failed (will fall back to per-domain queries): {e}")
+
+    try:
+        from services.claude_ai import CORP_AI_CACHE_KEY
+        if not (force_refresh and "ai" in services):
+            prefetch_corp_cache(domains, [CORP_AI_CACHE_KEY])
+    except Exception as e:
+        logger.warning(f"Prefetch AI failed (will fall back to per-domain queries): {e}")
 
     semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
 
@@ -138,6 +137,7 @@ async def run_batch_job(
     )
     logger.info(f"Job {job_id} finished: {processed} ok, {failed} failed")
     clear_prefetch_cache()
+    clear_parsed_cache()
 
     # Auto-export to admin Google Sheets folder
     try:
