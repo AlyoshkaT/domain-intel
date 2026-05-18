@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from core.bigquery import (
     ensure_tables_exist, list_jobs, get_job, get_results,
-    reset_stale_jobs, update_job, get_stale_running_jobs, _bq_touch,
+    reset_stale_jobs, update_job, get_stale_running_jobs, _bq_touch, _bq_op,
 )
 from services.technology_catalog import sync_catalog
 from services.redirect_resolver import ensure_redirects_table
@@ -395,15 +395,15 @@ async def force_complete_job(job_id: str):
 # ─── Results ──────────────────────────────────────────────────────────────────
 @app.get("/api/jobs/{job_id}/results")
 def get_results_endpoint(job_id: str):
-    _bq_touch("priv_r")
-    results = get_results(job_id)
+    with _bq_op("priv_r"):
+        results = get_results(job_id)
     return {"results": results, "total": len(results)}
 
 
 @app.get("/api/jobs/{job_id}/export/csv", dependencies=[require_permission("download")])
 def export_csv(request: Request, job_id: str):
-    _bq_touch("priv_r")
-    results = get_results(job_id)
+    with _bq_op("priv_r"):
+        results = get_results(job_id)
     if not results:
         raise HTTPException(status_code=404, detail="No results found")
     username = getattr(request.state, "username", "unknown")
@@ -425,8 +425,8 @@ def export_csv(request: Request, job_id: str):
 
 @app.get("/api/jobs/{job_id}/export/xlsx", dependencies=[require_permission("download")])
 def export_xlsx(request: Request, job_id: str):
-    _bq_touch("priv_r")
-    results = get_results(job_id)
+    with _bq_op("priv_r"):
+        results = get_results(job_id)
     if not results:
         raise HTTPException(status_code=404, detail="No results found")
     username = getattr(request.state, "username", "unknown")

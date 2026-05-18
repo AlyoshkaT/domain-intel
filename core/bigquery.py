@@ -62,7 +62,7 @@ def _bq_op(key: str) -> _BqOp:
     return _BqOp(key)
 
 
-def get_bq_activity(window: float = 5.0) -> dict:
+def get_bq_activity(window: float = 3.0) -> dict:
     """Return which BQ ops are active (in-flight) or happened within `window` seconds."""
     now = time.time()
     with _bq_act_lock:
