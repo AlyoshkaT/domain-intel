@@ -1,6 +1,7 @@
 """
 FastAPI application - main entry point
 """
+import asyncio
 import io
 import json
 import logging
