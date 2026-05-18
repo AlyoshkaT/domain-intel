@@ -126,7 +126,11 @@ def _maybe_log_login(username: str):
 
 async def auth_middleware(request: Request, call_next):
     """Basic Auth middleware. Skips if no users configured."""
-    if request.url.path in ["/api/health"]:
+    path = request.url.path
+
+    # Static assets and health — always public (no auth dialog for JS/CSS/favicon)
+    if (path.startswith("/assets/") or
+            path in ("/api/health", "/favicon.ico", "/favicon.png", "/robots.txt")):
         return await call_next(request)
 
     users = get_auth_users()
@@ -136,11 +140,11 @@ async def auth_middleware(request: Request, call_next):
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Basic "):
-        return Response(
-            content="Unauthorized",
-            status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="Domain Intel"'}
-        )
+        # API calls: return plain 401 (no WWW-Authenticate) — SPA handles it silently.
+        # HTML pages: return 401 with WWW-Authenticate to trigger the browser native dialog.
+        is_api = path.startswith("/api/")
+        headers = {} if is_api else {"WWW-Authenticate": 'Basic realm="Domain Intel"'}
+        return Response(content="Unauthorized", status_code=401, headers=headers)
 
     try:
         decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
