@@ -337,6 +337,19 @@ async def retry_errors(request: Request, job_id: str):
     new_job_id = start_job(error_domains, services, f"retry_{job_id[:8]}.txt", username=username)
     return {"count": len(error_domains), "job_id": new_job_id}
 
+@app.post("/api/admin/sync_parsed_from_corp", dependencies=[require_permission("admin")])
+async def sync_parsed_from_corp_endpoint():
+    """
+    One-time migration: populate privateBQ sw_parsed / bw_parsed from corpBQ raw JSON.
+    Run this once after first deploy to avoid waiting for the 03:00 UTC nightly sync.
+    After this completes, run /explorer/refresh to rebuild domain_profiles.
+    Runs synchronously (may take several minutes).
+    """
+    from core.bigquery import sync_parsed_from_corp
+    result = await asyncio.to_thread(sync_parsed_from_corp)
+    return result
+
+
 @app.post("/api/jobs/{job_id}/sync_from_results", dependencies=[require_permission("jobs")])
 async def sync_from_results(job_id: str):
     """Sync domain_profiles directly from analysis_results for this job (bypasses corpBQ).

@@ -126,6 +126,27 @@ def parse_similarweb(data: dict) -> dict:
         primary_region = top_countries_clean[0]["country"]
         primary_region_pct = round(top_countries_clean[0]["value"] * 100, 1)
 
+    # Extended: monthly visits history (all months from raw dict)
+    monthly_raw = data.get("EstimatedMonthlyVisits", {}) or {}
+    sw_monthly_visits = json.dumps(monthly_raw) if monthly_raw else "{}"
+
+    # Extended: global rank
+    gr = data.get("GlobalRank")
+    if isinstance(gr, dict):
+        sw_global_rank = gr.get("Rank")
+    elif isinstance(gr, (int, float)):
+        sw_global_rank = int(gr)
+    else:
+        sw_global_rank = None
+
+    # Extended: engagement metrics
+    eng = engagments or {}
+    sw_engagement = json.dumps({
+        "bounce_rate": eng.get("BounceRate"),
+        "pages_per_visit": eng.get("PagePerVisit"),
+        "avg_visit_duration": eng.get("TimeOnSite"),
+    })
+
     return {
         "sw_visits": visits,
         "sw_category": sw_category,
@@ -136,4 +157,8 @@ def parse_similarweb(data: dict) -> dict:
         "sw_primary_region": primary_region,
         "sw_primary_region_pct": primary_region_pct,
         "company_name": data.get("Title") or data.get("SiteName") or "",
+        # Extended fields
+        "sw_monthly_visits": sw_monthly_visits,
+        "sw_global_rank": sw_global_rank,
+        "sw_engagement": sw_engagement,
     }

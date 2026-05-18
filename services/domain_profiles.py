@@ -304,6 +304,16 @@ def sync_domain_profiles() -> dict:
         _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,} доменів ✓", "pct": 35})
         logger.info(f"SW parsed: {len(sw_parsed)}")
 
+        # Safety guard: if privateBQ is empty (e.g. first deploy before sync_parsed_from_corp runs),
+        # abort the full sync to avoid overwriting domain_profiles with blank SW/BW data.
+        # Run POST /api/admin/sync_parsed_from_corp first to populate privateBQ.
+        if len(sw_parsed) == 0:
+            msg = ("privateBQ sw_parsed is empty — aborting full sync to protect existing data. "
+                   "Run POST /api/admin/sync_parsed_from_corp first, then retry.")
+            logger.error(msg)
+            _sync_status.update({"error": msg, "progress": f"❌ {msg[:80]}", "running": False})
+            return {"error": msg}
+
         # Phase 2 — BW (35 → 70%): read from privateBQ bw_parsed (cheap, already extracted)
         _sync_status.update({"progress": "2/4 · BW запит (privateBQ)…", "pct": 35})
         bw_parsed: dict[str, dict] = {}

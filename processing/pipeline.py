@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 
 from config.settings import DELAY_BETWEEN_API_CALLS
-from core.bigquery import get_cached, get_sw_parsed, get_bw_parsed, save_bw_parsed
+from core.bigquery import get_cached, get_sw_parsed, get_bw_parsed, save_bw_parsed, was_parsed_prefetched
 from services.similarweb import fetch_similarweb, parse_similarweb
 from services.builtwith import fetch_builtwith, parse_builtwith
 from services.claude_ai import (
@@ -102,9 +102,13 @@ async def process_domain(
         if sw_want:
             sw_parsed_cache = None if force_refresh else get_sw_parsed(working_domain)
         else:
-            # Not selected — try privateBQ first, fall back to corpBQ raw for enrichment
+            # Not selected — try privateBQ first.
+            # Fallback to corpBQ raw only for single-domain calls (no batch prefetch ran).
+            # In batch jobs, prefetch_parsed() sets explicit sentinels — skip corpBQ to avoid
+            # N individual 1.9GB table scans (one per domain).
             sw_parsed_cache = get_sw_parsed(working_domain)
-            if sw_parsed_cache is None:
+            if sw_parsed_cache is None and not was_parsed_prefetched(working_domain):
+                # Single-domain path (e.g., direct API call) — corpBQ fallback is fine
                 sw_raw = get_cached("similarweb_raw_data", working_domain, ignore_ttl=True)
                 if sw_raw:
                     sw_parsed_cache = parse_similarweb(sw_raw)
@@ -113,7 +117,8 @@ async def process_domain(
             bw_parsed_cache = None if force_refresh else get_bw_parsed(working_domain)
         else:
             bw_parsed_cache = get_bw_parsed(working_domain)
-            if bw_parsed_cache is None:
+            if bw_parsed_cache is None and not was_parsed_prefetched(working_domain):
+                # Single-domain path only — skip corpBQ in batch jobs
                 bw_raw = get_cached("builtwith_raw_data", working_domain, ignore_ttl=True)
                 if bw_raw:
                     p = parse_builtwith(bw_raw)
@@ -122,6 +127,28 @@ async def process_domain(
                         vertical = bw_res[0].get("Result", {}).get("Vertical", "") if bw_res else ""
                     except Exception:
                         vertical = ""
+                    # Also build technologies_json from raw corpBQ blob (backward-compat fallback)
+                    _tj = "[]"
+                    try:
+                        import json as _json
+                        _paths = bw_raw.get("Results", [{}])[0].get("Result", {}).get("Paths", [])
+                        _all = [t for _p in _paths for t in _p.get("Technologies", []) if t.get("Name")]
+                        _recs = []
+                        for t in _all:
+                            _tag = t.get("Tag", [])
+                            _ft = (_tag[0] if isinstance(_tag, list) and _tag
+                                   else _tag if isinstance(_tag, str) else "")
+                            _rec = {"n": t.get("Name", ""), "t": _ft}
+                            _ld = t.get("LastDetected")
+                            if _ld is not None:
+                                try:
+                                    _rec["l"] = int(_ld)
+                                except (ValueError, TypeError):
+                                    pass
+                            _recs.append(_rec)
+                        _tj = _json.dumps(_recs)
+                    except Exception:
+                        pass
                     bw_parsed_cache = {
                         "bw_vertical": vertical,
                         "bw_cms_raw": p.get("bw_cms", ""),
@@ -129,6 +156,7 @@ async def process_domain(
                         "bw_email_marketing": p.get("bw_email_marketing", ""),
                         "bw_technologies": p.get("bw_technologies", "[]"),
                         "techs_compact": "",
+                        "technologies_json": _tj,
                     }
 
         sw_needs_fetch = sw_parsed_cache is None and sw_want
@@ -197,17 +225,35 @@ async def process_domain(
             result["osearch"]  = m.get("osearch")
             result["osearch_group"] = m.get("osearch_group")
             result["ems_list"] = m.get("ems_list")
-            # Build techs_compact and save to privateBQ bw_parsed
+            # Build techs_compact + technologies_json and save to privateBQ bw_parsed
             _SEP_FIELD, _SEP_TECH = "\x01", "\x02"
+            techs_compact = ""
+            technologies_json_str = "[]"
             try:
+                import json as _json
                 paths = bw_data.get("Results", [{}])[0].get("Result", {}).get("Paths", [])
-                techs = [
+                all_techs = [t for path in paths for t in path.get("Technologies", []) if t.get("Name")]
+                techs_compact = _SEP_TECH.join(
                     f"{t.get('Name', '')}{_SEP_FIELD}{t.get('LastDetected', '0') or '0'}"
-                    for path in paths for t in path.get("Technologies", []) if t.get("Name")
-                ]
-                techs_compact = _SEP_TECH.join(techs)
+                    for t in all_techs
+                )
+                # Rich JSON: all techs with name, first tag, last-detected timestamp
+                tech_records = []
+                for t in all_techs:
+                    tag_raw = t.get("Tag", [])
+                    first_tag = (tag_raw[0] if isinstance(tag_raw, list) and tag_raw
+                                 else tag_raw if isinstance(tag_raw, str) else "")
+                    rec = {"n": t.get("Name", ""), "t": first_tag}
+                    ld = t.get("LastDetected")
+                    if ld is not None:
+                        try:
+                            rec["l"] = int(ld)
+                        except (ValueError, TypeError):
+                            pass
+                    tech_records.append(rec)
+                technologies_json_str = _json.dumps(tech_records)
             except Exception:
-                techs_compact = ""
+                pass
             asyncio.create_task(asyncio.to_thread(save_bw_parsed, working_domain, {
                 "bw_vertical": result.get("bw_vertical", ""),
                 "bw_cms_raw": result.get("bw_cms_raw", ""),
@@ -215,6 +261,7 @@ async def process_domain(
                 "bw_email_marketing": result.get("bw_email_marketing", ""),
                 "bw_technologies": result.get("bw_technologies", "[]"),
                 "techs_compact": techs_compact,
+                "technologies_json": technologies_json_str,
             }))
         elif bw_parsed_cache:
             # Served from privateBQ parsed cache

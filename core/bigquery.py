@@ -27,27 +27,33 @@ BW_PARSED_TABLE = "bw_parsed"
 logger = logging.getLogger(__name__)
 
 _SW_PARSED_SCHEMA = [
-    bigquery.SchemaField("domain", "STRING"),
-    bigquery.SchemaField("fetched_at", "TIMESTAMP"),
-    bigquery.SchemaField("sw_visits", "FLOAT64"),
-    bigquery.SchemaField("sw_category", "STRING"),
-    bigquery.SchemaField("sw_subcategory", "STRING"),
-    bigquery.SchemaField("sw_description", "STRING"),
-    bigquery.SchemaField("sw_title", "STRING"),
-    bigquery.SchemaField("sw_primary_region", "STRING"),
-    bigquery.SchemaField("sw_primary_region_pct", "FLOAT64"),
-    bigquery.SchemaField("company_name", "STRING"),
+    bigquery.SchemaField("domain",               "STRING"),
+    bigquery.SchemaField("fetched_at",           "TIMESTAMP"),
+    bigquery.SchemaField("sw_visits",            "FLOAT64"),
+    bigquery.SchemaField("sw_category",          "STRING"),
+    bigquery.SchemaField("sw_subcategory",       "STRING"),
+    bigquery.SchemaField("sw_description",       "STRING"),
+    bigquery.SchemaField("sw_title",             "STRING"),
+    bigquery.SchemaField("sw_primary_region",    "STRING"),
+    bigquery.SchemaField("sw_primary_region_pct","FLOAT64"),
+    bigquery.SchemaField("company_name",         "STRING"),
+    # Extended fields for autonomous work
+    bigquery.SchemaField("sw_top_countries",     "STRING"),   # JSON: top-5 [{country, value}]
+    bigquery.SchemaField("sw_monthly_visits",    "STRING"),   # JSON: {"2024-01": 12000, ...}
+    bigquery.SchemaField("sw_global_rank",       "INT64"),    # global traffic rank
+    bigquery.SchemaField("sw_engagement",        "STRING"),   # JSON: {bounce_rate, pages_per_visit, avg_visit_duration}
 ]
 
 _BW_PARSED_SCHEMA = [
-    bigquery.SchemaField("domain", "STRING"),
-    bigquery.SchemaField("fetched_at", "TIMESTAMP"),
-    bigquery.SchemaField("bw_vertical", "STRING"),
-    bigquery.SchemaField("bw_cms_raw", "STRING"),
-    bigquery.SchemaField("bw_ecommerce", "STRING"),
-    bigquery.SchemaField("bw_email_marketing", "STRING"),
-    bigquery.SchemaField("bw_technologies", "STRING"),
-    bigquery.SchemaField("techs_compact", "STRING"),
+    bigquery.SchemaField("domain",               "STRING"),
+    bigquery.SchemaField("fetched_at",           "TIMESTAMP"),
+    bigquery.SchemaField("bw_vertical",          "STRING"),
+    bigquery.SchemaField("bw_cms_raw",           "STRING"),
+    bigquery.SchemaField("bw_ecommerce",         "STRING"),
+    bigquery.SchemaField("bw_email_marketing",   "STRING"),
+    bigquery.SchemaField("bw_technologies",      "STRING"),   # JSON list of known tech names
+    bigquery.SchemaField("techs_compact",        "STRING"),   # compact format for catalog matching
+    bigquery.SchemaField("technologies_json",    "STRING"),   # ALL techs: [{n,t,v,l}] incl. unknown
 ]
 
 
@@ -148,14 +154,34 @@ _JOB_DOMAINS_SCHEMA = [
 ]
 
 
+def _ensure_or_migrate_table(bq: bigquery.Client, table_name: str, schema: list, sentinel_col: str) -> None:
+    """
+    Create table if missing, or recreate if `sentinel_col` is absent (schema migration).
+    Safe to call on empty tables — drops & recreates if schema is stale.
+    """
+    full_ref = f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{table_name}"
+    tbl_obj = bigquery.Table(full_ref, schema=schema)
+    try:
+        existing = bq.get_table(full_ref)
+        existing_cols = {f.name for f in existing.schema}
+        if sentinel_col not in existing_cols:
+            logger.info(f"Migrating {table_name}: missing column '{sentinel_col}', recreating")
+            bq.delete_table(full_ref)
+            bq.create_table(tbl_obj)
+            logger.info(f"Recreated {table_name} with updated schema")
+        else:
+            logger.info(f"Table {table_name} schema OK")
+    except Exception:
+        bq.create_table(tbl_obj)
+        logger.info(f"Created table {table_name}")
+
+
 def ensure_tables_exist():
     bq = client()
     tables_to_create = {
         BQ_JOBS_TABLE: JOBS_SCHEMA,
         BQ_RESULTS_TABLE: RESULTS_SCHEMA,
         BQ_JOB_DOMAINS_TABLE: _JOB_DOMAINS_SCHEMA,
-        SW_PARSED_TABLE: _SW_PARSED_SCHEMA,
-        BW_PARSED_TABLE: _BW_PARSED_SCHEMA,
     }
     for table_name, schema in tables_to_create.items():
         table_ref_obj = bigquery.Table(f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{table_name}", schema=schema)
@@ -165,6 +191,9 @@ def ensure_tables_exist():
         except Exception:
             bq.create_table(table_ref_obj)
             logger.info(f"Created table {table_name}")
+    # Parsed tables use migration logic to add new columns on first deploy
+    _ensure_or_migrate_table(bq, SW_PARSED_TABLE, _SW_PARSED_SCHEMA, "sw_engagement")
+    _ensure_or_migrate_table(bq, BW_PARSED_TABLE, _BW_PARSED_SCHEMA, "technologies_json")
     bq_corp = corp_client()
     for table_name in [BQ_BUILTWITH_CACHE, BQ_SIMILARWEB_CACHE]:
         try:
@@ -270,6 +299,11 @@ def save_sw_parsed(domain: str, parsed: dict) -> None:
         "sw_primary_region": parsed.get("sw_primary_region", ""),
         "sw_primary_region_pct": parsed.get("sw_primary_region_pct"),
         "company_name": parsed.get("company_name", ""),
+        # Extended fields
+        "sw_top_countries": parsed.get("sw_top_countries", "[]"),
+        "sw_monthly_visits": parsed.get("sw_monthly_visits", "{}"),
+        "sw_global_rank": parsed.get("sw_global_rank"),
+        "sw_engagement": parsed.get("sw_engagement", "{}"),
     }
     try:
         errors = bq.insert_rows_json(table_ref(SW_PARSED_TABLE), [row])
@@ -294,6 +328,7 @@ def save_bw_parsed(domain: str, bw_dict: dict) -> None:
         "bw_email_marketing": bw_dict.get("bw_email_marketing", ""),
         "bw_technologies": bw_dict.get("bw_technologies", "[]"),
         "techs_compact": bw_dict.get("techs_compact", ""),
+        "technologies_json": bw_dict.get("technologies_json", "[]"),
     }
     try:
         errors = bq.insert_rows_json(table_ref(BW_PARSED_TABLE), [row])
@@ -324,7 +359,8 @@ def prefetch_parsed(domains: list[str]) -> None:
         rows = list(bq.query(
             f"""
             SELECT domain, sw_visits, sw_category, sw_subcategory, sw_description,
-                   sw_title, sw_primary_region, sw_primary_region_pct, company_name
+                   sw_title, sw_primary_region, sw_primary_region_pct, company_name,
+                   sw_top_countries, sw_monthly_visits, sw_global_rank, sw_engagement
             FROM (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
                 FROM `{table_ref(SW_PARSED_TABLE)}`
@@ -345,6 +381,10 @@ def prefetch_parsed(domains: list[str]) -> None:
                 "sw_primary_region": row["sw_primary_region"] or "",
                 "sw_primary_region_pct": row["sw_primary_region_pct"],
                 "company_name": row["company_name"] or "",
+                "sw_top_countries": row["sw_top_countries"] or "[]",
+                "sw_monthly_visits": row["sw_monthly_visits"] or "{}",
+                "sw_global_rank": row["sw_global_rank"],
+                "sw_engagement": row["sw_engagement"] or "{}",
             }
             sw_hits += 1
         for d in unique_domains:
@@ -360,7 +400,7 @@ def prefetch_parsed(domains: list[str]) -> None:
         rows = list(bq.query(
             f"""
             SELECT domain, bw_vertical, bw_cms_raw, bw_ecommerce, bw_email_marketing,
-                   bw_technologies, techs_compact
+                   bw_technologies, techs_compact, technologies_json
             FROM (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
                 FROM `{table_ref(BW_PARSED_TABLE)}`
@@ -379,6 +419,7 @@ def prefetch_parsed(domains: list[str]) -> None:
                 "bw_email_marketing": row["bw_email_marketing"] or "",
                 "bw_technologies": row["bw_technologies"] or "[]",
                 "techs_compact": row["techs_compact"] or "",
+                "technologies_json": row["technologies_json"] or "[]",
             }
             bw_hits += 1
         for d in unique_domains:
@@ -399,7 +440,8 @@ def get_sw_parsed(domain: str) -> Optional[dict]:
         rows = list(bq.query(
             f"""
             SELECT sw_visits, sw_category, sw_subcategory, sw_description,
-                   sw_title, sw_primary_region, sw_primary_region_pct, company_name
+                   sw_title, sw_primary_region, sw_primary_region_pct, company_name,
+                   sw_top_countries, sw_monthly_visits, sw_global_rank, sw_engagement
             FROM `{table_ref(SW_PARSED_TABLE)}`
             WHERE domain = @domain
             ORDER BY fetched_at DESC LIMIT 1
@@ -419,6 +461,10 @@ def get_sw_parsed(domain: str) -> Optional[dict]:
                 "sw_primary_region": r["sw_primary_region"] or "",
                 "sw_primary_region_pct": r["sw_primary_region_pct"],
                 "company_name": r["company_name"] or "",
+                "sw_top_countries": r["sw_top_countries"] or "[]",
+                "sw_monthly_visits": r["sw_monthly_visits"] or "{}",
+                "sw_global_rank": r["sw_global_rank"],
+                "sw_engagement": r["sw_engagement"] or "{}",
             }
             _parsed_sw_cache[domain] = result
             return result
@@ -439,7 +485,7 @@ def get_bw_parsed(domain: str) -> Optional[dict]:
         rows = list(bq.query(
             f"""
             SELECT bw_vertical, bw_cms_raw, bw_ecommerce, bw_email_marketing,
-                   bw_technologies, techs_compact
+                   bw_technologies, techs_compact, technologies_json
             FROM `{table_ref(BW_PARSED_TABLE)}`
             WHERE domain = @domain
             ORDER BY fetched_at DESC LIMIT 1
@@ -457,6 +503,7 @@ def get_bw_parsed(domain: str) -> Optional[dict]:
                 "bw_email_marketing": r["bw_email_marketing"] or "",
                 "bw_technologies": r["bw_technologies"] or "[]",
                 "techs_compact": r["techs_compact"] or "",
+                "technologies_json": r["technologies_json"] or "[]",
             }
             _parsed_bw_cache[domain] = result
             return result
@@ -465,6 +512,15 @@ def get_bw_parsed(domain: str) -> Optional[dict]:
     except Exception as e:
         logger.error(f"get_bw_parsed error ({domain}): {e}")
         return None
+
+
+def was_parsed_prefetched(domain: str) -> bool:
+    """
+    Returns True if this domain was included in a prefetch_parsed() call
+    (even if no data was found — i.e., the value is None/miss).
+    Used in pipeline to skip expensive corpBQ fallback during batch jobs.
+    """
+    return domain in _parsed_sw_cache or domain in _parsed_bw_cache
 
 
 def clear_parsed_cache() -> None:
@@ -511,7 +567,25 @@ def sync_parsed_from_corp() -> dict:
                         JSON_VALUE(response_json, '$.SiteName'), ''
                     ) AS sw_title,
                     COALESCE(JSON_VALUE(response_json, '$.TopCountryShares[0].CountryCode'), '') AS sw_primary_region,
-                    SAFE_CAST(JSON_VALUE(response_json, '$.TopCountryShares[0].Value') AS FLOAT64) AS sw_region_val
+                    SAFE_CAST(JSON_VALUE(response_json, '$.TopCountryShares[0].Value') AS FLOAT64) AS sw_region_val,
+                    -- Extended: top-5 countries as JSON array
+                    IFNULL(TO_JSON_STRING(ARRAY(
+                        SELECT AS STRUCT
+                            JSON_VALUE(c, '$.CountryCode') AS country,
+                            ROUND(SAFE_CAST(JSON_VALUE(c, '$.Value') AS FLOAT64), 4) AS value
+                        FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.TopCountryShares')) AS c
+                        LIMIT 5
+                    )), '[]') AS sw_top_countries,
+                    -- Extended: monthly visits history
+                    IFNULL(JSON_QUERY(response_json, '$.EstimatedMonthlyVisits'), '{{}}') AS sw_monthly_visits,
+                    -- Extended: global rank
+                    SAFE_CAST(JSON_VALUE(response_json, '$.GlobalRank.Rank') AS INT64) AS sw_global_rank,
+                    -- Extended: engagement metrics
+                    TO_JSON_STRING(STRUCT(
+                        SAFE_CAST(JSON_VALUE(response_json, '$.Engagments.BounceRate') AS FLOAT64) AS bounce_rate,
+                        SAFE_CAST(JSON_VALUE(response_json, '$.Engagments.PagePerVisit') AS FLOAT64) AS pages_per_visit,
+                        SAFE_CAST(JSON_VALUE(response_json, '$.Engagments.TimeOnSite') AS FLOAT64) AS avg_visit_duration
+                    )) AS sw_engagement
                 FROM {sw_tbl}
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
             ) S
@@ -525,17 +599,23 @@ def sync_parsed_from_corp() -> dict:
                 T.sw_title             = S.sw_title,
                 T.sw_primary_region    = S.sw_primary_region,
                 T.sw_primary_region_pct = ROUND((COALESCE(S.sw_region_val, 0)) * 100, 1),
-                T.company_name         = S.sw_title
+                T.company_name         = S.sw_title,
+                T.sw_top_countries     = S.sw_top_countries,
+                T.sw_monthly_visits    = S.sw_monthly_visits,
+                T.sw_global_rank       = S.sw_global_rank,
+                T.sw_engagement        = S.sw_engagement
             WHEN NOT MATCHED THEN INSERT (
                 domain, fetched_at, sw_visits, sw_category, sw_subcategory,
-                sw_description, sw_title, sw_primary_region, sw_primary_region_pct, company_name
+                sw_description, sw_title, sw_primary_region, sw_primary_region_pct, company_name,
+                sw_top_countries, sw_monthly_visits, sw_global_rank, sw_engagement
             ) VALUES (
                 S.domain, S.fetched_at, S.sw_visits,
                 IF(STRPOS(S.sw_category_raw, '/') > 0, SPLIT(S.sw_category_raw, '/')[OFFSET(0)], S.sw_category_raw),
                 IF(STRPOS(S.sw_category_raw, '/') > 0, SPLIT(S.sw_category_raw, '/')[OFFSET(1)], ''),
                 S.sw_description, S.sw_title, S.sw_primary_region,
                 ROUND((COALESCE(S.sw_region_val, 0)) * 100, 1),
-                S.sw_title
+                S.sw_title,
+                S.sw_top_countries, S.sw_monthly_visits, S.sw_global_rank, S.sw_engagement
             )
         """
         sw_job = bq.query(sw_merge)
@@ -574,7 +654,18 @@ def sync_parsed_from_corp() -> dict:
                         FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
                         UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
                         WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
-                    ), '') AS techs_compact
+                    ), '') AS techs_compact,
+                    -- Extended: ALL technologies as rich JSON array [{n, t, l}]
+                    IFNULL((
+                        SELECT TO_JSON_STRING(ARRAY_AGG(STRUCT(
+                            JSON_VALUE(tech, '$.Name') AS n,
+                            IFNULL(JSON_VALUE(tech, '$.Tag[0]'), '') AS t,
+                            SAFE_CAST(JSON_VALUE(tech, '$.LastDetected') AS INT64) AS l
+                        )))
+                        FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
+                        UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
+                        WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
+                    ), '[]') AS technologies_json
                 FROM {bw_tbl}
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
             ) S
@@ -586,13 +677,14 @@ def sync_parsed_from_corp() -> dict:
                 T.bw_ecommerce       = S.bw_ecommerce,
                 T.bw_email_marketing = S.bw_email_marketing,
                 T.bw_technologies    = S.bw_technologies,
-                T.techs_compact      = S.techs_compact
+                T.techs_compact      = S.techs_compact,
+                T.technologies_json  = S.technologies_json
             WHEN NOT MATCHED THEN INSERT (
                 domain, fetched_at, bw_vertical, bw_cms_raw, bw_ecommerce,
-                bw_email_marketing, bw_technologies, techs_compact
+                bw_email_marketing, bw_technologies, techs_compact, technologies_json
             ) VALUES (
                 S.domain, S.fetched_at, S.bw_vertical, S.bw_cms_raw, S.bw_ecommerce,
-                S.bw_email_marketing, S.bw_technologies, S.techs_compact
+                S.bw_email_marketing, S.bw_technologies, S.techs_compact, S.technologies_json
             )
         """
         bw_job = bq.query(bw_merge)
