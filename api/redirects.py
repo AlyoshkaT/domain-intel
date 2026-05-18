@@ -4,7 +4,7 @@ Redirects API router — exposes domain_redirects table.
 from fastapi import APIRouter, Request
 from google.cloud import bigquery
 
-from core.bigquery import client, table_ref
+from core.bigquery import client, table_ref, _bq_touch
 from services.redirect_resolver import REDIRECTS_TABLE
 
 router = APIRouter()
@@ -19,6 +19,7 @@ async def get_redirects(
     date_to: str = "",
     limit: int = 2000,
 ):
+    _bq_touch("priv_r")
     bq = client()
     conditions = []
     params: list[bigquery.ScalarQueryParameter] = []
@@ -67,6 +68,7 @@ async def get_redirects(
 @router.get("/api/redirects/jobs")
 async def get_redirect_jobs():
     """Return distinct job_ids that have redirect records (for filter dropdown)."""
+    _bq_touch("priv_r")
     bq = client()
     try:
         rows = list(bq.query(f"""

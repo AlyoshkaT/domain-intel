@@ -52,6 +52,8 @@ async def remove_catalog_entry(sheet: str, technology: str):
     from config.settings import GOOGLE_SHEETS_CATALOG_ID
     from core.bigquery import client, table_ref
     from google.cloud import bigquery
+    from core.bigquery import _bq_touch
+    _bq_touch("priv_w")
 
     # 1. Delete from BQ
     bq = client()
@@ -262,7 +264,8 @@ async def get_usage():
 
 @router.get("/jobs/count")
 async def count_clearable_jobs():
-    from core.bigquery import client, table_ref
+    from core.bigquery import client, table_ref, _bq_touch
+    _bq_touch("priv_r")
     bq = client()
     rows = list(bq.query(
         f"SELECT COUNT(*) as cnt FROM `{table_ref('analysis_jobs')}` WHERE status NOT IN ('running','pending')"
@@ -272,7 +275,8 @@ async def count_clearable_jobs():
 
 @router.post("/jobs/clear")
 async def clear_job_history():
-    from core.bigquery import client, table_ref
+    from core.bigquery import client, table_ref, _bq_touch
+    _bq_touch("priv_w")
     bq = client()
     bq.query(
         f"DELETE FROM `{table_ref('analysis_jobs')}` WHERE status NOT IN ('running','pending')"

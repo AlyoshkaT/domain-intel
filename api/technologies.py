@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from google.cloud import bigquery as bq
 
-from core.bigquery import corp_client
+from core.bigquery import corp_client, _bq_touch
 from config.settings import CORP_PROJECT_ID, CORP_DATASET
 
 router = APIRouter(prefix="/api/technologies")
@@ -53,6 +53,7 @@ async def aggregate_technologies(body: dict):
             name = t if isinstance(t, str) else t.get("name", "")
             if name: known[name.lower()] = name
 
+        _bq_touch("corp_r")
         corp = corp_client()
         if filter_domains:
             domain_list = ", ".join(f"'{d}'" for d in filter_domains[:10000])

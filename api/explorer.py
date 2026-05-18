@@ -8,7 +8,7 @@ import time
 from fastapi import APIRouter, BackgroundTasks, Request
 from google.cloud import bigquery as bq
 
-from core.bigquery import client, table_ref
+from core.bigquery import client, table_ref, _bq_touch
 from api.auth import require_permission
 
 router = APIRouter(prefix="/api/explore", dependencies=[require_permission("explorer")])
@@ -120,6 +120,7 @@ async def get_all_profiles():
     if _profiles_cache and (now - _profiles_cache_ts) < _PROFILES_CACHE_TTL:
         return _profiles_cache
     try:
+        _bq_touch("priv_r")
         bq_client = client()
         cols_sql = ", ".join(PROFILE_COLUMNS)
         # Use large page_size to reduce HTTP round-trips (default ~10K → 50K per request)
@@ -161,6 +162,7 @@ def invalidate_profiles_cache():
 async def get_domain_detail(domain: str):
     """Fetch full profile for a single domain including sw_description."""
     try:
+        _bq_touch("priv_r")
         bq_client = client()
         cols_sql = ", ".join(PROFILE_COLUMNS_FULL)
         rows = list(bq_client.query(
@@ -179,6 +181,7 @@ async def get_domain_detail(domain: str):
 @router.get("/stats")
 async def explore_stats():
     try:
+        _bq_touch("priv_r")
         bq_client = client()
         rows = list(bq_client.query(f"""
             SELECT
@@ -210,6 +213,7 @@ async def get_field_values(field: str, q: str = ""):
         return {"values": _values_cache[cache_key]}
 
     try:
+        _bq_touch("priv_r")
         bq_client = client()
         where = f"AND LOWER({field}) LIKE LOWER(@q)" if q else ""
         params = [bq.ScalarQueryParameter("q", "STRING", f"%{q}%")] if q else []
@@ -244,6 +248,7 @@ async def explore_search(body: dict):
     job_cfg = bq.QueryJobConfig(query_parameters=params)
 
     try:
+        _bq_touch("priv_r")
         bq_client = client()
 
         # Count
