@@ -23,12 +23,14 @@ function BqCallStatsSection() {
   const [resources, setResources] = useState<Record<string, { today: number; week: number; month: number }>>({})
   const [loading, setLoading]     = useState(true)
   const [updatedAt, setUpdatedAt] = useState("")
+  const [bytes, setBytes] = useState<{ corp_gb: number | null; priv_gb: number | null; max_gb: number } | null>(null)
 
   const load = useCallback(async () => {
     try {
       const r = await apiFetch("/api/setup/bq_call_stats")
       setResources(r.resources || {})
       setUpdatedAt(new Date().toLocaleTimeString("uk-UA"))
+      setBytes(r.bytes || null)
     } catch {}
     finally { setLoading(false) }
   }, [])
@@ -115,6 +117,31 @@ function BqCallStatsSection() {
               </tr>
             </tfoot>
           </table>
+        </div>
+      )}
+      {bytes && (
+        <div style={{ marginTop: 12, display: "flex", gap: 16, flexWrap: "wrap" }}>
+          {[
+            { label: "corpBQ billed цього місяця", gb: bytes.corp_gb, dot: "#60a5fa" },
+            { label: "privatBQ billed цього місяця", gb: bytes.priv_gb, dot: "#34d399" },
+          ].map(({ label, gb, dot }) => (
+            <div key={label} style={{
+              background: "var(--bg-2)", borderRadius: 8, padding: "8px 14px",
+              display: "flex", alignItems: "center", gap: 10,
+              border: "1px solid var(--border)",
+            }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: dot, display: "inline-block", flexShrink: 0 }} />
+              <span style={{ fontSize: 12, color: "var(--text-2)" }}>{label}:</span>
+              <span style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 13 }}>
+                {gb === null ? "—" : gb >= 1 ? `${gb.toFixed(2)} GB` : `${(gb * 1024).toFixed(0)} MB`}
+              </span>
+              {gb !== null && bytes.max_gb && (
+                <span style={{ fontSize: 11, color: gb / bytes.max_gb > 0.7 ? "var(--danger)" : "var(--text-3)" }}>
+                  / {bytes.max_gb} GB ліміт
+                </span>
+              )}
+            </div>
+          ))}
         </div>
       )}
       <p style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8, marginBottom: 0 }}>

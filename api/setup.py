@@ -269,8 +269,10 @@ def test_log(request: Request):
 @router.get("/bq_call_stats")
 def get_bq_call_stats_endpoint():
     """Per-resource BQ call counters: today / last 7 days / current month."""
-    from core.bigquery import get_bq_call_stats
-    return get_bq_call_stats()
+    from core.bigquery import get_bq_call_stats, get_bq_bytes_stats
+    stats = get_bq_call_stats()
+    stats["bytes"] = get_bq_bytes_stats()
+    return stats
 
 
 # ── API Usage ─────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from google.cloud import bigquery as bq
 
-from core.bigquery import client, table_ref, _bq_touch, _bq_op, track_bq_call, BW_PARSED_TABLE
+from core.bigquery import client, table_ref, _bq_touch, _bq_op, track_bq_call, BW_PARSED_TABLE, _bq_qcfg
 
 router = APIRouter(prefix="/api/technologies")
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def aggregate_technologies(body: dict):
                     {domain_where}
                 ) WHERE rn = 1
                 LIMIT 50000
-            """).result())
+            """, job_config=_bq_qcfg()).result())
         track_bq_call("priv_bw")
 
         from_ts = 0

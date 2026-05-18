@@ -8,7 +8,7 @@ import time
 from fastapi import APIRouter, BackgroundTasks, Request
 from google.cloud import bigquery as bq
 
-from core.bigquery import client, table_ref, _bq_touch, _bq_op
+from core.bigquery import client, table_ref, _bq_touch, _bq_op, _bq_qcfg
 from api.auth import require_permission
 
 router = APIRouter(prefix="/api/explore", dependencies=[require_permission("explorer")])
@@ -129,7 +129,7 @@ def get_all_profiles():
                 SELECT {cols_sql}
                 FROM `{table_ref(PROFILES_TABLE)}`
                 ORDER BY sw_visits DESC NULLS LAST
-            """)
+            """, job_config=_bq_qcfg())
             result_iter = job.result(page_size=50000)
 
             # Build compact columnar structure: list of lists, no repeated keys.

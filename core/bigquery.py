@@ -17,10 +17,29 @@ from config.settings import (
     GOOGLE_APPLICATION_CREDENTIALS,
     GOOGLE_CORP_CREDENTIALS, CORP_PROJECT_ID, CORP_DATASET,
     BQ_BUILTWITH_CACHE, BQ_SIMILARWEB_CACHE,
-    BQ_JOBS_TABLE, BQ_RESULTS_TABLE
+    BQ_JOBS_TABLE, BQ_RESULTS_TABLE,
+    BQ_MAX_BYTES_BILLED_GB,
 )
 
 BQ_JOB_DOMAINS_TABLE = "job_domain_lists"
+
+# Max bytes any single query is allowed to scan. Override via BQ_MAX_BYTES_BILLED_GB env var.
+# If a query would exceed this, it raises BadRequest instead of scanning (cost protection).
+_MAX_BYTES_BILLED = BQ_MAX_BYTES_BILLED_GB * 1024 ** 3
+
+
+def _bq_qcfg(
+    params: list | None = None,
+    max_bytes: bool = True,
+) -> bigquery.QueryJobConfig:
+    """Create a QueryJobConfig with optional params and byte-limit protection."""
+    kwargs: dict = {}
+    if params:
+        kwargs["query_parameters"] = params
+    if max_bytes:
+        kwargs["maximum_bytes_billed"] = _MAX_BYTES_BILLED
+    return bigquery.QueryJobConfig(**kwargs) if kwargs else bigquery.QueryJobConfig()
+
 
 SW_PARSED_TABLE = "sw_parsed"
 BW_PARSED_TABLE = "bw_parsed"
@@ -339,7 +358,7 @@ def prefetch_corp_cache(domains: list[str], tables: list[str]) -> None:
             """
             rows = list(bq.query(
                 query,
-                job_config=bigquery.QueryJobConfig(query_parameters=params)
+                job_config=_bq_qcfg(params=params)
             ).result())
             hit_count = 0
             for row in rows:
@@ -726,6 +745,53 @@ def get_bq_call_stats() -> dict:
     return {"resources": data, "updated_at": datetime.now(timezone.utc).isoformat()}
 
 
+_bytes_stats_cache: dict = {}
+_bytes_stats_cache_ts: float = 0.0
+_BYTES_STATS_TTL = 1800.0  # 30 min — INFORMATION_SCHEMA is slow, cache aggressively
+
+
+def get_bq_bytes_stats() -> dict:
+    """Query INFORMATION_SCHEMA.JOBS_BY_PROJECT to get bytes billed this month.
+    Returns {"corp_gb": float|None, "priv_gb": float|None, "max_gb": int}.
+    Cached for 30 minutes to avoid hammering INFORMATION_SCHEMA."""
+    global _bytes_stats_cache, _bytes_stats_cache_ts
+    now = time.time()
+    if _bytes_stats_cache and (now - _bytes_stats_cache_ts) < _BYTES_STATS_TTL:
+        return _bytes_stats_cache
+
+    location = BIGQUERY_LOCATION.lower()   # "eu", "us", "us-central1", etc.
+    info_prefix = f"region-{location}"
+    sql = f"""
+        SELECT ROUND(SUM(total_bytes_billed) / POW(1024, 3), 3) AS gb
+        FROM `{info_prefix}`.INFORMATION_SCHEMA.JOBS_BY_PROJECT
+        WHERE creation_time >= TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), MONTH)
+          AND state = 'DONE'
+          AND job_type = 'QUERY'
+    """
+
+    result: dict = {"corp_gb": None, "priv_gb": None, "max_gb": BQ_MAX_BYTES_BILLED_GB}
+
+    try:
+        rows = list(client().query(sql).result())
+        if rows:
+            v = rows[0]["gb"]
+            result["priv_gb"] = float(v) if v is not None else 0.0
+    except Exception as e:
+        logger.debug(f"get_bq_bytes_stats priv: {e}")
+
+    try:
+        rows = list(corp_client().query(sql).result())
+        if rows:
+            v = rows[0]["gb"]
+            result["corp_gb"] = float(v) if v is not None else 0.0
+    except Exception as e:
+        logger.debug(f"get_bq_bytes_stats corp: {e}")
+
+    _bytes_stats_cache = result
+    _bytes_stats_cache_ts = now
+    return result
+
+
 def sync_parsed_from_corp() -> dict:
     """
     Daily sync: MERGE corpBQ raw JSON → privateBQ sw_parsed + bw_parsed.
@@ -816,7 +882,7 @@ def sync_parsed_from_corp() -> dict:
                 S.sw_top_countries, S.sw_monthly_visits, S.sw_global_rank, S.sw_engagement
             )
         """
-        sw_job = bq.query(sw_merge)
+        sw_job = bq.query(sw_merge, job_config=_bq_qcfg())
         sw_job.result()
         sw_elapsed = time.time() - t0
         track_bq_call("corp_sw")
@@ -888,7 +954,7 @@ def sync_parsed_from_corp() -> dict:
                 S.bw_email_marketing, S.bw_technologies, S.techs_compact, S.technologies_json
             )
         """
-        bw_job = bq.query(bw_merge)
+        bw_job = bq.query(bw_merge, job_config=_bq_qcfg())
         bw_job.result()
         bw_elapsed = time.time() - t_bw
         track_bq_call("corp_bw")
@@ -939,11 +1005,8 @@ def get_cached(table: str, domain: str, ttl_days: int = 90, force: bool = False,
         WHERE domain = @domain {ttl_clause}
         ORDER BY fetched_at DESC LIMIT 1
     """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter("domain", "STRING", domain)]
-    )
     try:
-        rows = list(bq.query(query, job_config=job_config).result())
+        rows = list(bq.query(query, job_config=_bq_qcfg(params=[bigquery.ScalarQueryParameter("domain", "STRING", domain)])).result())
         elapsed = time.time() - t_start
         if rows:
             logger.info(f"Cache HIT: {table} / {domain} ({elapsed:.1f}s)")
