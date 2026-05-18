@@ -12,6 +12,7 @@ _scheduler_thread: threading.Thread | None = None
 _stop_event = threading.Event()
 _SYNC_HOUR_UTC = 4         # 04:00 UTC = 06:00 Kyiv (UTC+2 winter)
 _PARSED_SYNC_HOUR_UTC = 3  # 03:00 UTC — sync corpBQ raw → privateBQ parsed, 1 hour before profiles sync
+_RESET_BQ_LIMIT_HOUR_UTC = 0  # 00:00 UTC — daily reset of BQ byte limit back to safe default
 
 
 def _run_sync():
@@ -46,13 +47,32 @@ def _flush_call_stats():
         logger.debug(f"flush_bq_call_stats: {e}")
 
 
+_BQ_LIMIT_DAILY_RESET_GB = 25   # reset target — enough for a normal day, safe margin
+
+
+def _reset_bq_limit():
+    """Reset BQ byte limit back to safe daily default. Runs at midnight UTC."""
+    try:
+        from core.bigquery import set_setting, _invalidate_max_bytes_cache
+        set_setting("bq_max_bytes_gb", str(_BQ_LIMIT_DAILY_RESET_GB))
+        _invalidate_max_bytes_cache()
+        logger.info(f"BQ byte limit reset to {_BQ_LIMIT_DAILY_RESET_GB} GB (daily auto-reset)")
+    except Exception as e:
+        logger.warning(f"BQ limit daily reset failed: {e}")
+
+
 def _scheduler_loop():
-    """Check every 5 minutes if it's time to sync (daily at 03:00 and 04:00 UTC)."""
+    """Check every 5 minutes if it's time to sync (daily at 00:00, 03:00 and 04:00 UTC)."""
     import time
     while not _stop_event.is_set():
         _flush_call_stats()   # flush counters every 5-min tick
         now = datetime.utcnow()
-        if now.hour == _PARSED_SYNC_HOUR_UTC and now.minute < 5:
+        if now.hour == _RESET_BQ_LIMIT_HOUR_UTC and now.minute < 5:
+            logger.info("Daily BQ limit reset triggered")
+            _reset_bq_limit()
+            # Sleep 55 minutes to avoid double-trigger within same hour
+            _stop_event.wait(timeout=55 * 60)
+        elif now.hour == _PARSED_SYNC_HOUR_UTC and now.minute < 5:
             logger.info("Parsed sync triggered (corpBQ raw → privateBQ parsed)")
             thread = threading.Thread(target=_run_parsed_sync, daemon=True, name="parsed-sync")
             thread.start()

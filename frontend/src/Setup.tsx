@@ -757,7 +757,7 @@ function CacheSection({ lang }: { lang: Lang }) {
               onChange={e => {
                 const v = parseInt(e.target.value) || bqFloor
                 setBqMaxBytes(v)
-                setShowBqWarning(v > 50)
+                setShowBqWarning(v > 25)
               }}
               style={{ width: 90 }} />
             <span style={{ fontSize: 13, color: "var(--text-2)" }}>GB</span>
@@ -772,9 +772,10 @@ function CacheSection({ lang }: { lang: Lang }) {
               borderRadius: 8, fontSize: 13, color: "#fbbf24",
             }}>
               <span style={{ fontSize: 15, marginRight: 6 }}>⚠️</span>
-              <strong>ATTENTION!</strong> Ви збільшуєте ліміт BigQuery запитів понад 50 GB.
+              <strong>ATTENTION!</strong> Ви збільшуєте ліміт BigQuery запитів понад 25 GB.
               Великий ліміт може призвести до значних витрат у разі некоректного запиту.
-              Будь ласка, <strong>двічі подумайте</strong> перед збереженням. Якщо впевнені — натискайте «Зберегти».
+              Будь ласка, <strong>двічі подумайте</strong> перед збереженням.{" "}
+              Ліміт <strong>автоматично скидається до 25 GB щоночі о 00:00 UTC</strong> — вам не треба пам'ятати повернути.
             </div>
           )}
           {msgBq && <div className="setup-msg" style={{ marginTop: 8 }}>{msgBq}</div>}
