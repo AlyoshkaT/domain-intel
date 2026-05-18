@@ -1,5 +1,6 @@
 """
 Technologies API — aggregate BW technology data with time series.
+Reads from privateBQ.bw_parsed.technologies_json — no corpBQ calls needed.
 """
 import json
 import logging
@@ -8,12 +9,10 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from google.cloud import bigquery as bq
 
-from core.bigquery import corp_client, _bq_touch
-from config.settings import CORP_PROJECT_ID, CORP_DATASET
+from core.bigquery import client, table_ref, _bq_touch, BW_PARSED_TABLE
 
 router = APIRouter(prefix="/api/technologies")
 logger = logging.getLogger(__name__)
-BW_TABLE = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.builtwith_raw_data`"
 
 
 def _strip_version(name: str) -> str:
@@ -37,7 +36,6 @@ async def aggregate_technologies(body: dict):
     granularity = body.get("granularity", "month")
     filter_domains = body.get("domains", [])
     logger.info(f"Technologies request: domains={len(filter_domains)}, from={date_from}, to={date_to}")
-    logger.info(f"Technologies request: domains={len(filter_domains)}, from={date_from}, to={date_to}")
 
     try:
         from services.technology_catalog import get_catalog
@@ -53,18 +51,26 @@ async def aggregate_technologies(body: dict):
             name = t if isinstance(t, str) else t.get("name", "")
             if name: known[name.lower()] = name
 
-        _bq_touch("corp_r")
-        corp = corp_client()
+        _bq_touch("priv_r")
+        bq_client = client()
+
+        # Build domain filter
         if filter_domains:
             domain_list = ", ".join(f"'{d}'" for d in filter_domains[:10000])
             domain_where = f"WHERE LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({domain_list})"
         else:
             domain_where = ""
 
-        rows = list(corp.query(f"""
-            SELECT domain, response_json FROM {BW_TABLE}
-            {domain_where}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+        # Read only domain + technologies_json from privateBQ bw_parsed.
+        # This is orders of magnitude cheaper than reading full JSON blobs from corpBQ.
+        rows = list(bq_client.query(f"""
+            SELECT domain, technologies_json
+            FROM (
+                SELECT domain, technologies_json,
+                       ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                FROM `{table_ref(BW_PARSED_TABLE)}`
+                {domain_where}
+            ) WHERE rn = 1
             LIMIT 50000
         """).result())
 
@@ -83,72 +89,70 @@ async def aggregate_technologies(body: dict):
 
         for row in rows:
             domain = row["domain"]
-            rj = row["response_json"]
-            data = rj if isinstance(rj, dict) else (json.loads(rj) if rj else None)
-            if not data:
+            tj = row["technologies_json"]
+            if not tj:
                 continue
             try:
-                results = data.get("Results", [])
-                if not results:
+                techs = json.loads(tj) if isinstance(tj, str) else tj
+                if not isinstance(techs, list):
                     continue
-                paths = results[0].get("Result", {}).get("Paths", [])
-                for path in paths:
-                    for tech in path.get("Technologies", []):
-                        raw_name = tech.get("Name", "")
-                        if not raw_name:
+                for tech in techs:
+                    # Compact format: {"n": name, "t": tag, "f": first_detected_ms, "l": last_detected_ms}
+                    raw_name = tech.get("n", "")
+                    if not raw_name:
+                        continue
+                    name_clean = _strip_version(raw_name)
+                    name_lower = name_clean.lower()
+                    first_ms = tech.get("f") or 0
+                    last_ms = tech.get("l") or 0
+                    if last_ms and last_ms < from_ts: continue
+                    if first_ms and first_ms > to_ts: continue
+
+                    canonical = known.get(name_lower)
+                    if not canonical:
+                        unknown_techs[name_clean] = unknown_techs.get(name_clean, 0) + 1
+                        if not show_unknown:
                             continue
-                        name_clean = _strip_version(raw_name)
-                        name_lower = name_clean.lower()
-                        first_ms = tech.get("FirstDetected", 0)
-                        last_ms = tech.get("LastDetected", 0)
-                        if last_ms and last_ms < from_ts: continue
-                        if first_ms and first_ms > to_ts: continue
+                        canonical = name_clean
 
-                        canonical = known.get(name_lower)
-                        if not canonical:
-                            unknown_techs[name_clean] = unknown_techs.get(name_clean, 0) + 1
-                            if not show_unknown:
-                                continue
-                            canonical = name_clean
+                    if canonical not in tech_timeline:
+                        tech_timeline[canonical] = {}
 
-                        if canonical not in tech_timeline:
-                            tech_timeline[canonical] = {}
+                    if first_ms and last_ms:
+                        f_dt = datetime.fromtimestamp(first_ms / 1000, tz=timezone.utc).replace(day=1)
+                        l_dt = datetime.fromtimestamp(last_ms / 1000, tz=timezone.utc).replace(day=1)
+                        cur = f_dt
+                        while cur <= l_dt:
+                            if granularity == "year":
+                                period = cur.strftime("%Y")
+                            elif granularity == "quarter":
+                                q = (cur.month - 1) // 3 + 1
+                                period = f"{cur.year}-Q{q}"
+                            else:
+                                period = cur.strftime("%Y-%m")
+                            if period not in tech_timeline[canonical]:
+                                tech_timeline[canonical][period] = set()
+                            tech_timeline[canonical][period].add(domain)
+                            if granularity == "year":
+                                cur = cur.replace(year=cur.year + 1)
+                            elif granularity == "quarter":
+                                m = cur.month + 3
+                                cur = cur.replace(year=cur.year + (1 if m > 12 else 0), month=m - 12 if m > 12 else m)
+                            else:
+                                m = cur.month + 1
+                                cur = cur.replace(year=cur.year + (1 if m > 12 else 0), month=1 if m > 12 else m)
 
-                        if first_ms and last_ms:
-                            f_dt = datetime.fromtimestamp(first_ms / 1000, tz=timezone.utc).replace(day=1)
-                            l_dt = datetime.fromtimestamp(last_ms / 1000, tz=timezone.utc).replace(day=1)
-                            cur = f_dt
-                            while cur <= l_dt:
-                                if granularity == "year":
-                                    period = cur.strftime("%Y")
-                                elif granularity == "quarter":
-                                    q = (cur.month - 1) // 3 + 1
-                                    period = f"{cur.year}-Q{q}"
-                                else:
-                                    period = cur.strftime("%Y-%m")
-                                if period not in tech_timeline[canonical]:
-                                    tech_timeline[canonical][period] = set()
-                                tech_timeline[canonical][period].add(domain)
-                                if granularity == "year":
-                                    cur = cur.replace(year=cur.year + 1)
-                                elif granularity == "quarter":
-                                    m = cur.month + 3
-                                    cur = cur.replace(year=cur.year + (1 if m > 12 else 0), month=m - 12 if m > 12 else m)
-                                else:
-                                    m = cur.month + 1
-                                    cur = cur.replace(year=cur.year + (1 if m > 12 else 0), month=1 if m > 12 else m)
-
-                        if canonical not in tech_domains:
-                            tech_domains[canonical] = []
-                        if len(tech_domains[canonical]) < 100:
-                            tech_domains[canonical].append({
-                                "domain": domain, "name": canonical,
-                                "description": tech.get("Description", ""),
-                                "link": tech.get("Link", ""),
-                                "tag": tech.get("Tag", ""),
-                                "first_detected": _ts_to_ym(first_ms) if first_ms else "",
-                                "last_detected": _ts_to_ym(last_ms) if last_ms else "",
-                            })
+                    if canonical not in tech_domains:
+                        tech_domains[canonical] = []
+                    if len(tech_domains[canonical]) < 100:
+                        tech_domains[canonical].append({
+                            "domain": domain, "name": canonical,
+                            "description": "",
+                            "link": "",
+                            "tag": tech.get("t", ""),
+                            "first_detected": _ts_to_ym(first_ms) if first_ms else "",
+                            "last_detected": _ts_to_ym(last_ms) if last_ms else "",
+                        })
             except Exception as e:
                 logger.warning(f"Parse error {domain}: {e}")
 

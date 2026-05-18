@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from api.auth import require_permission
+from core.bigquery import _bq_touch
 
 logger = logging.getLogger(__name__)
 _admin = require_permission("admin")
@@ -111,6 +112,7 @@ async def get_drive_info():
 
 @router.get("/settings")
 async def get_settings():
+    _bq_touch("priv_r")
     from core.bigquery import get_setting
     return {
         "cache_ttl_days": int(get_setting("cache_ttl_days", "90")),
@@ -125,6 +127,7 @@ class SettingsUpdate(BaseModel):
 async def update_settings(data: SettingsUpdate):
     if not (1 <= data.cache_ttl_days <= 3650):
         raise HTTPException(status_code=400, detail="TTL must be 1–3650 days")
+    _bq_touch("priv_w")
     from core.bigquery import set_setting
     set_setting("cache_ttl_days", str(data.cache_ttl_days))
     return {"ok": True}
@@ -149,6 +152,7 @@ def _normalize_permissions(perms: str | list | None) -> str:
 
 @router.get("/users")
 async def list_users():
+    _bq_touch("priv_r")
     from core.bigquery import get_users
     return {"users": get_users()}
 
@@ -191,6 +195,7 @@ async def create_user(user: UserCreate):
         raise HTTPException(status_code=400, detail="Username required")
     if not user.password.strip():
         raise HTTPException(status_code=400, detail="Password required")
+    _bq_touch("priv_w")
     from core.bigquery import add_user
     from api.auth import invalidate_users_cache
     add_user(
@@ -204,6 +209,7 @@ async def create_user(user: UserCreate):
 
 @router.patch("/users/{username}")
 async def patch_user(username: str, update: UserUpdate):
+    _bq_touch("priv_w")
     from core.bigquery import update_user
     from api.auth import invalidate_users_cache
     fields = update.model_dump(exclude_none=True)
@@ -218,6 +224,7 @@ async def patch_user(username: str, update: UserUpdate):
 
 @router.delete("/users/{username}")
 async def delete_user(username: str):
+    _bq_touch("priv_w")
     from core.bigquery import remove_user
     from api.auth import invalidate_users_cache
     remove_user(username)
@@ -229,6 +236,7 @@ async def delete_user(username: str):
 
 @router.get("/logs")
 async def get_logs():
+    _bq_touch("priv_r")
     from core.bigquery import get_activity_logs
     return {"logs": get_activity_logs(limit=200)}
 
@@ -236,6 +244,7 @@ async def get_logs():
 @router.delete("/logs/clear")
 async def clear_logs():
     """Delete all activity log entries."""
+    _bq_touch("priv_w")
     from core.bigquery import clear_activity_logs
     deleted = clear_activity_logs()
     return {"deleted": deleted, "status": "ok"}
@@ -244,6 +253,7 @@ async def clear_logs():
 @router.post("/logs/test")
 async def test_log(request: Request):
     """Write a test log entry and immediately read it back (for diagnostics)."""
+    _bq_touch("priv_w"); _bq_touch("priv_r")
     from core.bigquery import log_activity, get_activity_logs
     username = getattr(request.state, "username", "test")
     log_activity(username, "log_test", {"ts": __import__("time").time()})
@@ -256,6 +266,7 @@ async def test_log(request: Request):
 
 @router.get("/usage")
 async def get_usage():
+    _bq_touch("priv_r")
     from core.bigquery import get_api_usage_summary
     return {"usage": get_api_usage_summary()}
 

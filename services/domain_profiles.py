@@ -13,7 +13,7 @@ from typing import Optional
 
 from google.cloud import bigquery
 
-from core.bigquery import client, corp_client, table_ref
+from core.bigquery import client, corp_client, table_ref, _bq_op
 from config.settings import CORP_PROJECT_ID, CORP_DATASET, GCP_PROJECT_ID, BIGQUERY_DATASET
 
 # How many domains to keep in each parsed-data dict at any moment.
@@ -269,8 +269,6 @@ def sync_domain_profiles() -> dict:
 
         # Phase 1 — SW (5 → 35%): read from privateBQ sw_parsed (cheap, already parsed)
         _sync_status.update({"progress": "1/4 · SW запит…", "pct": 5})
-        from core.bigquery import _bq_touch
-        _bq_touch("priv_r")
         sw_parsed: dict[str, dict] = {}
         sw_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.sw_parsed`"
         sw_job = our.query(f"""
@@ -287,22 +285,23 @@ def sync_domain_profiles() -> dict:
             QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
         """)
         _sync_status.update({"progress": "1/4 · SW отримуємо…", "pct": 8})
-        for r in sw_job.result():
-            key = normalize_domain(r["domain"])
-            if not key:
-                continue
-            sw_parsed[key] = {
-                "sw_visits":             r["sw_visits"] or 0,
-                "sw_category":           r["sw_category_raw"] or "",
-                "sw_subcategory":        r["sw_subcategory"] or "",
-                "sw_description":        r["sw_description"] or "",
-                "sw_title":              r["sw_title"] or "",
-                "sw_primary_region":     r["sw_region"] or "",
-                "sw_primary_region_pct": round((r["sw_region_val"] or 0) * 100, 1) or None,
-                "company_name":          r["sw_title"] or "",
-            }
-            if len(sw_parsed) % 10000 == 0:
-                _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,}…", "pct": 10 + min(24, len(sw_parsed) // 1000)})
+        with _bq_op("priv_r"):
+            for r in sw_job.result():
+                key = normalize_domain(r["domain"])
+                if not key:
+                    continue
+                sw_parsed[key] = {
+                    "sw_visits":             r["sw_visits"] or 0,
+                    "sw_category":           r["sw_category_raw"] or "",
+                    "sw_subcategory":        r["sw_subcategory"] or "",
+                    "sw_description":        r["sw_description"] or "",
+                    "sw_title":              r["sw_title"] or "",
+                    "sw_primary_region":     r["sw_region"] or "",
+                    "sw_primary_region_pct": round((r["sw_region_val"] or 0) * 100, 1) or None,
+                    "company_name":          r["sw_title"] or "",
+                }
+                if len(sw_parsed) % 10000 == 0:
+                    _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,}…", "pct": 10 + min(24, len(sw_parsed) // 1000)})
         _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,} доменів ✓", "pct": 35})
         logger.info(f"SW parsed: {len(sw_parsed)}")
 
@@ -318,7 +317,6 @@ def sync_domain_profiles() -> dict:
 
         # Phase 2 — BW (35 → 70%): read from privateBQ bw_parsed (cheap, already extracted)
         _sync_status.update({"progress": "2/4 · BW запит (privateBQ)…", "pct": 35})
-        _bq_touch("priv_r")
         bw_parsed: dict[str, dict] = {}
         bw_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.bw_parsed`"
         bw_job = our.query(f"""
@@ -327,22 +325,22 @@ def sync_domain_profiles() -> dict:
             QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
         """)
         _sync_status.update({"progress": "2/4 · BW отримуємо…", "pct": 38})
-        for r in bw_job.result():
-            key = normalize_domain(r["domain"])
-            if key:
-                bw_parsed[key] = _match_bw_compact(
-                    r["bw_vertical"] or "",
-                    r["techs_compact"] or "",
-                    catalog,
-                )
-                if len(bw_parsed) % 10000 == 0:
-                    _sync_status.update({"progress": f"2/4 · BW: {len(bw_parsed):,}…", "pct": 40 + min(28, len(bw_parsed) // 1000)})
+        with _bq_op("priv_r"):
+            for r in bw_job.result():
+                key = normalize_domain(r["domain"])
+                if key:
+                    bw_parsed[key] = _match_bw_compact(
+                        r["bw_vertical"] or "",
+                        r["techs_compact"] or "",
+                        catalog,
+                    )
+                    if len(bw_parsed) % 10000 == 0:
+                        _sync_status.update({"progress": f"2/4 · BW: {len(bw_parsed):,}…", "pct": 40 + min(28, len(bw_parsed) // 1000)})
         _sync_status.update({"progress": f"2/4 · BW: {len(bw_parsed):,} доменів ✓", "pct": 70})
         logger.info(f"BW parsed: {len(bw_parsed)}")
 
         # Phase 3 — AI (70 → 80%): extract 3 fields directly in SQL
         _sync_status.update({"progress": "3/4 · AI запит…", "pct": 70})
-        _bq_touch("corp_r")
         ai_data: dict[str, dict] = {}
         ai_job = corp.query(f"""
             SELECT
@@ -354,14 +352,15 @@ def sync_domain_profiles() -> dict:
             QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
         """)
         _sync_status.update({"progress": "3/4 · AI отримуємо…", "pct": 72})
-        for r in ai_job.result():
-            key = normalize_domain(r["domain"])
-            if key:
-                ai_data[key] = {
-                    "ai_category":     r["ai_category"] or "",
-                    "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
-                    "ai_industry":     r["ai_industry"] or "",
-                }
+        with _bq_op("corp_r"):
+            for r in ai_job.result():
+                key = normalize_domain(r["domain"])
+                if key:
+                    ai_data[key] = {
+                        "ai_category":     r["ai_category"] or "",
+                        "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
+                        "ai_industry":     r["ai_industry"] or "",
+                    }
         _sync_status.update({"progress": f"3/4 · AI: {len(ai_data):,} доменів ✓", "pct": 80})
         logger.info(f"AI data total: {len(ai_data)} domains")
 

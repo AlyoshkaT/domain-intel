@@ -139,6 +139,12 @@ async def process_domain(
                             _ft = (_tag[0] if isinstance(_tag, list) and _tag
                                    else _tag if isinstance(_tag, str) else "")
                             _rec = {"n": t.get("Name", ""), "t": _ft}
+                            _fd = t.get("FirstDetected")
+                            if _fd is not None:
+                                try:
+                                    _rec["f"] = int(_fd)
+                                except (ValueError, TypeError):
+                                    pass
                             _ld = t.get("LastDetected")
                             if _ld is not None:
                                 try:
@@ -244,6 +250,12 @@ async def process_domain(
                     first_tag = (tag_raw[0] if isinstance(tag_raw, list) and tag_raw
                                  else tag_raw if isinstance(tag_raw, str) else "")
                     rec = {"n": t.get("Name", ""), "t": first_tag}
+                    fd = t.get("FirstDetected")
+                    if fd is not None:
+                        try:
+                            rec["f"] = int(fd)
+                        except (ValueError, TypeError):
+                            pass
                     ld = t.get("LastDetected")
                     if ld is not None:
                         try:

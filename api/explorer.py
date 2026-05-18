@@ -8,7 +8,7 @@ import time
 from fastapi import APIRouter, BackgroundTasks, Request
 from google.cloud import bigquery as bq
 
-from core.bigquery import client, table_ref, _bq_touch
+from core.bigquery import client, table_ref, _bq_touch, _bq_op
 from api.auth import require_permission
 
 router = APIRouter(prefix="/api/explore", dependencies=[require_permission("explorer")])
@@ -120,30 +120,31 @@ async def get_all_profiles():
     if _profiles_cache and (now - _profiles_cache_ts) < _PROFILES_CACHE_TTL:
         return _profiles_cache
     try:
-        _bq_touch("priv_r")
         bq_client = client()
         cols_sql = ", ".join(PROFILE_COLUMNS)
-        # Use large page_size to reduce HTTP round-trips (default ~10K → 50K per request)
-        job = bq_client.query(f"""
-            SELECT {cols_sql}
-            FROM `{table_ref(PROFILES_TABLE)}`
-            ORDER BY sw_visits DESC NULLS LAST
-        """)
-        result_iter = job.result(page_size=50000)
+        # _bq_op keeps the LED lit for the entire duration of this block (can be 5+ min)
+        with _bq_op("priv_r"):
+            # Use large page_size to reduce HTTP round-trips (default ~10K → 50K per request)
+            job = bq_client.query(f"""
+                SELECT {cols_sql}
+                FROM `{table_ref(PROFILES_TABLE)}`
+                ORDER BY sw_visits DESC NULLS LAST
+            """)
+            result_iter = job.result(page_size=50000)
 
-        # Build compact columnar structure: list of lists, no repeated keys
-        rows = []
-        for r in result_iter:
-            row = []
-            for col in PROFILE_COLUMNS:
-                v = r[col]
-                if v is None:
-                    row.append(None)
-                elif hasattr(v, 'is_integer'):   # BQ Decimal/float
-                    row.append(float(v))
-                else:
-                    row.append(v)
-            rows.append(row)
+            # Build compact columnar structure: list of lists, no repeated keys
+            rows = []
+            for r in result_iter:
+                row = []
+                for col in PROFILE_COLUMNS:
+                    v = r[col]
+                    if v is None:
+                        row.append(None)
+                    elif hasattr(v, 'is_integer'):   # BQ Decimal/float
+                        row.append(float(v))
+                    else:
+                        row.append(v)
+                rows.append(row)
 
         _profiles_cache = {"columns": PROFILE_COLUMNS, "rows": rows, "total": len(rows)}
         _profiles_cache_ts = now

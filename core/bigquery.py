@@ -29,17 +29,47 @@ logger = logging.getLogger(__name__)
 
 # ── BQ activity tracker (for UI indicator) ────────────────────────────────────
 _bq_act: dict[str, float] = {"corp_r": 0.0, "corp_w": 0.0, "priv_r": 0.0, "priv_w": 0.0}
+_bq_inflight: dict[str, int]  = {"corp_r": 0,   "corp_w": 0,   "priv_r": 0,   "priv_w": 0}
 _bq_act_lock = threading.Lock()
 
+
 def _bq_touch(key: str) -> None:
+    """Mark a short BQ operation (LED stays on for `window` seconds after call)."""
     with _bq_act_lock:
         _bq_act[key] = time.time()
 
-def get_bq_activity(window: float = 2.0) -> dict:
-    """Return which BQ operations happened within the last `window` seconds."""
+
+class _BqOp:
+    """Context manager for long-running BQ operations.
+    LED stays lit for the entire duration of the `with` block."""
+    def __init__(self, key: str):
+        self._key = key
+
+    def __enter__(self):
+        with _bq_act_lock:
+            _bq_act[self._key] = time.time()
+            _bq_inflight[self._key] += 1
+        return self
+
+    def __exit__(self, *_):
+        with _bq_act_lock:
+            _bq_act[self._key] = time.time()
+            _bq_inflight[self._key] = max(0, _bq_inflight[self._key] - 1)
+
+
+def _bq_op(key: str) -> _BqOp:
+    """Use as `with _bq_op('priv_r'): ...` to keep LED lit while the block runs."""
+    return _BqOp(key)
+
+
+def get_bq_activity(window: float = 5.0) -> dict:
+    """Return which BQ ops are active (in-flight) or happened within `window` seconds."""
     now = time.time()
     with _bq_act_lock:
-        return {k: (now - v) < window for k, v in _bq_act.items()}
+        return {
+            k: (_bq_inflight.get(k, 0) > 0 or (now - v) < window)
+            for k, v in _bq_act.items()
+        }
 
 _SW_PARSED_SCHEMA = [
     bigquery.SchemaField("domain",               "STRING"),
@@ -682,6 +712,7 @@ def sync_parsed_from_corp() -> dict:
                         SELECT TO_JSON_STRING(ARRAY_AGG(STRUCT(
                             JSON_VALUE(tech, '$.Name') AS n,
                             IFNULL(JSON_VALUE(tech, '$.Tag[0]'), '') AS t,
+                            SAFE_CAST(JSON_VALUE(tech, '$.FirstDetected') AS INT64) AS f,
                             SAFE_CAST(JSON_VALUE(tech, '$.LastDetected') AS INT64) AS l
                         )))
                         FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
