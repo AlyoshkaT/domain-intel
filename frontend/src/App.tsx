@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import ExplorerPage from "./Explorer"
 import TechnologiesPage from "./Technologies"
 import RedirectsPage from "./Redirects"
@@ -602,6 +602,39 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
 }
 
 // ─── App ───────────────────────────────────────────────────────────────────────
+// ── BQ Activity Indicator ────────────────────────────────────────────────────
+type BqAct = { corp_r: boolean; corp_w: boolean; priv_r: boolean; priv_w: boolean }
+
+function BqIndicator() {
+  const [act, setAct] = useState<BqAct>({ corp_r: false, corp_w: false, priv_r: false, priv_w: false })
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    const poll = () => {
+      fetch("/api/bq_activity")
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setAct(d) })
+        .catch(() => {})
+    }
+    poll()
+    timerRef.current = setInterval(poll, 800)
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [])
+
+  const led = (active: boolean, type: "r" | "w") => (
+    <span className={`bq-led ${active ? (type === "r" ? "bq-led-r" : "bq-led-w") : ""}`}>
+      {type === "r" ? "R" : "W"}
+    </span>
+  )
+
+  return (
+    <div className="bq-indicator" title="BigQuery activity: R=read, W=write">
+      <div className="bq-row"><span className="bq-name">corp</span>{led(act.corp_r, "r")}{led(act.corp_w, "w")}</div>
+      <div className="bq-row"><span className="bq-name">priv</span>{led(act.priv_r, "r")}{led(act.priv_w, "w")}</div>
+    </div>
+  )
+}
+
 type View = "new" | "jobs" | "results" | "explorer" | "technologies" | "redirects" | "setup"
 
 export default function App() {
@@ -660,6 +693,7 @@ export default function App() {
           {can("admin") && <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>{t('nav_setup', lang)}</button>}
         </div>
         <div className="nav-right">
+          <BqIndicator />
           <button className="theme-toggle" onClick={() => setLang(l => l === 'en' ? 'ua' : 'en')} title="Language">
             {lang === 'en' ? 'UA' : 'EN'}
           </button>

@@ -48,6 +48,14 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .theme-toggle{width:32px;height:32px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;background:var(--bg-3);border:1px solid var(--border);font-size:15px;transition:all 0.15s;color:var(--text-2)}
 .theme-toggle:hover{background:var(--bg-4);color:var(--text)}
 
+/* BQ activity indicator */
+.bq-indicator{height:32px;border-radius:var(--radius);background:var(--bg-3);border:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;padding:0 7px;gap:2px;cursor:default}
+.bq-row{display:flex;align-items:center;gap:3px;line-height:1}
+.bq-name{font-size:9px;font-family:monospace;color:var(--text-2);opacity:.55;width:26px;letter-spacing:.02em}
+.bq-led{font-size:9px;font-weight:700;font-family:monospace;color:var(--text-2);opacity:.25;transition:color .15s,opacity .15s}
+.bq-led-r{color:#22c55e;opacity:1}
+.bq-led-w{color:#ef4444;opacity:1}
+
 .main{flex:1}
 .page{max-width:680px;margin:0 auto;padding:28px 20px 48px}
 .page-wide{max-width:1280px;margin:0 auto;padding:28px 20px 48px}

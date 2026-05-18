@@ -4,6 +4,7 @@ BigQuery client - reads credentials from ENV (Railway) or file (local dev)
 import json
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -25,6 +26,20 @@ SW_PARSED_TABLE = "sw_parsed"
 BW_PARSED_TABLE = "bw_parsed"
 
 logger = logging.getLogger(__name__)
+
+# ── BQ activity tracker (for UI indicator) ────────────────────────────────────
+_bq_act: dict[str, float] = {"corp_r": 0.0, "corp_w": 0.0, "priv_r": 0.0, "priv_w": 0.0}
+_bq_act_lock = threading.Lock()
+
+def _bq_touch(key: str) -> None:
+    with _bq_act_lock:
+        _bq_act[key] = time.time()
+
+def get_bq_activity(window: float = 2.0) -> dict:
+    """Return which BQ operations happened within the last `window` seconds."""
+    now = time.time()
+    with _bq_act_lock:
+        return {k: (now - v) < window for k, v in _bq_act.items()}
 
 _SW_PARSED_SCHEMA = [
     bigquery.SchemaField("domain",               "STRING"),
@@ -230,6 +245,7 @@ def prefetch_corp_cache(domains: list[str], tables: list[str]) -> None:
     """
     if not domains or not tables:
         return
+    _bq_touch("corp_r")
     bq = corp_client()
     t_start = time.time()
 
@@ -287,6 +303,7 @@ _parsed_bw_cache: dict[str, Optional[dict]] = {}
 
 def save_sw_parsed(domain: str, parsed: dict) -> None:
     """Stream-insert one parsed SW row into privateBQ sw_parsed."""
+    _bq_touch("priv_w")
     bq = client()
     row = {
         "domain": domain,
@@ -318,6 +335,7 @@ def save_sw_parsed(domain: str, parsed: dict) -> None:
 
 def save_bw_parsed(domain: str, bw_dict: dict) -> None:
     """Stream-insert one parsed BW row into privateBQ bw_parsed."""
+    _bq_touch("priv_w")
     bq = client()
     row = {
         "domain": domain,
@@ -348,6 +366,7 @@ def prefetch_parsed(domains: list[str]) -> None:
     """
     if not domains:
         return
+    _bq_touch("priv_r")
     bq = client()
     t_start = time.time()
     unique_domains = list(dict.fromkeys(domains))
@@ -435,6 +454,7 @@ def get_sw_parsed(domain: str) -> Optional[dict]:
     if domain in _parsed_sw_cache:
         return _parsed_sw_cache[domain]
     # Slow path: individual BQ query
+    _bq_touch("priv_r")
     bq = client()
     try:
         rows = list(bq.query(
@@ -480,6 +500,7 @@ def get_bw_parsed(domain: str) -> Optional[dict]:
     if domain in _parsed_bw_cache:
         return _parsed_bw_cache[domain]
     # Slow path: individual BQ query
+    _bq_touch("priv_r")
     bq = client()
     try:
         rows = list(bq.query(
@@ -536,6 +557,7 @@ def sync_parsed_from_corp() -> dict:
     Intended to run once per day at 03:00 UTC, 1 hour before domain_profiles sync.
     """
     t0 = time.time()
+    _bq_touch("corp_r"); _bq_touch("priv_w")
     logger.info("sync_parsed_from_corp: starting SW merge")
 
     sw_tbl = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.similarweb_raw_data`"
@@ -720,6 +742,7 @@ def get_cached(table: str, domain: str, ttl_days: int = 90, force: bool = False,
         return data
 
     # Slow path: individual BQ query (used when prefetch wasn't called)
+    _bq_touch("corp_r")
     bq = corp_client()
     t_start = time.time()
     logger.info(f"Cache lookup: {table} / {domain}")
@@ -747,6 +770,7 @@ def get_cached(table: str, domain: str, ttl_days: int = 90, force: bool = False,
 
 
 def save_cache(table: str, domain: str, data: dict):
+    _bq_touch("corp_w")
     bq = corp_client()
     row = {"domain": domain, "fetched_at": datetime.now(timezone.utc).isoformat(), "response_json": json.dumps(data)}
     try:
@@ -903,6 +927,7 @@ def list_jobs(limit: int = 50) -> list[dict]:
 
 def save_result(result: dict):
     """Save one domain result via streaming insert (~100ms vs 3-5s for DML INSERT)."""
+    _bq_touch("priv_w")
     bq = client()
     # Normalise: BQ insert_rows_json needs JSON-serialisable values only
     row = {k: (None if v is None else v) for k, v in result.items()}

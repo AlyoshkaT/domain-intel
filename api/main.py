@@ -123,6 +123,13 @@ async def health():
     return {"status": "ok"}
 
 
+# ─── BQ activity indicator ────────────────────────────────────────────────────
+@app.get("/api/bq_activity")
+async def bq_activity():
+    from core.bigquery import get_bq_activity
+    return get_bq_activity()
+
+
 # ─── Current user ─────────────────────────────────────────────────────────────
 @app.get("/api/me")
 async def me(request: Request):
