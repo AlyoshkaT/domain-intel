@@ -71,6 +71,31 @@ def get_bq_activity(window: float = 3.0) -> dict:
             for k, v in _bq_act.items()
         }
 
+
+# ── BQ call-stats (per-resource daily counters for monitoring) ────────────────
+_BQ_CALL_STATS_TABLE = "bq_call_stats"
+_BQ_CALL_STATS_RESOURCES = ["corp_sw", "corp_bw", "corp_ai", "priv_sw", "priv_bw", "priv_ai"]
+
+# Keyed by "YYYY-MM-DD:resource" → cumulative count for that day
+_call_counts: dict[str, int] = {}
+_call_counts_lock = threading.Lock()
+
+
+def track_bq_call(resource: str, n: int = 1) -> None:
+    """Increment the daily BQ call counter for the given resource category."""
+    if resource not in _BQ_CALL_STATS_RESOURCES:
+        return
+    key = f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}:{resource}"
+    with _call_counts_lock:
+        _call_counts[key] = _call_counts.get(key, 0) + n
+
+
+_BQ_CALL_STATS_SCHEMA = [
+    bigquery.SchemaField("date",     "DATE",   mode="REQUIRED"),
+    bigquery.SchemaField("resource", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("calls",    "INT64"),
+]
+
 _SW_PARSED_SCHEMA = [
     bigquery.SchemaField("domain",               "STRING"),
     bigquery.SchemaField("fetched_at",           "TIMESTAMP"),
@@ -221,6 +246,16 @@ def _ensure_or_migrate_table(bq: bigquery.Client, table_name: str, schema: list,
         logger.info(f"Created table {table_name}")
 
 
+def _ensure_bq_call_stats_table(bq: bigquery.Client) -> None:
+    full_ref = f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{_BQ_CALL_STATS_TABLE}"
+    try:
+        bq.get_table(full_ref)
+    except Exception:
+        tbl = bigquery.Table(full_ref, schema=_BQ_CALL_STATS_SCHEMA)
+        bq.create_table(tbl)
+        logger.info(f"Created table {_BQ_CALL_STATS_TABLE}")
+
+
 def ensure_tables_exist():
     bq = client()
     tables_to_create = {
@@ -258,6 +293,10 @@ def ensure_tables_exist():
         _ensure_sw_usage_table()
     except Exception as e:
         logger.error(f"_ensure_sw_usage_table error: {e}")
+    try:
+        _ensure_bq_call_stats_table(bq)
+    except Exception as e:
+        logger.error(f"_ensure_bq_call_stats_table error: {e}")
 
 
 # ── In-memory prefetch cache (populated at job start for batch speed) ─────────
@@ -316,6 +355,12 @@ def prefetch_corp_cache(domains: list[str], tables: list[str]) -> None:
                     _prefetch_cache[table][d] = None
             elapsed = time.time() - t_start
             logger.info(f"Prefetch {table}: {hit_count}/{len(unique_domains)} hits in {elapsed:.1f}s")
+            if table == BQ_SIMILARWEB_CACHE:
+                track_bq_call("corp_sw")
+            elif table == BQ_BUILTWITH_CACHE:
+                track_bq_call("corp_bw")
+            else:
+                track_bq_call("corp_ai")
         except Exception as e:
             logger.error(f"Prefetch error ({table}): {e}")
 
@@ -334,6 +379,7 @@ _parsed_bw_cache: dict[str, Optional[dict]] = {}
 def save_sw_parsed(domain: str, parsed: dict) -> None:
     """Stream-insert one parsed SW row into privateBQ sw_parsed."""
     _bq_touch("priv_w")
+    track_bq_call("priv_sw")
     bq = client()
     row = {
         "domain": domain,
@@ -366,6 +412,7 @@ def save_sw_parsed(domain: str, parsed: dict) -> None:
 def save_bw_parsed(domain: str, bw_dict: dict) -> None:
     """Stream-insert one parsed BW row into privateBQ bw_parsed."""
     _bq_touch("priv_w")
+    track_bq_call("priv_bw")
     bq = client()
     row = {
         "domain": domain,
@@ -440,6 +487,7 @@ def prefetch_parsed(domains: list[str]) -> None:
             if d not in _parsed_sw_cache:
                 _parsed_sw_cache[d] = None
         logger.info(f"prefetch_parsed SW: {sw_hits}/{len(unique_domains)} hits in {time.time()-t_start:.1f}s")
+        track_bq_call("priv_sw")
     except Exception as e:
         logger.error(f"prefetch_parsed SW error: {e}")
 
@@ -475,6 +523,7 @@ def prefetch_parsed(domains: list[str]) -> None:
             if d not in _parsed_bw_cache:
                 _parsed_bw_cache[d] = None
         logger.info(f"prefetch_parsed BW: {bw_hits}/{len(unique_domains)} hits in {time.time()-t_bw:.1f}s")
+        track_bq_call("priv_bw")
     except Exception as e:
         logger.error(f"prefetch_parsed BW error: {e}")
 
@@ -485,6 +534,7 @@ def get_sw_parsed(domain: str) -> Optional[dict]:
         return _parsed_sw_cache[domain]
     # Slow path: individual BQ query
     _bq_touch("priv_r")
+    track_bq_call("priv_sw")
     bq = client()
     try:
         rows = list(bq.query(
@@ -531,6 +581,7 @@ def get_bw_parsed(domain: str) -> Optional[dict]:
         return _parsed_bw_cache[domain]
     # Slow path: individual BQ query
     _bq_touch("priv_r")
+    track_bq_call("priv_bw")
     bq = client()
     try:
         rows = list(bq.query(
@@ -578,6 +629,101 @@ def clear_parsed_cache() -> None:
     """Clear the in-memory parsed cache after a job finishes."""
     _parsed_sw_cache.clear()
     _parsed_bw_cache.clear()
+
+
+def flush_bq_call_stats() -> None:
+    """Upsert in-memory daily call counters to BQ via MERGE. Called every 5 min."""
+    with _call_counts_lock:
+        if not _call_counts:
+            return
+        snapshot = dict(_call_counts)
+
+    try:
+        bq = client()
+        table = table_ref(_BQ_CALL_STATS_TABLE)
+        struct_parts = []
+        for key, count in snapshot.items():
+            date_str, resource = key.split(":", 1)
+            struct_parts.append(
+                f"STRUCT(DATE '{date_str}' AS date, '{resource}' AS resource, {count} AS calls)"
+            )
+        if not struct_parts:
+            return
+        struct_array = (
+            f"ARRAY<STRUCT<date DATE, resource STRING, calls INT64>>"
+            f"[{', '.join(struct_parts)}]"
+        )
+        merge_sql = f"""
+            MERGE `{table}` T
+            USING (SELECT date, resource, calls FROM UNNEST({struct_array})) S
+            ON T.date = S.date AND T.resource = S.resource
+            WHEN MATCHED THEN UPDATE SET T.calls = S.calls
+            WHEN NOT MATCHED THEN INSERT (date, resource, calls)
+                VALUES (S.date, S.resource, S.calls)
+        """
+        bq.query(merge_sql).result()
+        logger.debug(f"flush_bq_call_stats: {len(struct_parts)} rows upserted")
+    except Exception as e:
+        logger.warning(f"flush_bq_call_stats error: {e}")
+
+
+def load_bq_call_stats_today() -> None:
+    """Load today's call counts from BQ into memory (called at startup)."""
+    try:
+        bq = client()
+        table = table_ref(_BQ_CALL_STATS_TABLE)
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        rows = list(bq.query(
+            f"SELECT resource, calls FROM `{table}` WHERE date = DATE '{today}'"
+        ).result())
+        with _call_counts_lock:
+            for r in rows:
+                key = f"{today}:{r['resource']}"
+                _call_counts[key] = max(_call_counts.get(key, 0), int(r["calls"] or 0))
+        if rows:
+            logger.info(f"load_bq_call_stats_today: loaded {len(rows)} resource counters")
+    except Exception as e:
+        logger.warning(f"load_bq_call_stats_today: {e}")
+
+
+def get_bq_call_stats() -> dict:
+    """Return per-resource call counts: today / last 7 days / current month."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    data: dict[str, dict] = {r: {"today": 0, "week": 0, "month": 0} for r in _BQ_CALL_STATS_RESOURCES}
+
+    try:
+        bq = client()
+        table = table_ref(_BQ_CALL_STATS_TABLE)
+        rows = list(bq.query(f"""
+            SELECT
+                resource,
+                SUM(IF(date >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 DAY)
+                       AND date < CURRENT_DATE(), calls, 0)) AS week_excl_today,
+                SUM(IF(DATE_TRUNC(date, MONTH) = DATE_TRUNC(CURRENT_DATE(), MONTH)
+                       AND date < CURRENT_DATE(), calls, 0)) AS month_excl_today
+            FROM `{table}`
+            WHERE date >= DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 6 DAY), MONTH)
+              AND date < CURRENT_DATE()
+            GROUP BY resource
+        """).result())
+        for r in rows:
+            res = r["resource"]
+            if res in data:
+                data[res]["week"]  = int(r["week_excl_today"]  or 0)
+                data[res]["month"] = int(r["month_excl_today"] or 0)
+    except Exception as e:
+        logger.warning(f"get_bq_call_stats BQ query error: {e}")
+
+    # Merge today's in-memory counts (always accurate — no flush lag)
+    with _call_counts_lock:
+        for key, count in _call_counts.items():
+            date_str, resource = key.split(":", 1)
+            if resource in data and date_str == today:
+                data[resource]["today"]  = count
+                data[resource]["week"]  += count
+                data[resource]["month"] += count
+
+    return {"resources": data, "updated_at": datetime.now(timezone.utc).isoformat()}
 
 
 def sync_parsed_from_corp() -> dict:
@@ -673,6 +819,8 @@ def sync_parsed_from_corp() -> dict:
         sw_job = bq.query(sw_merge)
         sw_job.result()
         sw_elapsed = time.time() - t0
+        track_bq_call("corp_sw")
+        track_bq_call("priv_sw")
         logger.info(f"sync_parsed_from_corp: SW merge done in {sw_elapsed:.1f}s, "
                     f"rows_affected={sw_job.num_dml_affected_rows}")
     except Exception as e:
@@ -743,6 +891,8 @@ def sync_parsed_from_corp() -> dict:
         bw_job = bq.query(bw_merge)
         bw_job.result()
         bw_elapsed = time.time() - t_bw
+        track_bq_call("corp_bw")
+        track_bq_call("priv_bw")
         logger.info(f"sync_parsed_from_corp: BW merge done in {bw_elapsed:.1f}s, "
                     f"rows_affected={bw_job.num_dml_affected_rows}")
     except Exception as e:
@@ -774,6 +924,12 @@ def get_cached(table: str, domain: str, ttl_days: int = 90, force: bool = False,
 
     # Slow path: individual BQ query (used when prefetch wasn't called)
     _bq_touch("corp_r")
+    if table == BQ_SIMILARWEB_CACHE:
+        track_bq_call("corp_sw")
+    elif table == BQ_BUILTWITH_CACHE:
+        track_bq_call("corp_bw")
+    else:
+        track_bq_call("corp_ai")
     bq = corp_client()
     t_start = time.time()
     logger.info(f"Cache lookup: {table} / {domain}")
@@ -802,6 +958,12 @@ def get_cached(table: str, domain: str, ttl_days: int = 90, force: bool = False,
 
 def save_cache(table: str, domain: str, data: dict):
     _bq_touch("corp_w")
+    if table == BQ_SIMILARWEB_CACHE:
+        track_bq_call("corp_sw")
+    elif table == BQ_BUILTWITH_CACHE:
+        track_bq_call("corp_bw")
+    else:
+        track_bq_call("corp_ai")
     bq = corp_client()
     row = {"domain": domain, "fetched_at": datetime.now(timezone.utc).isoformat(), "response_json": json.dumps(data)}
     try:

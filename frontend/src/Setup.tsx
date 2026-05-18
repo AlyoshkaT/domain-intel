@@ -8,6 +8,122 @@ async function apiFetch(path: string, opts?: RequestInit) {
   return res.json()
 }
 
+// ── BQ Call Stats ────────────────────────────────────────────────────────────
+
+const BQ_STAT_ROWS = [
+  { key: "corp_sw",  label: "corpBQ SW",    dot: "#60a5fa" },
+  { key: "corp_bw",  label: "corpBQ BW",    dot: "#60a5fa" },
+  { key: "corp_ai",  label: "corpBQ AI",    dot: "#60a5fa" },
+  { key: "priv_sw",  label: "privatBQ SW",  dot: "#34d399" },
+  { key: "priv_bw",  label: "privatBQ BW",  dot: "#34d399" },
+  { key: "priv_ai",  label: "privatBQ AI",  dot: "#34d399" },
+]
+
+function BqCallStatsSection() {
+  const [resources, setResources] = useState<Record<string, { today: number; week: number; month: number }>>({})
+  const [loading, setLoading]     = useState(true)
+  const [updatedAt, setUpdatedAt] = useState("")
+
+  const load = useCallback(async () => {
+    try {
+      const r = await apiFetch("/api/setup/bq_call_stats")
+      setResources(r.resources || {})
+      setUpdatedAt(new Date().toLocaleTimeString("uk-UA"))
+    } catch {}
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    load()
+    const ti = setInterval(load, 30000)
+    return () => clearInterval(ti)
+  }, [load])
+
+  const fmt = (n: number) => (n || 0).toLocaleString("uk-UA")
+
+  const totals = BQ_STAT_ROWS.reduce(
+    (acc, { key }) => {
+      const r = resources[key] || { today: 0, week: 0, month: 0 }
+      return { today: acc.today + r.today, week: acc.week + r.week, month: acc.month + r.month }
+    },
+    { today: 0, week: 0, month: 0 }
+  )
+
+  return (
+    <div className="card">
+      <div className="setup-section-header">
+        <div className="card-section-title">Статистика звернень до BigQuery</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {updatedAt && <span style={{ fontSize: 11, color: "var(--text-3)" }}>оновлено {updatedAt}</span>}
+          <button className="btn-export" onClick={load} disabled={loading}>↻</button>
+        </div>
+      </div>
+
+      {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="results-table" style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th style={{ minWidth: 130 }}>Ресурс</th>
+                <th style={{ textAlign: "right", minWidth: 90 }}>Сьогодні</th>
+                <th style={{ textAlign: "right", minWidth: 90 }}>Тиждень</th>
+                <th style={{ textAlign: "right", minWidth: 110 }}>Поточний місяць</th>
+              </tr>
+            </thead>
+            <tbody>
+              {BQ_STAT_ROWS.map(({ key, label, dot }, idx) => {
+                const r = resources[key] || { today: 0, week: 0, month: 0 }
+                const isActive = r.today > 0 || r.week > 0
+                // separator before priv group
+                return (
+                  <>
+                    {idx === 3 && (
+                      <tr key="sep" style={{ height: 4 }}>
+                        <td colSpan={4} style={{ padding: 0, borderBottom: "1px solid var(--border)" }} />
+                      </tr>
+                    )}
+                    <tr key={key} style={{ opacity: isActive ? 1 : 0.55 }}>
+                      <td>
+                        <span style={{
+                          display: "inline-block", width: 8, height: 8,
+                          borderRadius: "50%", background: dot,
+                          marginRight: 8, flexShrink: 0,
+                          boxShadow: isActive ? `0 0 4px ${dot}` : "none",
+                        }} />
+                        <span style={{ fontSize: 13 }}>{label}</span>
+                      </td>
+                      <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontWeight: r.today > 0 ? 600 : 400 }}>
+                        {fmt(r.today)}
+                      </td>
+                      <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>
+                        {fmt(r.week)}
+                      </td>
+                      <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>
+                        {fmt(r.month)}
+                      </td>
+                    </tr>
+                  </>
+                )
+              })}
+            </tbody>
+            <tfoot>
+              <tr style={{ fontWeight: 600, borderTop: "2px solid var(--border)" }}>
+                <td style={{ fontSize: 12, color: "var(--text-3)" }}>Всього</td>
+                <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmt(totals.today)}</td>
+                <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmt(totals.week)}</td>
+                <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmt(totals.month)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+      <p style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8, marginBottom: 0 }}>
+        1 запит = 1 звернення (batch-prefetch чи individual BQ query). Місячний лічільник скидається 1-го числа автоматично.
+      </p>
+    </div>
+  )
+}
+
 // ── Catalog ───────────────────────────────────────────────────────────────────
 
 type Sheet = "cms" | "ems" | "osearch"
@@ -633,6 +749,8 @@ export default function SetupPage({ lang }: { lang: Lang }) {
         <h1 className="page-title">{t('setup_title', lang)}</h1>
         <span style={{ fontSize: 12, color: "var(--text-3)" }}>{t('setup_subtitle', lang)}</span>
       </div>
+      <BqCallStatsSection />
+      <div style={{ height: 16 }} />
       <CatalogSection lang={lang} />
       <div style={{ height: 16 }} />
       <UsersSection lang={lang} />

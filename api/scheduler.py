@@ -37,10 +37,20 @@ def _run_parsed_sync():
     logger.info(f"Scheduled parsed sync done: {result}")
 
 
+def _flush_call_stats():
+    """Flush in-memory BQ call counters to BigQuery."""
+    try:
+        from core.bigquery import flush_bq_call_stats
+        flush_bq_call_stats()
+    except Exception as e:
+        logger.debug(f"flush_bq_call_stats: {e}")
+
+
 def _scheduler_loop():
     """Check every 5 minutes if it's time to sync (daily at 03:00 and 04:00 UTC)."""
     import time
     while not _stop_event.is_set():
+        _flush_call_stats()   # flush counters every 5-min tick
         now = datetime.utcnow()
         if now.hour == _PARSED_SYNC_HOUR_UTC and now.minute < 5:
             logger.info("Parsed sync triggered (corpBQ raw → privateBQ parsed)")

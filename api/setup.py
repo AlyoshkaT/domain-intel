@@ -264,6 +264,15 @@ def test_log(request: Request):
     return {"written": True, "recent_logs": logs}
 
 
+# ── BQ Call Stats ─────────────────────────────────────────────────────────────
+
+@router.get("/bq_call_stats")
+def get_bq_call_stats_endpoint():
+    """Per-resource BQ call counters: today / last 7 days / current month."""
+    from core.bigquery import get_bq_call_stats
+    return get_bq_call_stats()
+
+
 # ── API Usage ─────────────────────────────────────────────────────────────────
 
 @router.get("/usage")

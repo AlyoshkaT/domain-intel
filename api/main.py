@@ -71,6 +71,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Credits fetch error: {e}")
 
+    try:
+        from core.bigquery import load_bq_call_stats_today
+        load_bq_call_stats_today()
+    except Exception as e:
+        logger.warning(f"load_bq_call_stats_today error: {e}")
+
     start_scheduler()
     yield
     stop_scheduler()

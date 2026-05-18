@@ -13,7 +13,7 @@ from typing import Optional
 
 from google.cloud import bigquery
 
-from core.bigquery import client, corp_client, table_ref, _bq_op
+from core.bigquery import client, corp_client, table_ref, _bq_op, track_bq_call
 from config.settings import CORP_PROJECT_ID, CORP_DATASET, GCP_PROJECT_ID, BIGQUERY_DATASET
 
 # How many domains to keep in each parsed-data dict at any moment.
@@ -305,6 +305,7 @@ def sync_domain_profiles() -> dict:
                 if len(sw_parsed) % 10000 == 0:
                     _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,}…", "pct": 10 + min(24, len(sw_parsed) // 1000)})
         _sync_status.update({"progress": f"1/4 · SW: {len(sw_parsed):,} доменів ✓", "pct": 35})
+        track_bq_call("priv_sw")
         logger.info(f"SW parsed: {len(sw_parsed)}")
 
         # Safety guard: if privateBQ is empty (e.g. first deploy before sync_parsed_from_corp runs),
@@ -341,6 +342,7 @@ def sync_domain_profiles() -> dict:
                     if len(bw_parsed) % 10000 == 0:
                         _sync_status.update({"progress": f"2/4 · BW: {len(bw_parsed):,}…", "pct": 40 + min(28, len(bw_parsed) // 1000)})
         _sync_status.update({"progress": f"2/4 · BW: {len(bw_parsed):,} доменів ✓", "pct": 70})
+        track_bq_call("priv_bw")
         logger.info(f"BW parsed: {len(bw_parsed)}")
 
         # Phase 3 — AI (70 → 80%): extract 3 fields directly in SQL
@@ -366,6 +368,7 @@ def sync_domain_profiles() -> dict:
                         "ai_industry":     r["ai_industry"] or "",
                     }
         _sync_status.update({"progress": f"3/4 · AI: {len(ai_data):,} доменів ✓", "pct": 80})
+        track_bq_call("corp_ai")
         logger.info(f"AI data total: {len(ai_data)} domains")
 
         all_domains = {d for d in sw_parsed.keys() | bw_parsed.keys() | ai_data.keys() if d}
@@ -422,6 +425,7 @@ def sync_domain_profiles() -> dict:
                 )
             _sync_status.update({"progress": "BigQuery завантажує файл…", "pct": 97})
             load_job.result()
+            track_bq_call("priv_ai")
         finally:
             if tmp_file and os.path.exists(tmp_file):
                 os.unlink(tmp_file)
