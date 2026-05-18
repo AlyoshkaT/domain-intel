@@ -23,9 +23,28 @@ from config.settings import (
 
 BQ_JOB_DOMAINS_TABLE = "job_domain_lists"
 
-# Max bytes any single query is allowed to scan. Override via BQ_MAX_BYTES_BILLED_GB env var.
-# If a query would exceed this, it raises BadRequest instead of scanning (cost protection).
-_MAX_BYTES_BILLED = BQ_MAX_BYTES_BILLED_GB * 1024 ** 3
+# Max bytes any single query is allowed to scan.
+# ENV var BQ_MAX_BYTES_BILLED_GB is the hard floor; the Setup page can override upward
+# via app_settings ("bq_max_bytes_gb"). Cached in memory, refreshed on settings write.
+_bq_max_bytes_gb_cache: int | None = None
+
+
+def get_bq_max_bytes_gb() -> int:
+    """Return the current per-query byte limit in GB (Setup setting or env default)."""
+    global _bq_max_bytes_gb_cache
+    if _bq_max_bytes_gb_cache is not None:
+        return _bq_max_bytes_gb_cache
+    try:
+        val = int(get_setting("bq_max_bytes_gb", str(BQ_MAX_BYTES_BILLED_GB)))
+        _bq_max_bytes_gb_cache = max(1, val)
+    except Exception:
+        _bq_max_bytes_gb_cache = BQ_MAX_BYTES_BILLED_GB
+    return _bq_max_bytes_gb_cache
+
+
+def _invalidate_max_bytes_cache() -> None:
+    global _bq_max_bytes_gb_cache
+    _bq_max_bytes_gb_cache = None
 
 
 def _bq_qcfg(
@@ -37,7 +56,7 @@ def _bq_qcfg(
     if params:
         kwargs["query_parameters"] = params
     if max_bytes:
-        kwargs["maximum_bytes_billed"] = _MAX_BYTES_BILLED
+        kwargs["maximum_bytes_billed"] = get_bq_max_bytes_gb() * 1024 ** 3
     return bigquery.QueryJobConfig(**kwargs) if kwargs else bigquery.QueryJobConfig()
 
 

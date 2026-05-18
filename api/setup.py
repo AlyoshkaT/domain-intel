@@ -114,23 +114,36 @@ def get_drive_info():
 @router.get("/settings")
 def get_settings():
     _bq_touch("priv_r")
-    from core.bigquery import get_setting
+    from core.bigquery import get_setting, get_bq_max_bytes_gb
+    from config.settings import BQ_MAX_BYTES_BILLED_GB
     return {
         "cache_ttl_days": int(get_setting("cache_ttl_days", "90")),
+        "bq_max_bytes_gb": get_bq_max_bytes_gb(),
+        "bq_max_bytes_gb_floor": BQ_MAX_BYTES_BILLED_GB,   # env-var minimum
     }
 
 
 class SettingsUpdate(BaseModel):
-    cache_ttl_days: int
+    cache_ttl_days: Optional[int] = None
+    bq_max_bytes_gb: Optional[int] = None
 
 
 @router.post("/settings")
 def update_settings(data: SettingsUpdate):
-    if not (1 <= data.cache_ttl_days <= 3650):
-        raise HTTPException(status_code=400, detail="TTL must be 1–3650 days")
     _bq_touch("priv_w")
-    from core.bigquery import set_setting
-    set_setting("cache_ttl_days", str(data.cache_ttl_days))
+    from core.bigquery import get_setting, set_setting, _invalidate_max_bytes_cache
+
+    if data.cache_ttl_days is not None:
+        if not (1 <= data.cache_ttl_days <= 3650):
+            raise HTTPException(status_code=400, detail="TTL must be 1–3650 days")
+        set_setting("cache_ttl_days", str(data.cache_ttl_days))
+
+    if data.bq_max_bytes_gb is not None:
+        if not (1 <= data.bq_max_bytes_gb <= 1000):
+            raise HTTPException(status_code=400, detail="Byte limit must be 1–1000 GB")
+        set_setting("bq_max_bytes_gb", str(data.bq_max_bytes_gb))
+        _invalidate_max_bytes_cache()
+
     return {"ok": True}
 
 

@@ -675,13 +675,23 @@ function LogsSection({ lang }: { lang: Lang }) {
 
 function CacheSection({ lang }: { lang: Lang }) {
   const [days, setDays] = useState(90)
+  const [bqMaxBytes, setBqMaxBytes] = useState(50)
+  const [bqFloor, setBqFloor] = useState(1)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [savingBq, setSavingBq] = useState(false)
   const [msg, setMsg] = useState("")
+  const [msgBq, setMsgBq] = useState("")
+  const [showBqWarning, setShowBqWarning] = useState(false)
 
   useEffect(() => {
     apiFetch("/api/setup/settings")
-      .then(r => { setDays(r.cache_ttl_days); setLoading(false) })
+      .then(r => {
+        setDays(r.cache_ttl_days)
+        setBqMaxBytes(r.bq_max_bytes_gb ?? 50)
+        setBqFloor(r.bq_max_bytes_gb_floor ?? 1)
+        setLoading(false)
+      })
       .catch(() => setLoading(false))
   }, [])
 
@@ -698,13 +708,29 @@ function CacheSection({ lang }: { lang: Lang }) {
     finally { setSaving(false) }
   }
 
+  const saveBqLimit = async () => {
+    if (bqMaxBytes < bqFloor || bqMaxBytes > 1000) {
+      setMsgBq(`Ліміт має бути від ${bqFloor} до 1000 GB`); return
+    }
+    setSavingBq(true); setMsgBq("")
+    try {
+      await apiFetch("/api/setup/settings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bq_max_bytes_gb: bqMaxBytes })
+      })
+      setMsgBq(t('setup_saved', lang))
+      setShowBqWarning(false)
+    } catch (e: any) { setMsgBq(t('setup_err', lang)(e.message)) }
+    finally { setSavingBq(false) }
+  }
+
   return (
     <div className="card">
       <div className="card-section-title">Термін актуальності кешу</div>
       <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, marginBottom: 12 }}>
         {t('setup_cache_desc', lang)}
       </p>
-      {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (
+      {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (<>
         <div className="setup-add-row">
           <input className="flt-num-input" type="number" min={1} max={3650} value={days}
             onChange={e => setDays(parseInt(e.target.value) || 90)} style={{ width: 90 }} />
@@ -716,8 +742,44 @@ function CacheSection({ lang }: { lang: Lang }) {
             {saving ? t('setup_saving', lang) : t('setup_save', lang)}
           </button>
         </div>
-      )}
-      {msg && <div className="setup-msg">{msg}</div>}
+        {msg && <div className="setup-msg">{msg}</div>}
+
+        <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", marginBottom: 6 }}>
+            Ліміт BigQuery запитів (GB)
+          </div>
+          <p style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 10 }}>
+            Максимальний обсяг даних на один BQ-запит. Захищає від випадкових великих витрат.
+            Мінімум: <strong>{bqFloor} GB</strong> (з env-змінної).
+          </p>
+          <div className="setup-add-row" style={{ marginBottom: 0 }}>
+            <input className="flt-num-input" type="number" min={bqFloor} max={1000} value={bqMaxBytes}
+              onChange={e => {
+                const v = parseInt(e.target.value) || bqFloor
+                setBqMaxBytes(v)
+                setShowBqWarning(v > 50)
+              }}
+              style={{ width: 90 }} />
+            <span style={{ fontSize: 13, color: "var(--text-2)" }}>GB</span>
+            <button className="btn-primary" style={{ padding: "6px 16px", fontSize: 13 }} onClick={saveBqLimit} disabled={savingBq}>
+              {savingBq ? t('setup_saving', lang) : t('setup_save', lang)}
+            </button>
+          </div>
+          {showBqWarning && (
+            <div style={{
+              marginTop: 12, padding: "10px 14px",
+              background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.5)",
+              borderRadius: 8, fontSize: 13, color: "#fbbf24",
+            }}>
+              <span style={{ fontSize: 15, marginRight: 6 }}>⚠️</span>
+              <strong>ATTENTION!</strong> Ви збільшуєте ліміт BigQuery запитів понад 50 GB.
+              Великий ліміт може призвести до значних витрат у разі некоректного запиту.
+              Будь ласка, <strong>двічі подумайте</strong> перед збереженням. Якщо впевнені — натискайте «Зберегти».
+            </div>
+          )}
+          {msgBq && <div className="setup-msg" style={{ marginTop: 8 }}>{msgBq}</div>}
+        </div>
+      </>)}
     </div>
   )
 }
