@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import csv
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, BackgroundTasks
@@ -263,20 +264,48 @@ async def create_job_endpoint(
         })
     except Exception:
         pass
+    _invalidate_jobs_cache()
     return {"job_id": job_id, "total_domains": len(domains), "services": services_list, "status": "pending"}
+
+
+# ── Jobs list / detail — short in-memory cache so frontend's 3-second poll
+#    doesn't hit BQ 20×/minute. No _bq_touch: metadata reads, not data loads.
+_jobs_cache: dict = {}
+_jobs_cache_ts: float = 0.0
+_job_cache: dict[str, tuple[float, dict]] = {}   # job_id → (ts, data)
+_JOBS_CACHE_TTL = 5.0   # seconds
+
+
+def _invalidate_jobs_cache(job_id: str | None = None) -> None:
+    """Bust the cache after any write operation so next poll sees fresh data."""
+    global _jobs_cache_ts
+    _jobs_cache_ts = 0.0
+    if job_id:
+        _job_cache.pop(job_id, None)
 
 
 @app.get("/api/jobs")
 def list_jobs_endpoint():
-    _bq_touch("priv_r")
-    return {"jobs": list_jobs(limit=100)}
+    global _jobs_cache, _jobs_cache_ts
+    now = time.time()
+    if _jobs_cache and (now - _jobs_cache_ts) < _JOBS_CACHE_TTL:
+        return _jobs_cache
+    result = {"jobs": list_jobs(limit=100)}
+    _jobs_cache = result
+    _jobs_cache_ts = now
+    return result
+
 
 @app.get("/api/jobs/{job_id}")
 def get_job_endpoint(job_id: str):
-    _bq_touch("priv_r")
+    now = time.time()
+    cached = _job_cache.get(job_id)
+    if cached and (now - cached[0]) < _JOBS_CACHE_TTL:
+        return cached[1]
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    _job_cache[job_id] = (now, job)
     return job
 
 def _sync_processed_domains(job_id: str):
@@ -322,6 +351,7 @@ async def cancel_job_endpoint(job_id: str):
             cancelled = True
     if cancelled:
         _sync_processed_domains(job_id)
+    _invalidate_jobs_cache(job_id)
     return {"cancelled": cancelled}
 
 @app.post("/api/jobs/{job_id}/resume", dependencies=[require_permission("jobs")])
@@ -395,6 +425,7 @@ async def force_complete_job(job_id: str):
     status = "completed" if (job.get("failed_domains") or 0) == 0 else "completed_with_errors"
     update_job(job_id, status=status, error_message=f"Force-completed by admin ({done}/{total} processed)")
     _sync_processed_domains(job_id)
+    _invalidate_jobs_cache(job_id)
     return {"ok": True, "status": status, "processed": done, "total": total}
 
 
