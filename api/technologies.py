@@ -5,11 +5,12 @@ Reads from privateBQ.bw_parsed.technologies_json — no corpBQ calls needed.
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from google.cloud import bigquery as bq
 
-from core.bigquery import client, table_ref, _bq_touch, BW_PARSED_TABLE
+from core.bigquery import client, table_ref, _bq_touch, _bq_op, BW_PARSED_TABLE
 
 router = APIRouter(prefix="/api/technologies")
 logger = logging.getLogger(__name__)
@@ -63,16 +64,17 @@ def aggregate_technologies(body: dict):
 
         # Read only domain + technologies_json from privateBQ bw_parsed.
         # This is orders of magnitude cheaper than reading full JSON blobs from corpBQ.
-        rows = list(bq_client.query(f"""
-            SELECT domain, technologies_json
-            FROM (
-                SELECT domain, technologies_json,
-                       ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
-                FROM `{table_ref(BW_PARSED_TABLE)}`
-                {domain_where}
-            ) WHERE rn = 1
-            LIMIT 50000
-        """).result())
+        with _bq_op("priv_r"):
+            rows = list(bq_client.query(f"""
+                SELECT domain, technologies_json
+                FROM (
+                    SELECT domain, technologies_json,
+                           ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                    FROM `{table_ref(BW_PARSED_TABLE)}`
+                    {domain_where}
+                ) WHERE rn = 1
+                LIMIT 50000
+            """).result())
 
         from_ts = 0
         to_ts = 9999999999999
@@ -87,7 +89,9 @@ def aggregate_technologies(body: dict):
         tech_domains: dict[str, list] = {}
         unknown_techs: dict[str, int] = {}
 
-        for row in rows:
+        for idx, row in enumerate(rows):
+            if idx % 2000 == 0:
+                time.sleep(0)  # yield GIL so event loop can serve bq_activity polls
             domain = row["domain"]
             tj = row["technologies_json"]
             if not tj:

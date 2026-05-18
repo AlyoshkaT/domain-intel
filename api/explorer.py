@@ -132,9 +132,11 @@ def get_all_profiles():
             """)
             result_iter = job.result(page_size=50000)
 
-            # Build compact columnar structure: list of lists, no repeated keys
+            # Build compact columnar structure: list of lists, no repeated keys.
+            # time.sleep(0) every 1000 rows releases the GIL so the asyncio event
+            # loop thread can serve /api/bq_activity polls and keep the LED lit.
             rows = []
-            for r in result_iter:
+            for i, r in enumerate(result_iter):
                 row = []
                 for col in PROFILE_COLUMNS:
                     v = r[col]
@@ -145,6 +147,8 @@ def get_all_profiles():
                     else:
                         row.append(v)
                 rows.append(row)
+                if i % 1000 == 0:
+                    time.sleep(0)  # yield GIL → event loop can respond to bq_activity polls
 
         _profiles_cache = {"columns": PROFILE_COLUMNS, "rows": rows, "total": len(rows)}
         _profiles_cache_ts = now
@@ -249,28 +253,27 @@ def explore_search(body: dict):
     job_cfg = bq.QueryJobConfig(query_parameters=params)
 
     try:
-        _bq_touch("priv_r")
         bq_client = client()
+        with _bq_op("priv_r"):
+            # Count
+            cnt_rows = list(bq_client.query(
+                f"SELECT COUNT(*) as total FROM `{table_ref(PROFILES_TABLE)}` {where}",
+                job_config=job_cfg
+            ).result())
+            total = cnt_rows[0]["total"] if cnt_rows else 0
 
-        # Count
-        cnt_rows = list(bq_client.query(
-            f"SELECT COUNT(*) as total FROM `{table_ref(PROFILES_TABLE)}` {where}",
-            job_config=job_cfg
-        ).result())
-        total = cnt_rows[0]["total"] if cnt_rows else 0
-
-        # Data
-        data_rows = list(bq_client.query(
-            f"""SELECT domain, sw_visits, cms_list, osearch, osearch_group,
-                ems_list, ai_category, ai_is_ecommerce, ai_industry,
-                bw_vertical, sw_category, sw_subcategory,
-                sw_description, sw_title, company_name,
-                sw_primary_region, sw_primary_region_pct
-                FROM `{table_ref(PROFILES_TABLE)}` {where}
-                ORDER BY sw_visits DESC NULLS LAST
-                LIMIT {limit} OFFSET {offset}""",
-            job_config=job_cfg
-        ).result())
+            # Data
+            data_rows = list(bq_client.query(
+                f"""SELECT domain, sw_visits, cms_list, osearch, osearch_group,
+                    ems_list, ai_category, ai_is_ecommerce, ai_industry,
+                    bw_vertical, sw_category, sw_subcategory,
+                    sw_description, sw_title, company_name,
+                    sw_primary_region, sw_primary_region_pct
+                    FROM `{table_ref(PROFILES_TABLE)}` {where}
+                    ORDER BY sw_visits DESC NULLS LAST
+                    LIMIT {limit} OFFSET {offset}""",
+                job_config=job_cfg
+            ).result())
 
         result = {"total": total, "results": [dict(r) for r in data_rows]}
         _search_cache_set(ck, result)

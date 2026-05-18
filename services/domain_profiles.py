@@ -286,7 +286,9 @@ def sync_domain_profiles() -> dict:
         """)
         _sync_status.update({"progress": "1/4 · SW отримуємо…", "pct": 8})
         with _bq_op("priv_r"):
-            for r in sw_job.result():
+            for n, r in enumerate(sw_job.result()):
+                if n % 2000 == 0:
+                    time.sleep(0)  # yield GIL → event loop can serve bq_activity polls
                 key = normalize_domain(r["domain"])
                 if not key:
                     continue
@@ -326,7 +328,9 @@ def sync_domain_profiles() -> dict:
         """)
         _sync_status.update({"progress": "2/4 · BW отримуємо…", "pct": 38})
         with _bq_op("priv_r"):
-            for r in bw_job.result():
+            for n, r in enumerate(bw_job.result()):
+                if n % 2000 == 0:
+                    time.sleep(0)  # yield GIL
                 key = normalize_domain(r["domain"])
                 if key:
                     bw_parsed[key] = _match_bw_compact(
