@@ -79,7 +79,8 @@ def get_corp_ai_cached(domain: str) -> Optional[dict]:
         return result
 
     # Slow path: QUALIFY query — same logic as latest_categories_claude view
-    from core.bigquery import corp_client
+    from core.bigquery import corp_client, _bq_touch
+    _bq_touch("corp_r")
     import google.cloud.bigquery as gcbq
     bq = corp_client()
     try:
@@ -108,7 +109,8 @@ def get_corp_ai_cached(domain: str) -> Optional[dict]:
 
 def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
     """Append AI result to claude_responses."""
-    from core.bigquery import corp_client
+    from core.bigquery import corp_client, _bq_touch
+    _bq_touch("corp_w")
     from datetime import datetime, timezone
     bq = corp_client()
 

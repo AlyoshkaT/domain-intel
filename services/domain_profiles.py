@@ -269,6 +269,8 @@ def sync_domain_profiles() -> dict:
 
         # Phase 1 — SW (5 → 35%): read from privateBQ sw_parsed (cheap, already parsed)
         _sync_status.update({"progress": "1/4 · SW запит…", "pct": 5})
+        from core.bigquery import _bq_touch
+        _bq_touch("priv_r")
         sw_parsed: dict[str, dict] = {}
         sw_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.sw_parsed`"
         sw_job = our.query(f"""
@@ -316,6 +318,7 @@ def sync_domain_profiles() -> dict:
 
         # Phase 2 — BW (35 → 70%): read from privateBQ bw_parsed (cheap, already extracted)
         _sync_status.update({"progress": "2/4 · BW запит (privateBQ)…", "pct": 35})
+        _bq_touch("priv_r")
         bw_parsed: dict[str, dict] = {}
         bw_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.bw_parsed`"
         bw_job = our.query(f"""
@@ -339,6 +342,7 @@ def sync_domain_profiles() -> dict:
 
         # Phase 3 — AI (70 → 80%): extract 3 fields directly in SQL
         _sync_status.update({"progress": "3/4 · AI запит…", "pct": 70})
+        _bq_touch("corp_r")
         ai_data: dict[str, dict] = {}
         ai_job = corp.query(f"""
             SELECT
@@ -403,6 +407,7 @@ def sync_domain_profiles() -> dict:
             ai_data.clear()
 
             _sync_status.update({"progress": f"Завантажуємо {written:,} профілів у BigQuery…", "pct": 95})
+            _bq_touch("priv_w")
             job_config = bigquery.LoadJobConfig(
                 schema=PROFILES_SCHEMA,
                 write_disposition="WRITE_TRUNCATE",
@@ -472,6 +477,8 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
         dom_list_sql = ", ".join(f"'{d}'" for d in norm_domains)
         in_clause = f"domain IN ({dom_list_sql})"
 
+        from core.bigquery import _bq_touch
+        _bq_touch("priv_r")
         sw_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.sw_parsed`"
         sw_parsed: dict[str, dict] = {}
         for r in our.query(f"""
@@ -514,6 +521,7 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
             if key:
                 bw_parsed[key] = _match_bw_compact(r["bw_vertical"] or "", r["techs_compact"] or "", catalog)
 
+        _bq_touch("corp_r")
         ai_data: dict[str, dict] = {}
         ai_in = f"LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({dom_list_sql})"
         for r in corp.query(f"""
@@ -555,6 +563,7 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
                     logger.warning(f"Incremental build error for {domain}: {e}")
 
         # Load into a temp table, then MERGE into domain_profiles
+        _bq_touch("priv_w")
         tmp_table_id = f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.domain_profiles_incr_tmp"
         try:
             job_config = bigquery.LoadJobConfig(
