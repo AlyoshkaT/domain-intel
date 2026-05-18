@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from core.bigquery import (
     ensure_tables_exist, list_jobs, get_job, get_results,
-    reset_stale_jobs, update_job, get_stale_running_jobs,
+    reset_stale_jobs, update_job, get_stale_running_jobs, _bq_touch,
 )
 from services.technology_catalog import sync_catalog
 from services.redirect_resolver import ensure_redirects_table
@@ -179,7 +179,8 @@ async def sync_catalog_endpoint():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/catalog/status")
-async def catalog_status():
+def catalog_status():
+    _bq_touch("priv_r")
     from core.bigquery import client, table_ref
     from services.technology_catalog import CATALOG_TABLE
     try:
@@ -259,11 +260,13 @@ async def create_job_endpoint(
 
 
 @app.get("/api/jobs")
-async def list_jobs_endpoint():
+def list_jobs_endpoint():
+    _bq_touch("priv_r")
     return {"jobs": list_jobs(limit=100)}
 
 @app.get("/api/jobs/{job_id}")
-async def get_job_endpoint(job_id: str):
+def get_job_endpoint(job_id: str):
+    _bq_touch("priv_r")
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -390,13 +393,15 @@ async def force_complete_job(job_id: str):
 
 # ─── Results ──────────────────────────────────────────────────────────────────
 @app.get("/api/jobs/{job_id}/results")
-async def get_results_endpoint(job_id: str):
+def get_results_endpoint(job_id: str):
+    _bq_touch("priv_r")
     results = get_results(job_id)
     return {"results": results, "total": len(results)}
 
 
 @app.get("/api/jobs/{job_id}/export/csv", dependencies=[require_permission("download")])
-async def export_csv(request: Request, job_id: str):
+def export_csv(request: Request, job_id: str):
+    _bq_touch("priv_r")
     results = get_results(job_id)
     if not results:
         raise HTTPException(status_code=404, detail="No results found")
@@ -418,7 +423,8 @@ async def export_csv(request: Request, job_id: str):
     )
 
 @app.get("/api/jobs/{job_id}/export/xlsx", dependencies=[require_permission("download")])
-async def export_xlsx(request: Request, job_id: str):
+def export_xlsx(request: Request, job_id: str):
+    _bq_touch("priv_r")
     results = get_results(job_id)
     if not results:
         raise HTTPException(status_code=404, detail="No results found")

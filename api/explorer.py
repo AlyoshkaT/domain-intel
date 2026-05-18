@@ -112,7 +112,7 @@ def _build_where(filters: dict) -> tuple[str, list]:
 
 
 @router.get("/profiles")
-async def get_all_profiles():
+def get_all_profiles():
     """Return ALL profiles in columnar format for client-side filtering.
     Columnar = one array per row (no repeated keys) → ~3x less memory/JSON."""
     global _profiles_cache, _profiles_cache_ts
@@ -160,7 +160,7 @@ def invalidate_profiles_cache():
 
 
 @router.get("/domain/{domain}")
-async def get_domain_detail(domain: str):
+def get_domain_detail(domain: str):
     """Fetch full profile for a single domain including sw_description."""
     try:
         _bq_touch("priv_r")
@@ -180,7 +180,7 @@ async def get_domain_detail(domain: str):
 
 
 @router.get("/stats")
-async def explore_stats():
+def explore_stats():
     try:
         _bq_touch("priv_r")
         bq_client = client()
@@ -204,7 +204,7 @@ async def explore_stats():
 
 
 @router.get("/values/{field}")
-async def get_field_values(field: str, q: str = ""):
+def get_field_values(field: str, q: str = ""):
     if field not in FILTERABLE_FIELDS:
         return {"values": [], "error": "Field not allowed"}
 
@@ -234,7 +234,7 @@ async def get_field_values(field: str, q: str = ""):
 
 
 @router.post("/search")
-async def explore_search(body: dict):
+def explore_search(body: dict):
     filters = body.get("filters", {})
     limit = min(int(body.get("limit", 100)), 200000)
     offset = int(body.get("offset", 0))
@@ -291,7 +291,7 @@ async def refresh_profiles(background_tasks: BackgroundTasks):
 
 
 @router.get("/sync/status")
-async def sync_status():
+def sync_status():
     from services.domain_profiles import get_sync_status
     return get_sync_status()
 
@@ -354,5 +354,5 @@ async def explore_export_sheets(request: Request, body: dict, background_tasks: 
     return {"status": "exporting"}
 
 @router.get("/export/sheets/url")
-async def explore_sheets_url():
+def explore_sheets_url():
     return {"url": _explore_sheet_url, "error": _explore_sheet_error}

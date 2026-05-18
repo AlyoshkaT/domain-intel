@@ -29,7 +29,7 @@ def _ts_to_ym(ts_ms: int) -> str:
 
 
 @router.post("/aggregate")
-async def aggregate_technologies(body: dict):
+def aggregate_technologies(body: dict):
     date_from = body.get("date_from", "")
     date_to = body.get("date_to", "")
     show_unknown = body.get("show_unknown", False)
@@ -182,7 +182,7 @@ async def aggregate_technologies(body: dict):
 
 
 @router.post("/catalog/add")
-async def add_technology_endpoint(body: dict):
+def add_technology_endpoint(body: dict):
     """Add a new technology to Google Sheet + BQ catalog."""
     from fastapi import HTTPException
     from services.technology_catalog import add_technology

@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.get("/api/redirects")
-async def get_redirects(
+def get_redirects(
     search: str = "",
     type: str = "",
     job_id: str = "",
@@ -66,7 +66,7 @@ async def get_redirects(
 
 
 @router.get("/api/redirects/jobs")
-async def get_redirect_jobs():
+def get_redirect_jobs():
     """Return distinct job_ids that have redirect records (for filter dropdown)."""
     _bq_touch("priv_r")
     bq = client()

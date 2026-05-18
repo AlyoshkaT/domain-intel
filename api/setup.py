@@ -1,5 +1,8 @@
 """
 Setup API — manage technology catalog, users, cache settings, job history.
+
+All handlers are plain `def` (not async) so FastAPI runs them in a thread pool.
+This keeps the event loop free for /api/bq_activity polling while BQ queries run.
 """
 import logging
 from typing import Literal, Optional
@@ -16,13 +19,13 @@ router = APIRouter(prefix="/api/setup", dependencies=[_admin])
 # ── Technology Catalog ────────────────────────────────────────────────────────
 
 @router.get("/catalog")
-async def get_catalog():
+def get_catalog():
     from services.technology_catalog import get_catalog
     return get_catalog()
 
 
 @router.post("/catalog/sync")
-async def sync_catalog_from_sheets():
+def sync_catalog_from_sheets():
     try:
         from services.technology_catalog import sync_catalog
         counts = sync_catalog()
@@ -39,7 +42,7 @@ class CatalogEntry(BaseModel):
 
 
 @router.post("/catalog/add")
-async def add_catalog_entry(entry: CatalogEntry):
+def add_catalog_entry(entry: CatalogEntry):
     from services.technology_catalog import add_technology
     try:
         added = add_technology(entry.sheet, entry.technology.strip(), entry.group_name.strip())
@@ -49,11 +52,10 @@ async def add_catalog_entry(entry: CatalogEntry):
 
 
 @router.delete("/catalog")
-async def remove_catalog_entry(sheet: str, technology: str):
+def remove_catalog_entry(sheet: str, technology: str):
     from config.settings import GOOGLE_SHEETS_CATALOG_ID
     from core.bigquery import client, table_ref
     from google.cloud import bigquery
-    from core.bigquery import _bq_touch
     _bq_touch("priv_w")
 
     # 1. Delete from BQ
@@ -86,8 +88,7 @@ async def remove_catalog_entry(sheet: str, technology: str):
                         ).execute()
                         break
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"GSheet delete warning: {e}")
+            logger.warning(f"GSheet delete warning: {e}")
 
     return {"ok": True}
 
@@ -95,7 +96,7 @@ async def remove_catalog_entry(sheet: str, technology: str):
 # ── Google Drive / Sheets info ────────────────────────────────────────────────
 
 @router.get("/drive-info")
-async def get_drive_info():
+def get_drive_info():
     """Return service account email and GOOGLE_DRIVE_FOLDER_ID status."""
     import os
     from services.sheets_client import get_service_account_email
@@ -111,7 +112,7 @@ async def get_drive_info():
 # ── Settings (cache TTL etc.) ─────────────────────────────────────────────────
 
 @router.get("/settings")
-async def get_settings():
+def get_settings():
     _bq_touch("priv_r")
     from core.bigquery import get_setting
     return {
@@ -124,7 +125,7 @@ class SettingsUpdate(BaseModel):
 
 
 @router.post("/settings")
-async def update_settings(data: SettingsUpdate):
+def update_settings(data: SettingsUpdate):
     if not (1 <= data.cache_ttl_days <= 3650):
         raise HTTPException(status_code=400, detail="TTL must be 1–3650 days")
     _bq_touch("priv_w")
@@ -151,14 +152,14 @@ def _normalize_permissions(perms: str | list | None) -> str:
 
 
 @router.get("/users")
-async def list_users():
+def list_users():
     _bq_touch("priv_r")
     from core.bigquery import get_users
     return {"users": get_users()}
 
 
 @router.get("/permissions")
-async def list_permissions():
+def list_permissions():
     return {"permissions": [
         {"key": "explorer",  "label": "Explorer",       "desc": "Перегляд Explorer та дашборду"},
         {"key": "jobs",      "label": "Jobs",            "desc": "Створення та запуск завдань обробки"},
@@ -190,7 +191,7 @@ class UserUpdate(BaseModel):
 
 
 @router.post("/users")
-async def create_user(user: UserCreate):
+def create_user(user: UserCreate):
     if not user.username.strip():
         raise HTTPException(status_code=400, detail="Username required")
     if not user.password.strip():
@@ -208,7 +209,7 @@ async def create_user(user: UserCreate):
 
 
 @router.patch("/users/{username}")
-async def patch_user(username: str, update: UserUpdate):
+def patch_user(username: str, update: UserUpdate):
     _bq_touch("priv_w")
     from core.bigquery import update_user
     from api.auth import invalidate_users_cache
@@ -223,7 +224,7 @@ async def patch_user(username: str, update: UserUpdate):
 
 
 @router.delete("/users/{username}")
-async def delete_user(username: str):
+def delete_user(username: str):
     _bq_touch("priv_w")
     from core.bigquery import remove_user
     from api.auth import invalidate_users_cache
@@ -235,14 +236,14 @@ async def delete_user(username: str):
 # ── Activity Logs ─────────────────────────────────────────────────────────────
 
 @router.get("/logs")
-async def get_logs():
+def get_logs():
     _bq_touch("priv_r")
     from core.bigquery import get_activity_logs
     return {"logs": get_activity_logs(limit=200)}
 
 
 @router.delete("/logs/clear")
-async def clear_logs():
+def clear_logs():
     """Delete all activity log entries."""
     _bq_touch("priv_w")
     from core.bigquery import clear_activity_logs
@@ -251,13 +252,14 @@ async def clear_logs():
 
 
 @router.post("/logs/test")
-async def test_log(request: Request):
+def test_log(request: Request):
     """Write a test log entry and immediately read it back (for diagnostics)."""
     _bq_touch("priv_w"); _bq_touch("priv_r")
     from core.bigquery import log_activity, get_activity_logs
+    import time
     username = getattr(request.state, "username", "test")
-    log_activity(username, "log_test", {"ts": __import__("time").time()})
-    import time; time.sleep(1)  # brief wait for streaming buffer
+    log_activity(username, "log_test", {"ts": time.time()})
+    time.sleep(1)  # brief wait for streaming buffer
     logs = get_activity_logs(limit=5)
     return {"written": True, "recent_logs": logs}
 
@@ -265,7 +267,7 @@ async def test_log(request: Request):
 # ── API Usage ─────────────────────────────────────────────────────────────────
 
 @router.get("/usage")
-async def get_usage():
+def get_usage():
     _bq_touch("priv_r")
     from core.bigquery import get_api_usage_summary
     return {"usage": get_api_usage_summary()}
@@ -274,8 +276,8 @@ async def get_usage():
 # ── Job History ───────────────────────────────────────────────────────────────
 
 @router.get("/jobs/count")
-async def count_clearable_jobs():
-    from core.bigquery import client, table_ref, _bq_touch
+def count_clearable_jobs():
+    from core.bigquery import client, table_ref
     _bq_touch("priv_r")
     bq = client()
     rows = list(bq.query(
@@ -285,8 +287,8 @@ async def count_clearable_jobs():
 
 
 @router.post("/jobs/clear")
-async def clear_job_history():
-    from core.bigquery import client, table_ref, _bq_touch
+def clear_job_history():
+    from core.bigquery import client, table_ref
     _bq_touch("priv_w")
     bq = client()
     bq.query(
