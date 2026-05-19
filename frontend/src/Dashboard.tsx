@@ -1,5 +1,6 @@
 // Dashboard.tsx — Charts reacting to Explorer filters, all clickable → filter
 import { useMemo, useState } from "react"
+import { t, type Lang } from "./i18n"
 
 interface Profile {
   domain: string; sw_visits?: number; sw_category?: string; sw_subcategory?: string
@@ -30,24 +31,25 @@ function flag(code: string) {
 
 interface Slice { label: string; count: number; color: string }
 
-function topN(map: Map<string, number>, n: number): Slice[] {
+function topN(map: Map<string, number>, n: number, lang: Lang): Slice[] {
   const sorted = [...map.entries()].sort((a, b) => b[1] - a[1])
-  const top = sorted.slice(0, n).map(([label, count], i) => ({ label: label || "(порожнє)", count, color: COLORS[i % COLORS.length] }))
+  const top = sorted.slice(0, n).map(([label, count], i) => ({ label: label || t('dash_empty', lang), count, color: COLORS[i % COLORS.length] }))
   const rest = sorted.slice(n).reduce((s, [, c]) => s + c, 0)
-  if (rest > 0) top.push({ label: "Інші", count: rest, color: "#94a3b8" })
+  if (rest > 0) top.push({ label: t('dash_other', lang), count: rest, color: "#94a3b8" })
   return top
 }
 
 type OnFilter = (field: string, label: string) => void
 
-function Donut({ data, title, field, onFilter }: {
-  data: Slice[]; title: string; field?: string; onFilter?: OnFilter
+function Donut({ data, title, field, onFilter, lang }: {
+  data: Slice[]; title: string; field?: string; onFilter?: OnFilter; lang: Lang
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
   const total = data.reduce((s, d) => s + d.count, 0)
   if (!total) return null
   const sz = 120, cx = 60, cy = 60, r = 44, ir = 26
   let start = -Math.PI / 2
+  const other = t('dash_other', lang)
   const slices = data.map(item => {
     const pct = item.count / total
     const end = start + pct * 2 * Math.PI
@@ -64,7 +66,7 @@ function Donut({ data, title, field, onFilter }: {
 
   const clickable = !!field && !!onFilter
   const handleClick = (label: string) => {
-    if (clickable && label !== "Інші") onFilter!(field!, label)
+    if (clickable && label !== other) onFilter!(field!, label)
   }
 
   return (
@@ -77,12 +79,12 @@ function Donut({ data, title, field, onFilter }: {
             const isDim = hovered !== null && !isHov
             return (
               <path key={i} d={s.d} fill={s.color} stroke="var(--bg)" strokeWidth={isDim ? 1 : 1.5}
-                style={{ cursor: clickable && s.label !== "Інші" ? "pointer" : "default", transition: "opacity 0.15s, stroke-width 0.15s" }}
+                style={{ cursor: clickable && s.label !== other ? "pointer" : "default", transition: "opacity 0.15s, stroke-width 0.15s" }}
                 opacity={isDim ? 0.13 : isHov ? 1 : 0.9}
                 onClick={() => handleClick(s.label)}
                 onMouseEnter={() => setHovered(s.label)}
                 onMouseLeave={() => setHovered(null)}>
-                <title>{s.label}: {s.count.toLocaleString()} ({(s.pct * 100).toFixed(1)}%){clickable && s.label !== "Інші" ? " — натисніть для фільтру" : ""}</title>
+                <title>{s.label}: {s.count.toLocaleString()} ({(s.pct * 100).toFixed(1)}%){clickable && s.label !== other ? t('dash_click_filter', lang) : ""}</title>
               </path>
             )
           })}
@@ -96,7 +98,7 @@ function Donut({ data, title, field, onFilter }: {
               const isDim = hovered !== null && !isHov
               return (
                 <tr key={i}
-                  className={`dash-legend-row${clickable && item.label !== "Інші" ? " dash-row-clickable" : ""}`}
+                  className={`dash-legend-row${clickable && item.label !== other ? " dash-row-clickable" : ""}`}
                   style={{ opacity: isDim ? 0.25 : 1, transition: "opacity 0.15s" }}
                   onClick={() => handleClick(item.label)}
                   onMouseEnter={() => setHovered(item.label)}
@@ -123,7 +125,7 @@ function Donut({ data, title, field, onFilter }: {
   )
 }
 
-function CountryBars({ data, onFilter }: { data: Slice[]; onFilter?: OnFilter }) {
+function CountryBars({ data, onFilter, lang }: { data: Slice[]; onFilter?: OnFilter; lang: Lang }) {
   const [hovered, setHovered] = useState<string | null>(null)
   if (!data.length) return null
   const max = data[0]?.count || 1
@@ -133,7 +135,7 @@ function CountryBars({ data, onFilter }: { data: Slice[]; onFilter?: OnFilter })
       <div className="dash-chart-title">Country Map{onFilter && <span className="dash-filter-hint"> ↗ фільтр</span>}</div>
       <div className="dash-country-list">
         {data.slice(0, 12).map((item, i) => {
-          const clickable = !!onFilter && item.label !== "(без регіону)"
+          const clickable = !!onFilter && item.label !== t('dash_no_region', lang)
           const isHov = hovered === item.label
           const isDim = hovered !== null && !isHov
           return (
@@ -158,7 +160,7 @@ function CountryBars({ data, onFilter }: { data: Slice[]; onFilter?: OnFilter })
   )
 }
 
-export default function Dashboard({ profiles, onFilter }: { profiles: Profile[]; onFilter?: OnFilter }) {
+export default function Dashboard({ profiles, onFilter, lang }: { profiles: Profile[]; onFilter?: OnFilter; lang: Lang }) {
   const charts = useMemo(() => {
     const trafficMap = new Map<string, number>()
     TRAFFIC_GROUPS.forEach(g => trafficMap.set(g.label, 0))
@@ -175,14 +177,15 @@ export default function Dashboard({ profiles, onFilter }: { profiles: Profile[];
       trafficMap.set(g, (trafficMap.get(g) || 0) + 1)
       if (p.sw_primary_region) countryMap.set(p.sw_primary_region, (countryMap.get(p.sw_primary_region) || 0) + 1)
       else noRegion++
-      const cms = p.cms_list?.trim() || "(порожнє)"; cmsMap.set(cms, (cmsMap.get(cms) || 0) + 1)
-      const ems = p.ems_list?.trim() || "(порожнє)"; emsMap.set(ems, (emsMap.get(ems) || 0) + 1)
-      const srch = p.osearch?.trim() || "(порожнє)"; searchMap.set(srch, (searchMap.get(srch) || 0) + 1)
-      const cat = p.sw_category?.trim() || "(порожнє)"; catMap.set(cat, (catMap.get(cat) || 0) + 1)
-      const sub = p.sw_subcategory?.trim() || "(порожнє)"; subMap.set(sub, (subMap.get(sub) || 0) + 1)
+      const empty = t('dash_empty', lang)
+      const cms = p.cms_list?.trim() || empty; cmsMap.set(cms, (cmsMap.get(cms) || 0) + 1)
+      const ems = p.ems_list?.trim() || empty; emsMap.set(ems, (emsMap.get(ems) || 0) + 1)
+      const srch = p.osearch?.trim() || empty; searchMap.set(srch, (searchMap.get(srch) || 0) + 1)
+      const cat = p.sw_category?.trim() || empty; catMap.set(cat, (catMap.get(cat) || 0) + 1)
+      const sub = p.sw_subcategory?.trim() || empty; subMap.set(sub, (subMap.get(sub) || 0) + 1)
     }
 
-    if (noRegion > 0) countryMap.set("(без регіону)", noRegion)
+    if (noRegion > 0) countryMap.set(t('dash_no_region', lang), noRegion)
 
     const trafficData: Slice[] = TRAFFIC_GROUPS
       .map((g, i) => ({ label: g.label, count: trafficMap.get(g.label) || 0, color: g.color }))
@@ -190,29 +193,29 @@ export default function Dashboard({ profiles, onFilter }: { profiles: Profile[];
 
     return {
       trafficData,
-      countryData: topN(countryMap, 10),
-      cmsData:     topN(cmsMap, 8),
-      emsData:     topN(emsMap, 8),
-      searchData:  topN(searchMap, 8),
-      catData:     topN(catMap, 8),
-      subData:     topN(subMap, 8),
+      countryData: topN(countryMap, 10, lang),
+      cmsData:     topN(cmsMap, 8, lang),
+      emsData:     topN(emsMap, 8, lang),
+      searchData:  topN(searchMap, 8, lang),
+      catData:     topN(catMap, 8, lang),
+      subData:     topN(subMap, 8, lang),
     }
-  }, [profiles])
+  }, [profiles, lang])
 
   if (!profiles.length) return null
 
   return (
     <div>
       <div className="dashboard dashboard-4">
-        <Donut data={charts.trafficData} title="Traffic Groups" field="sw_visits"   onFilter={onFilter} />
-        <Donut data={charts.cmsData}     title="CMS"            field="cms_list"    onFilter={onFilter} />
-        <Donut data={charts.emsData}     title="EMS"            field="ems_list"    onFilter={onFilter} />
-        <Donut data={charts.searchData}  title="Onsite Search"  field="osearch"     onFilter={onFilter} />
+        <Donut data={charts.trafficData} title="Traffic Groups" field="sw_visits"   onFilter={onFilter} lang={lang} />
+        <Donut data={charts.cmsData}     title="CMS"            field="cms_list"    onFilter={onFilter} lang={lang} />
+        <Donut data={charts.emsData}     title="EMS"            field="ems_list"    onFilter={onFilter} lang={lang} />
+        <Donut data={charts.searchData}  title="Onsite Search"  field="osearch"     onFilter={onFilter} lang={lang} />
       </div>
       <div className="dashboard dashboard-4">
-        <CountryBars data={charts.countryData} onFilter={onFilter} />
-        <Donut data={charts.catData} title="Category SW" field="sw_category" onFilter={onFilter} />
-        <Donut data={charts.subData} title="Subcategory SW" /> {/* not in FilterState */}
+        <CountryBars data={charts.countryData} onFilter={onFilter} lang={lang} />
+        <Donut data={charts.catData} title="Category SW" field="sw_category" onFilter={onFilter} lang={lang} />
+        <Donut data={charts.subData} title="Subcategory SW" lang={lang} /> {/* not in FilterState */}
       </div>
     </div>
   )

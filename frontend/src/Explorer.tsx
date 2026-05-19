@@ -656,7 +656,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
 
         {/* Dashboard — renders as soon as profiles loaded */}
         {!loading && filteredProfiles.length > 0 && (
-          <Dashboard profiles={filteredProfiles} onFilter={handleDashboardFilter} />
+          <Dashboard profiles={filteredProfiles} onFilter={handleDashboardFilter} lang={lang} />
         )}
 
         {/* Results header */}

@@ -215,6 +215,44 @@ const T = {
     setup_synced: (cms: string, ems: string, os: string) => `Synced: CMS ${cms}, EMS ${ems}, OSearch ${os}`,
     setup_tech_deleted: (t2: string) => `✓ Deleted: ${t2}`,
     setup_cache_days_err: 'Enter a value between 1 and 3650 days',
+
+    // ── BQ Call Stats section ──
+    bq_stats_title: 'BQ Call Statistics',
+    bq_stats_resource: 'Resource',
+    bq_stats_today: 'Today',
+    bq_stats_week: 'Week',
+    bq_stats_month: 'Current month',
+    bq_stats_total: 'Total',
+    bq_stats_corp_billed: 'corpBQ billed this month',
+    bq_stats_priv_billed: 'privatBQ billed this month',
+    bq_stats_limit: (gb: number) => `/ ${gb} GB limit`,
+
+    // ── Cache / Settings section ──
+    cache_title: 'Cache validity period',
+    bq_limit_title: 'BigQuery query limit (GB)',
+    bq_limit_desc: (floor: number) => `Max data per BQ query. Protects against accidental large costs. Minimum: ${floor} GB (from env var).`,
+    bq_limit_err: (floor: number) => `Limit must be from ${floor} to 1000 GB`,
+    bq_limit_warn: 'ATTENTION! You are increasing the BigQuery limit above 25 GB. A large limit can lead to significant costs if a query goes wrong. Please think twice before saving. The limit automatically resets to 25 GB every night at 00:00 UTC — you don\'t need to remember to reset it.',
+    auto_sync_title: 'Automatic database update',
+    auto_sync_desc: 'Every night at 03:00 UTC — corp→priv sync, at 04:00 UTC — full profile update. Disable to pause auto-sync for debugging.',
+    auto_sync_on: 'ON — enabled',
+    auto_sync_off: 'OFF — disabled',
+    auto_sync_saving: 'Saving…',
+    auto_sync_paused: '⚠️ Nightly syncs paused',
+
+    // ── User form placeholders ──
+    setup_ph_group: 'Group (e.g. Algolia)…',
+    setup_ph_first: 'First name…',
+    setup_ph_last: 'Last name…',
+    setup_ph_login: 'Login…',
+    setup_ph_password: 'Password…',
+    setup_ph_new_password: 'New password…',
+
+    // ── Dashboard ──
+    dash_empty: '(empty)',
+    dash_other: 'Others',
+    dash_no_region: '(no region)',
+    dash_click_filter: ' — click to filter',
   },
 
   ua: {
@@ -422,7 +460,7 @@ const T = {
     setup_saved: '✓ Збережено',
     setup_user_added: '✓ Користувача додано',
     setup_user_deleted: '✓ Видалено',
-    setup_history_cleared: 'Historія очищена',
+    setup_history_cleared: 'Історія очищена',
     setup_err_login_pwd: 'Введіть логін та пароль',
     setup_err_load_users: (m: string) => `Помилка завантаження користувачів: ${m}`,
     setup_err: (m: string) => `Помилка: ${m}`,
@@ -431,6 +469,44 @@ const T = {
     setup_synced: (cms: string, ems: string, os: string) => `Синхронізовано: CMS ${cms}, EMS ${ems}, OSearch ${os}`,
     setup_tech_deleted: (t2: string) => `✓ Видалено: ${t2}`,
     setup_cache_days_err: 'Введіть значення від 1 до 3650 днів',
+
+    // ── BQ Call Stats section ──
+    bq_stats_title: 'Статистика звернень до BigQuery',
+    bq_stats_resource: 'Ресурс',
+    bq_stats_today: 'Сьогодні',
+    bq_stats_week: 'Тиждень',
+    bq_stats_month: 'Поточний місяць',
+    bq_stats_total: 'Усього',
+    bq_stats_corp_billed: 'corpBQ billed цього місяця',
+    bq_stats_priv_billed: 'privatBQ billed цього місяця',
+    bq_stats_limit: (gb: number) => `/ ${gb} GB ліміт`,
+
+    // ── Cache / Settings section ──
+    cache_title: 'Термін актуальності кешу',
+    bq_limit_title: 'Ліміт BigQuery запитів (GB)',
+    bq_limit_desc: (floor: number) => `Максимальний обсяг даних на один BQ-запит. Захищає від випадкових великих витрат. Мінімум: ${floor} GB (з env-змінної).`,
+    bq_limit_err: (floor: number) => `Ліміт має бути від ${floor} до 1000 GB`,
+    bq_limit_warn: 'ATTENTION! Ви збільшуєте ліміт BigQuery запитів понад 25 GB. Великий ліміт може призвести до значних витрат у разі некоректного запиту. Будь ласка, двічі подумайте перед збереженням. Ліміт автоматично скидається до 25 GB щоночі о 00:00 UTC — вам не треба пам\'ятати повернути.',
+    auto_sync_title: 'Автоматичне оновлення бази',
+    auto_sync_desc: 'Щоночі о 03:00 UTC — синк corp→priv, о 04:00 UTC — повне оновлення профілів. Вимкніть, якщо потрібно призупинити автосинк на час налагодження.',
+    auto_sync_on: 'ON — увімкнено',
+    auto_sync_off: 'OFF — вимкнено',
+    auto_sync_saving: 'Збереження…',
+    auto_sync_paused: '⚠️ Нічні синки призупинені',
+
+    // ── User form placeholders ──
+    setup_ph_group: 'Група (напр. Algolia)…',
+    setup_ph_first: 'Ім\'я…',
+    setup_ph_last: 'Прізвище…',
+    setup_ph_login: 'Логін…',
+    setup_ph_password: 'Пароль…',
+    setup_ph_new_password: 'Новий пароль…',
+
+    // ── Dashboard ──
+    dash_empty: '(порожнє)',
+    dash_other: 'Інші',
+    dash_no_region: '(без регіону)',
+    dash_click_filter: ' — натисніть для фільтру',
   },
 } as const
 

@@ -19,7 +19,7 @@ const BQ_STAT_ROWS = [
   { key: "priv_ai",  label: "privatBQ AI",  dot: "#34d399" },
 ]
 
-function BqCallStatsSection() {
+function BqCallStatsSection({ lang }: { lang: Lang }) {
   const [resources, setResources] = useState<Record<string, { today: number; week: number; month: number }>>({})
   const [loading, setLoading]     = useState(true)
   const [updatedAt, setUpdatedAt] = useState("")
@@ -54,7 +54,7 @@ function BqCallStatsSection() {
   return (
     <div className="card">
       <div className="setup-section-header">
-        <div className="card-section-title">Статистика звернень до BigQuery</div>
+        <div className="card-section-title">{t('bq_stats_title', lang)}</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {updatedAt && <span style={{ fontSize: 11, color: "var(--text-3)" }}>оновлено {updatedAt}</span>}
           <button className="btn-export" onClick={load} disabled={loading}>↻</button>
@@ -66,10 +66,10 @@ function BqCallStatsSection() {
           <table className="results-table" style={{ marginTop: 8 }}>
             <thead>
               <tr>
-                <th style={{ minWidth: 130 }}>Ресурс</th>
-                <th style={{ textAlign: "right", minWidth: 90 }}>Сьогодні</th>
-                <th style={{ textAlign: "right", minWidth: 90 }}>Тиждень</th>
-                <th style={{ textAlign: "right", minWidth: 110 }}>Поточний місяць</th>
+                <th style={{ minWidth: 130 }}>{t('bq_stats_resource', lang)}</th>
+                <th style={{ textAlign: "right", minWidth: 90 }}>{t('bq_stats_today', lang)}</th>
+                <th style={{ textAlign: "right", minWidth: 90 }}>{t('bq_stats_week', lang)}</th>
+                <th style={{ textAlign: "right", minWidth: 110 }}>{t('bq_stats_month', lang)}</th>
               </tr>
             </thead>
             <tbody>
@@ -110,7 +110,7 @@ function BqCallStatsSection() {
             </tbody>
             <tfoot>
               <tr style={{ fontWeight: 600, borderTop: "2px solid var(--border)" }}>
-                <td style={{ fontSize: 12, color: "var(--text-3)" }}>Всього</td>
+                <td style={{ fontSize: 12, color: "var(--text-3)" }}>{t('bq_stats_total', lang)}</td>
                 <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmt(totals.today)}</td>
                 <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmt(totals.week)}</td>
                 <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmt(totals.month)}</td>
@@ -122,8 +122,8 @@ function BqCallStatsSection() {
       {bytes && (
         <div style={{ marginTop: 12, display: "flex", gap: 16, flexWrap: "wrap" }}>
           {[
-            { label: "corpBQ billed цього місяця", gb: bytes.corp_gb, dot: "#60a5fa" },
-            { label: "privatBQ billed цього місяця", gb: bytes.priv_gb, dot: "#34d399" },
+            { label: t('bq_stats_corp_billed', lang), gb: bytes.corp_gb, dot: "#60a5fa" },
+            { label: t('bq_stats_priv_billed', lang), gb: bytes.priv_gb, dot: "#34d399" },
           ].map(({ label, gb, dot }) => (
             <div key={label} style={{
               background: "var(--bg-2)", borderRadius: 8, padding: "8px 14px",
@@ -137,7 +137,7 @@ function BqCallStatsSection() {
               </span>
               {gb !== null && bytes.max_gb && (
                 <span style={{ fontSize: 11, color: gb / bytes.max_gb > 0.7 ? "var(--danger)" : "var(--text-3)" }}>
-                  / {bytes.max_gb} GB ліміт
+                  {t('bq_stats_limit', lang)(bytes.max_gb)}
                 </span>
               )}
             </div>
@@ -235,7 +235,7 @@ function CatalogSection({ lang }: { lang: Lang }) {
           value={addVal} onChange={e => setAddVal(e.target.value)}
           onKeyDown={e => e.key === "Enter" && add()} style={{ flex: 1 }} />
         {tab === "osearch" && (
-          <input className="filter-input" placeholder="Група (напр. Algolia)..."
+          <input className="filter-input" placeholder={t('setup_ph_group', lang)}
             value={addGroup} onChange={e => setAddGroup(e.target.value)} style={{ width: 160 }} />
         )}
         <button className="btn-primary" style={{ padding: "6px 16px", fontSize: 13 }} onClick={add}>+ Додати</button>
@@ -424,13 +424,13 @@ function UsersSection({ lang }: { lang: Lang }) {
       <div style={{ background: "var(--bg-2)", borderRadius: 8, padding: "12px 14px", marginBottom: 16 }}>
         <div style={{ fontWeight: 600, fontSize: 11, color: "var(--text-3)", marginBottom: 8, textTransform: "uppercase", letterSpacing: .5 }}>{t('setup_new_user', lang)}</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-          <input className="filter-input" placeholder="Ім'я..." value={newUser.first_name}
+          <input className="filter-input" placeholder={t('setup_ph_first', lang)} value={newUser.first_name}
             onChange={e => setNewUser(p => ({ ...p, first_name: e.target.value }))} />
-          <input className="filter-input" placeholder="Прізвище..." value={newUser.last_name}
+          <input className="filter-input" placeholder={t('setup_ph_last', lang)} value={newUser.last_name}
             onChange={e => setNewUser(p => ({ ...p, last_name: e.target.value }))} />
-          <input className="filter-input" placeholder="Логін..." value={newUser.username}
+          <input className="filter-input" placeholder={t('setup_ph_login', lang)} value={newUser.username}
             onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))} />
-          <input className="filter-input" placeholder="Пароль..." type="password" value={newUser.password}
+          <input className="filter-input" placeholder={t('setup_ph_password', lang)} type="password" value={newUser.password}
             onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))} />
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -531,7 +531,7 @@ function UsersSection({ lang }: { lang: Lang }) {
                     onChange={e => setEditFields(p => ({ ...p, google_folder: e.target.value }))} style={{ width: 130 }} />
                 </td>
                 <td>
-                  <input className="filter-input" placeholder="Новий пароль..." type="password" value={editFields.password || ""}
+                  <input className="filter-input" placeholder={t('setup_ph_new_password', lang)} type="password" value={editFields.password || ""}
                     onChange={e => setEditFields(p => ({ ...p, password: e.target.value }))} style={{ width: 110 }} />
                 </td>
                 <td>
@@ -725,7 +725,7 @@ function CacheSection({ lang }: { lang: Lang }) {
 
   const saveBqLimit = async () => {
     if (bqMaxBytes < bqFloor || bqMaxBytes > 1000) {
-      setMsgBq(`Ліміт має бути від ${bqFloor} до 1000 GB`); return
+      setMsgBq(t('bq_limit_err', lang)(bqFloor)); return
     }
     setSavingBq(true); setMsgBq("")
     try {
@@ -741,7 +741,7 @@ function CacheSection({ lang }: { lang: Lang }) {
 
   return (
     <div className="card">
-      <div className="card-section-title">Термін актуальності кешу</div>
+      <div className="card-section-title">{t('cache_title', lang)}</div>
       <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, marginBottom: 12 }}>
         {t('setup_cache_desc', lang)}
       </p>
@@ -761,11 +761,10 @@ function CacheSection({ lang }: { lang: Lang }) {
 
         <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", marginBottom: 6 }}>
-            Ліміт BigQuery запитів (GB)
+            {t('bq_limit_title', lang)}
           </div>
           <p style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 10 }}>
-            Максимальний обсяг даних на один BQ-запит. Захищає від випадкових великих витрат.
-            Мінімум: <strong>{bqFloor} GB</strong> (з env-змінної).
+            {t('bq_limit_desc', lang)(bqFloor)}
           </p>
           <div className="setup-add-row" style={{ marginBottom: 0 }}>
             <input className="flt-num-input" type="number" min={bqFloor} max={1000} value={bqMaxBytes}
@@ -786,11 +785,7 @@ function CacheSection({ lang }: { lang: Lang }) {
               background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.5)",
               borderRadius: 8, fontSize: 13, color: "#fbbf24",
             }}>
-              <span style={{ fontSize: 15, marginRight: 6 }}>⚠️</span>
-              <strong>ATTENTION!</strong> Ви збільшуєте ліміт BigQuery запитів понад 25 GB.
-              Великий ліміт може призвести до значних витрат у разі некоректного запиту.
-              Будь ласка, <strong>двічі подумайте</strong> перед збереженням.{" "}
-              Ліміт <strong>автоматично скидається до 25 GB щоночі о 00:00 UTC</strong> — вам не треба пам'ятати повернути.
+              {t('bq_limit_warn', lang)}
             </div>
           )}
           {msgBq && <div className="setup-msg" style={{ marginTop: 8 }}>{msgBq}</div>}
@@ -798,11 +793,10 @@ function CacheSection({ lang }: { lang: Lang }) {
 
         <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", marginBottom: 6 }}>
-            Автоматичне оновлення бази
+            {t('auto_sync_title', lang)}
           </div>
           <p style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 10 }}>
-            Щоночі о <strong>03:00 UTC</strong> — синк corp→priv, о <strong>04:00 UTC</strong> — повне оновлення профілів.
-            Вимкніть, якщо потрібно призупинити автосинк на час налагодження.
+            {t('auto_sync_desc', lang)}
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button
@@ -823,11 +817,11 @@ function CacheSection({ lang }: { lang: Lang }) {
                 boxShadow: autoSync ? "0 0 6px #34d399" : "none",
                 display: "inline-block", flexShrink: 0,
               }} />
-              {togglingSync ? "Збереження…" : autoSync ? "ON — увімкнено" : "OFF — вимкнено"}
+              {togglingSync ? t('auto_sync_saving', lang) : autoSync ? t('auto_sync_on', lang) : t('auto_sync_off', lang)}
             </button>
             {!autoSync && (
               <span style={{ fontSize: 12, color: "#f87171" }}>
-                ⚠️ Нічні синки призупинені
+                {t('auto_sync_paused', lang)}
               </span>
             )}
           </div>
@@ -891,7 +885,7 @@ export default function SetupPage({ lang }: { lang: Lang }) {
         <h1 className="page-title">{t('setup_title', lang)}</h1>
         <span style={{ fontSize: 12, color: "var(--text-3)" }}>{t('setup_subtitle', lang)}</span>
       </div>
-      <BqCallStatsSection />
+      <BqCallStatsSection lang={lang} />
       <div style={{ height: 16 }} />
       <CatalogSection lang={lang} />
       <div style={{ height: 16 }} />
