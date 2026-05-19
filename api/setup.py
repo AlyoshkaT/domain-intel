@@ -120,12 +120,14 @@ def get_settings():
         "cache_ttl_days": int(get_setting("cache_ttl_days", "90")),
         "bq_max_bytes_gb": get_bq_max_bytes_gb(),
         "bq_max_bytes_gb_floor": BQ_MAX_BYTES_BILLED_GB,   # env-var minimum
+        "auto_sync_enabled": get_setting("auto_sync_enabled", "true") != "false",
     }
 
 
 class SettingsUpdate(BaseModel):
     cache_ttl_days: Optional[int] = None
     bq_max_bytes_gb: Optional[int] = None
+    auto_sync_enabled: Optional[bool] = None
 
 
 @router.post("/settings")
@@ -143,6 +145,9 @@ def update_settings(data: SettingsUpdate):
             raise HTTPException(status_code=400, detail="Byte limit must be 1–1000 GB")
         set_setting("bq_max_bytes_gb", str(data.bq_max_bytes_gb))
         _invalidate_max_bytes_cache()
+
+    if data.auto_sync_enabled is not None:
+        set_setting("auto_sync_enabled", "true" if data.auto_sync_enabled else "false")
 
     return {"ok": True}
 

@@ -22,6 +22,9 @@ def _run_sync():
     result = sync_domain_profiles()
     logger.info(f"Scheduled daily sync done: {result}")
 
+    # Flush call stats immediately after sync (don't wait for 5-min tick)
+    _flush_call_stats()
+
     # Invalidate Explorer cache after sync
     try:
         from api.explorer import invalidate_profiles_cache
@@ -37,6 +40,9 @@ def _run_parsed_sync():
     result = sync_parsed_from_corp()
     logger.info(f"Scheduled parsed sync done: {result}")
 
+    # Flush call stats immediately after sync
+    _flush_call_stats()
+
 
 def _flush_call_stats():
     """Flush in-memory BQ call counters to BigQuery."""
@@ -48,6 +54,15 @@ def _flush_call_stats():
 
 
 _BQ_LIMIT_DAILY_RESET_GB = 25   # reset target — enough for a normal day, safe margin
+
+
+def _is_auto_sync_enabled() -> bool:
+    """Read auto_sync_enabled from BQ app_settings. Defaults to True if not set."""
+    try:
+        from core.bigquery import get_setting
+        return get_setting("auto_sync_enabled", "true") != "false"
+    except Exception:
+        return True  # fail-safe: sync if we can't read the setting
 
 
 def _reset_bq_limit():
@@ -73,15 +88,21 @@ def _scheduler_loop():
             # Sleep 55 minutes to avoid double-trigger within same hour
             _stop_event.wait(timeout=55 * 60)
         elif now.hour == _PARSED_SYNC_HOUR_UTC and now.minute < 5:
-            logger.info("Parsed sync triggered (corpBQ raw → privateBQ parsed)")
-            thread = threading.Thread(target=_run_parsed_sync, daemon=True, name="parsed-sync")
-            thread.start()
+            if _is_auto_sync_enabled():
+                logger.info("Parsed sync triggered (corpBQ raw → privateBQ parsed)")
+                thread = threading.Thread(target=_run_parsed_sync, daemon=True, name="parsed-sync")
+                thread.start()
+            else:
+                logger.info("Parsed sync skipped — auto_sync_enabled=false")
             # Sleep 55 minutes to avoid double-trigger but still wake for profile sync at 04:00
             _stop_event.wait(timeout=55 * 60)
         elif now.hour == _SYNC_HOUR_UTC and now.minute < 5:
-            logger.info("Daily profiles sync triggered")
-            thread = threading.Thread(target=_run_sync, daemon=True, name="daily-sync")
-            thread.start()
+            if _is_auto_sync_enabled():
+                logger.info("Daily profiles sync triggered")
+                thread = threading.Thread(target=_run_sync, daemon=True, name="daily-sync")
+                thread.start()
+            else:
+                logger.info("Daily profiles sync skipped — auto_sync_enabled=false")
             # Sleep 6 hours to avoid double-trigger within same hour
             _stop_event.wait(timeout=6 * 3600)
         else:

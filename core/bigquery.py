@@ -901,7 +901,7 @@ def sync_parsed_from_corp() -> dict:
                 S.sw_top_countries, S.sw_monthly_visits, S.sw_global_rank, S.sw_engagement
             )
         """
-        sw_job = bq.query(sw_merge, job_config=_bq_qcfg())
+        sw_job = bq.query(sw_merge, job_config=_bq_qcfg(max_bytes=False))
         sw_job.result()
         sw_elapsed = time.time() - t0
         track_bq_call("corp_sw")
@@ -973,7 +973,7 @@ def sync_parsed_from_corp() -> dict:
                 S.bw_email_marketing, S.bw_technologies, S.techs_compact, S.technologies_json
             )
         """
-        bw_job = bq.query(bw_merge, job_config=_bq_qcfg())
+        bw_job = bq.query(bw_merge, job_config=_bq_qcfg(max_bytes=False))
         bw_job.result()
         bw_elapsed = time.time() - t_bw
         track_bq_call("corp_bw")

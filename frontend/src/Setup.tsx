@@ -677,9 +677,11 @@ function CacheSection({ lang }: { lang: Lang }) {
   const [days, setDays] = useState(90)
   const [bqMaxBytes, setBqMaxBytes] = useState(50)
   const [bqFloor, setBqFloor] = useState(1)
+  const [autoSync, setAutoSync] = useState(true)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savingBq, setSavingBq] = useState(false)
+  const [togglingSync, setTogglingSync] = useState(false)
   const [msg, setMsg] = useState("")
   const [msgBq, setMsgBq] = useState("")
   const [showBqWarning, setShowBqWarning] = useState(false)
@@ -690,6 +692,7 @@ function CacheSection({ lang }: { lang: Lang }) {
         setDays(r.cache_ttl_days)
         setBqMaxBytes(r.bq_max_bytes_gb ?? 50)
         setBqFloor(r.bq_max_bytes_gb_floor ?? 1)
+        setAutoSync(r.auto_sync_enabled !== false)
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -706,6 +709,18 @@ function CacheSection({ lang }: { lang: Lang }) {
       setMsg(t('setup_saved', lang))
     } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
     finally { setSaving(false) }
+  }
+
+  const toggleAutoSync = async (enabled: boolean) => {
+    setTogglingSync(true)
+    try {
+      await apiFetch("/api/setup/settings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_sync_enabled: enabled })
+      })
+      setAutoSync(enabled)
+    } catch (e: any) { setMsgBq(t('setup_err', lang)(e.message)) }
+    finally { setTogglingSync(false) }
   }
 
   const saveBqLimit = async () => {
@@ -779,6 +794,43 @@ function CacheSection({ lang }: { lang: Lang }) {
             </div>
           )}
           {msgBq && <div className="setup-msg" style={{ marginTop: 8 }}>{msgBq}</div>}
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", marginBottom: 6 }}>
+            Автоматичне оновлення бази
+          </div>
+          <p style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 10 }}>
+            Щоночі о <strong>03:00 UTC</strong> — синк corp→priv, о <strong>04:00 UTC</strong> — повне оновлення профілів.
+            Вимкніть, якщо потрібно призупинити автосинк на час налагодження.
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={() => toggleAutoSync(!autoSync)}
+              disabled={togglingSync}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                border: "none", cursor: togglingSync ? "wait" : "pointer",
+                background: autoSync ? "rgba(52,211,153,0.2)" : "rgba(239,68,68,0.15)",
+                color: autoSync ? "#34d399" : "#f87171",
+                transition: "all 0.2s",
+              }}
+            >
+              <span style={{
+                width: 10, height: 10, borderRadius: "50%",
+                background: autoSync ? "#34d399" : "#f87171",
+                boxShadow: autoSync ? "0 0 6px #34d399" : "none",
+                display: "inline-block", flexShrink: 0,
+              }} />
+              {togglingSync ? "Збереження…" : autoSync ? "ON — увімкнено" : "OFF — вимкнено"}
+            </button>
+            {!autoSync && (
+              <span style={{ fontSize: 12, color: "#f87171" }}>
+                ⚠️ Нічні синки призупинені
+              </span>
+            )}
+          </div>
         </div>
       </>)}
     </div>

@@ -283,7 +283,7 @@ def sync_domain_profiles() -> dict:
                 sw_primary_region_pct / 100 AS sw_region_val
             FROM {sw_priv_table}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """, job_config=_bq_qcfg())
+        """, job_config=_bq_qcfg(max_bytes=False))
         _sync_status.update({"progress": "1/4 · SW отримуємо…", "pct": 8})
         with _bq_op("priv_r"):
             for n, r in enumerate(sw_job.result()):
@@ -326,7 +326,7 @@ def sync_domain_profiles() -> dict:
             SELECT domain, bw_vertical, techs_compact
             FROM {bw_priv_table}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """, job_config=_bq_qcfg())
+        """, job_config=_bq_qcfg(max_bytes=False))
         _sync_status.update({"progress": "2/4 · BW отримуємо…", "pct": 38})
         with _bq_op("priv_r"):
             for n, r in enumerate(bw_job.result()):
@@ -356,7 +356,7 @@ def sync_domain_profiles() -> dict:
                 COALESCE(JSON_VALUE(response_json, '$.subcategory'), '')      AS ai_industry
             FROM {corp_ai_table}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """, job_config=_bq_qcfg())
+        """, job_config=_bq_qcfg(max_bytes=False))
         _sync_status.update({"progress": "3/4 · AI отримуємо…", "pct": 72})
         with _bq_op("corp_r"):
             for r in ai_job.result():
