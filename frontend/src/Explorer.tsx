@@ -136,7 +136,7 @@ function DomainFilter({ filter, allValues, onChange, lang }: {
           </button>
           {open && (
             <div className="flt-dropdown">
-              <input className="flt-search-input" placeholder="Пошук домену..."
+              <input className="flt-search-input" placeholder={t('expl_ph_domain_search', lang)}
                 value={filter.value} onChange={e => onChange({ ...filter, value: e.target.value })} autoFocus />
               {filter.selected.length > 0 && (
                 <div className="flt-clear-sel" onClick={() => onChange({ ...filter, selected: [], type: "all", value: "" })}>
@@ -172,7 +172,7 @@ function DomainFilter({ filter, allValues, onChange, lang }: {
 
       {(filter.type === "contains" || filter.type === "not_contains") && (
         <div style={{ position: "relative" }}>
-          <input className="flt-num-input" placeholder="Текст або домен..."
+          <input className="flt-num-input" placeholder={t('expl_ph_text_or_domain', lang)}
             value={filter.value}
             onChange={e => { onChange({ ...filter, value: e.target.value }); setOpen(true) }}
             onFocus={() => setOpen(true)} />
@@ -227,7 +227,7 @@ function MultiSelect({ field, filter, allValues, onChange, lang }: {
           </button>
           {open && (
             <div className="flt-dropdown">
-              <input className="flt-search-input" placeholder="Пошук..." value={filter.search}
+              <input className="flt-search-input" placeholder={t('expl_ph_search', lang)} value={filter.search}
                 onChange={e => onChange({ ...filter, search: e.target.value })} autoFocus />
               {filter.selected.length > 0 && (
                 <div className="flt-clear-sel" onClick={() => onChange({ ...filter, selected: [], type: "all", search: "" })}>
@@ -235,7 +235,7 @@ function MultiSelect({ field, filter, allValues, onChange, lang }: {
                 </div>
               )}
               <div className="flt-options">
-                {filtered.length === 0 && <div className="flt-loading">Нічого</div>}
+                {filtered.length === 0 && <div className="flt-loading">{t('expl_ph_nothing', lang)}</div>}
                 {filtered.map(v => (
                   <label key={v.value} className="flt-option">
                     <input type="checkbox" checked={filter.selected.includes(v.value)} onChange={() => toggle(v.value)} />
@@ -269,14 +269,14 @@ function NumericFilter({ filter, onChange, lang }: { filter: NumFilter; onChange
         <option value="between">{t('expl_filter_between', lang)}</option>
       </select>
       {(filter.type === "gt" || filter.type === "lt") && (
-        <input className="flt-num-input" type="number" placeholder="Значення"
+        <input className="flt-num-input" type="number" placeholder={t('expl_ph_value', lang)}
           value={filter.value} onChange={e => onChange({ ...filter, value: e.target.value })} />
       )}
       {filter.type === "between" && (
         <div className="flt-between">
-          <input className="flt-num-input" type="number" placeholder="Від" value={filter.min} onChange={e => onChange({ ...filter, min: e.target.value })} />
-          <span className="flt-between-sep">—</span>
-          <input className="flt-num-input" type="number" placeholder="До" value={filter.max} onChange={e => onChange({ ...filter, max: e.target.value })} />
+          <input className="flt-num-input" type="number" placeholder={t('expl_ph_from', lang)} value={filter.min} onChange={e => onChange({ ...filter, min: e.target.value })} />
+          <span className="rlt-between-sep">—</span>
+          <input className="flt-num-input" type="number" placeholder={t('expl_ph_to', lang)} value={filter.max} onChange={e => onChange({ ...filter, max: e.target.value })} />
         </div>
       )}
     </div>

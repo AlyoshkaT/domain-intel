@@ -226,6 +226,8 @@ const T = {
     bq_stats_corp_billed: 'corpBQ billed this month',
     bq_stats_priv_billed: 'privatBQ billed this month',
     bq_stats_limit: (gb: number) => `/ ${gb} GB limit`,
+    bq_stats_updated: (t: string) => `updated ${t}`,
+    bq_stats_footnote: '1 call = 1 BQ request (batch-prefetch or individual query). Monthly counter resets on the 1st automatically.',
 
     // ── Cache / Settings section ──
     cache_title: 'Cache validity period',
@@ -253,6 +255,16 @@ const T = {
     dash_other: 'Others',
     dash_no_region: '(no region)',
     dash_click_filter: ' — click to filter',
+    dash_click_filter_country: 'Click to filter',
+
+    // ── Explorer filter placeholders ──
+    expl_ph_domain_search: 'Search domain…',
+    expl_ph_text_or_domain: 'Text or domain…',
+    expl_ph_search: 'Search…',
+    expl_ph_nothing: 'Nothing',
+    expl_ph_value: 'Value',
+    expl_ph_from: 'From',
+    expl_ph_to: 'To',
   },
 
   ua: {
@@ -480,6 +492,8 @@ const T = {
     bq_stats_corp_billed: 'corpBQ billed цього місяця',
     bq_stats_priv_billed: 'privatBQ billed цього місяця',
     bq_stats_limit: (gb: number) => `/ ${gb} GB ліміт`,
+    bq_stats_updated: (t: string) => `оновлено ${t}`,
+    bq_stats_footnote: '1 запит = 1 звернення (batch-prefetch чи individual BQ query). Місячний лічільник скидається 1-го числа автоматично.',
 
     // ── Cache / Settings section ──
     cache_title: 'Термін актуальності кешу',
@@ -507,6 +521,16 @@ const T = {
     dash_other: 'Інші',
     dash_no_region: '(без регіону)',
     dash_click_filter: ' — натисніть для фільтру',
+    dash_click_filter_country: 'Натисніть для фільтру',
+
+    // ── Explorer filter placeholders ──
+    expl_ph_domain_search: 'Пошук домену…',
+    expl_ph_text_or_domain: 'Текст або домен…',
+    expl_ph_search: 'Пошук…',
+    expl_ph_nothing: 'Нічого',
+    expl_ph_value: 'Значення',
+    expl_ph_from: 'Від',
+    expl_ph_to: 'До',
   },
 } as const
 

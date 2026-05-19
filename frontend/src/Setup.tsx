@@ -56,7 +56,7 @@ function BqCallStatsSection({ lang }: { lang: Lang }) {
       <div className="setup-section-header">
         <div className="card-section-title">{t('bq_stats_title', lang)}</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {updatedAt && <span style={{ fontSize: 11, color: "var(--text-3)" }}>оновлено {updatedAt}</span>}
+          {updatedAt && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{t('bq_stats_updated', lang)(updatedAt)}</span>}
           <button className="btn-export" onClick={load} disabled={loading}>↻</button>
         </div>
       </div>
@@ -145,7 +145,7 @@ function BqCallStatsSection({ lang }: { lang: Lang }) {
         </div>
       )}
       <p style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8, marginBottom: 0 }}>
-        1 запит = 1 звернення (batch-prefetch чи individual BQ query). Місячний лічільник скидається 1-го числа автоматично.
+        {t('bq_stats_footnote', lang)}
       </p>
     </div>
   )
@@ -510,9 +510,9 @@ function UsersSection({ lang }: { lang: Lang }) {
               <tr key={u.username} style={{ background: "var(--bg-2)" }}>
                 <td>
                   <div style={{ display: "flex", gap: 4 }}>
-                    <input className="filter-input" placeholder="Ім'я" value={editFields.first_name || ""}
+                    <input className="filter-input" placeholder={t('setup_ph_first', lang)} value={editFields.first_name || ""}
                       onChange={e => setEditFields(p => ({ ...p, first_name: e.target.value }))} style={{ width: 90 }} />
-                    <input className="filter-input" placeholder="Прізвище" value={editFields.last_name || ""}
+                    <input className="filter-input" placeholder={t('setup_ph_last', lang)} value={editFields.last_name || ""}
                       onChange={e => setEditFields(p => ({ ...p, last_name: e.target.value }))} style={{ width: 90 }} />
                   </div>
                 </td>

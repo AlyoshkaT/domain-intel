@@ -144,7 +144,7 @@ function CountryBars({ data, onFilter, lang }: { data: Slice[]; onFilter?: OnFil
               onClick={() => clickable && onFilter!("sw_primary_region", item.label)}
               onMouseEnter={() => setHovered(item.label)}
               onMouseLeave={() => setHovered(null)}
-              title={clickable ? "Натисніть для фільтру" : undefined}>
+              title={clickable ? t('dash_click_filter_country', lang) : undefined}>
               <span className="dash-country-flag">{flag(item.label)}</span>
               <span className="dash-country-code">{item.label}</span>
               <div className="dash-country-bar-wrap">
