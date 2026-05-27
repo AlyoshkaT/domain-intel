@@ -423,7 +423,7 @@ _parsed_bw_cache: dict[str, Optional[dict]] = {}
 def save_sw_parsed(domain: str, parsed: dict) -> None:
     """Stream-insert one parsed SW row into privateBQ sw_parsed."""
     _bq_touch("priv_w")
-    track_bq_call("priv_sw")
+    # no track_bq_call here — per-domain streaming insert, counted in prefetch batch
     bq = client()
     row = {
         "domain": domain,
@@ -456,7 +456,7 @@ def save_sw_parsed(domain: str, parsed: dict) -> None:
 def save_bw_parsed(domain: str, bw_dict: dict) -> None:
     """Stream-insert one parsed BW row into privateBQ bw_parsed."""
     _bq_touch("priv_w")
-    track_bq_call("priv_bw")
+    # no track_bq_call here — per-domain streaming insert, counted in prefetch batch
     bq = client()
     row = {
         "domain": domain,
@@ -576,9 +576,8 @@ def get_sw_parsed(domain: str) -> Optional[dict]:
     """Return parsed SW data from in-memory cache or fallback BQ query."""
     if domain in _parsed_sw_cache:
         return _parsed_sw_cache[domain]
-    # Slow path: individual BQ query
+    # Slow path: individual BQ query — no track_bq_call (per-domain, noise)
     _bq_touch("priv_r")
-    track_bq_call("priv_sw")
     bq = client()
     try:
         rows = list(bq.query(
@@ -623,9 +622,8 @@ def get_bw_parsed(domain: str) -> Optional[dict]:
     """Return parsed BW data from in-memory cache or fallback BQ query."""
     if domain in _parsed_bw_cache:
         return _parsed_bw_cache[domain]
-    # Slow path: individual BQ query
+    # Slow path: individual BQ query — no track_bq_call (per-domain, noise)
     _bq_touch("priv_r")
-    track_bq_call("priv_bw")
     bq = client()
     try:
         rows = list(bq.query(
@@ -1013,14 +1011,8 @@ def get_cached(table: str, domain: str, ttl_days: int = 90, force: bool = False,
             logger.debug(f"Prefetch HIT: {table} / {domain}")
         return data
 
-    # Slow path: individual BQ query (used when prefetch wasn't called)
+    # Slow path: individual BQ query — no track_bq_call (per-domain, noise)
     _bq_touch("corp_r")
-    if table == BQ_SIMILARWEB_CACHE:
-        track_bq_call("corp_sw")
-    elif table == BQ_BUILTWITH_CACHE:
-        track_bq_call("corp_bw")
-    else:
-        track_bq_call("corp_ai")
     bq = corp_client()
     t_start = time.time()
     logger.info(f"Cache lookup: {table} / {domain}")
@@ -1046,12 +1038,7 @@ def get_cached(table: str, domain: str, ttl_days: int = 90, force: bool = False,
 
 def save_cache(table: str, domain: str, data: dict):
     _bq_touch("corp_w")
-    if table == BQ_SIMILARWEB_CACHE:
-        track_bq_call("corp_sw")
-    elif table == BQ_BUILTWITH_CACHE:
-        track_bq_call("corp_bw")
-    else:
-        track_bq_call("corp_ai")
+    # no track_bq_call — per-domain streaming insert, noise in counter
     bq = corp_client()
     row = {"domain": domain, "fetched_at": datetime.now(timezone.utc).isoformat(), "response_json": json.dumps(data)}
     try:
