@@ -323,16 +323,24 @@ def _sync_processed_domains(job_id: str):
     # Auto GSheet export (same as normal job completion)
     def _do_sheets():
         try:
-            from core.bigquery import get_results as _get_results, get_job
+            from core.bigquery import get_results as _get_results, get_job, get_users, set_setting
             from services.sheets_export import export_job_to_sheets
-            from core.bigquery import set_setting
             job = get_job(job_id)
             results = _get_results(job_id)
             if results:
-                url = export_job_to_sheets(job_id, job.get("filename", "results"), results)
+                creator = job.get("created_by", "") or ""
+                folder_id = ""
+                if creator:
+                    try:
+                        users = {u["username"]: u for u in get_users()}
+                        folder_id = users.get(creator, {}).get("google_folder") or ""
+                    except Exception:
+                        pass
+                url = export_job_to_sheets(job_id, job.get("filename", "results"), results,
+                                           folder_id=folder_id)
                 if url:
                     set_setting(f"sheet_url_{job_id}", url)
-                    logger.info(f"Auto-exported cancelled job {job_id} to Sheets: {url}")
+                    logger.info(f"Auto-exported cancelled job {job_id} to Sheets (folder={folder_id or 'admin'}): {url}")
         except Exception as e:
             logger.warning(f"Auto Sheets export failed for cancelled job {job_id}: {e}")
 

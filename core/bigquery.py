@@ -221,6 +221,7 @@ JOBS_SCHEMA = [
     bigquery.SchemaField("services", "STRING"),
     bigquery.SchemaField("filename", "STRING"),
     bigquery.SchemaField("error_message", "STRING"),
+    bigquery.SchemaField("created_by", "STRING"),   # username of job creator
 ]
 
 RESULTS_SCHEMA = [
@@ -309,6 +310,11 @@ def ensure_tables_exist():
         except Exception:
             bq.create_table(table_ref_obj)
             logger.info(f"Created table {table_name}")
+    # Migrate analysis_jobs: add created_by column if missing
+    try:
+        _ensure_or_migrate_table(bq, BQ_JOBS_TABLE, JOBS_SCHEMA, "created_by")
+    except Exception as e:
+        logger.error(f"jobs table migration error: {e}")
     # Parsed tables use migration logic to add new columns on first deploy
     _ensure_or_migrate_table(bq, SW_PARSED_TABLE, _SW_PARSED_SCHEMA, "sw_engagement")
     _ensure_or_migrate_table(bq, BW_PARSED_TABLE, _BW_PARSED_SCHEMA, "technologies_json")
@@ -1058,17 +1064,20 @@ def save_cache(table: str, domain: str, data: dict):
         logger.error(f"Cache write exception ({table}, {domain}): {e}")
 
 
-def create_job(job_id: str, total_domains: int, services: list[str], filename: str):
+def create_job(job_id: str, total_domains: int, services: list[str], filename: str,
+               created_by: str = ""):
     bq = client()
     created_at = datetime.now(timezone.utc).isoformat()
     services_json = json.dumps(services).replace("'", "''")
     filename_escaped = (filename or "").replace("'", "''")
+    created_by_escaped = (created_by or "").replace("'", "''")
     bq.query(f"""
         INSERT INTO `{table_ref(BQ_JOBS_TABLE)}`
         (job_id, created_at, updated_at, status, total_domains,
-         processed_domains, failed_domains, services, filename, error_message)
+         processed_domains, failed_domains, services, filename, error_message, created_by)
         VALUES ('{job_id}', '{created_at}', '{created_at}', 'pending',
-         {total_domains}, 0, 0, '{services_json}', '{filename_escaped}', NULL)
+         {total_domains}, 0, 0, '{services_json}', '{filename_escaped}', NULL,
+         '{created_by_escaped}')
     """).result()
 
 

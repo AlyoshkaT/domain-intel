@@ -139,18 +139,28 @@ async def run_batch_job(
     clear_prefetch_cache()
     clear_parsed_cache()
 
-    # Auto-export to admin Google Sheets folder
+    # Auto-export: use creator's google_folder, fall back to admin folder
     try:
-        from core.bigquery import get_results, get_job
+        from core.bigquery import get_results, get_job, get_users
         from services.sheets_export import export_job_to_sheets
         job = get_job(job_id)
         results = get_results(job_id)
         if results:
-            url = export_job_to_sheets(job_id, job.get("filename", "results"), results)
+            # Look up creator's personal Drive folder
+            creator = job.get("created_by", "") or username or ""
+            folder_id = ""
+            if creator:
+                try:
+                    users = {u["username"]: u for u in get_users()}
+                    folder_id = users.get(creator, {}).get("google_folder") or ""
+                except Exception:
+                    pass
+            url = export_job_to_sheets(job_id, job.get("filename", "results"), results,
+                                       folder_id=folder_id)
             if url:
                 from services.credits import _save_setting
                 _save_setting(f"sheet_url_{job_id}", url)
-                logger.info(f"Auto-exported job {job_id} to Sheets: {url}")
+                logger.info(f"Auto-exported job {job_id} to Sheets (folder={folder_id or 'admin'}): {url}")
     except Exception as e:
         logger.warning(f"Auto Sheets export failed for job {job_id}: {e}")
 
@@ -216,7 +226,7 @@ def start_job(domains: list[str], services: list[str], filename: str, force_refr
     Returns job_id.
     """
     job_id = str(uuid.uuid4())
-    create_job(job_id, len(domains), services, filename)
+    create_job(job_id, len(domains), services, filename, created_by=username)
 
     # Persist domain list so the job can be resumed after a server restart
     try:
