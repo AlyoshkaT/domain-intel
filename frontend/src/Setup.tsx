@@ -161,6 +161,7 @@ function CatalogSection({ lang }: { lang: Lang }) {
   const [catalog, setCatalog] = useState<{ cms: string[]; ems: string[]; osearch: { technology: string; group: string }[] }>({ cms: [], ems: [], osearch: [] })
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [rematching, setRematching] = useState(false)
   const [addVal, setAddVal] = useState("")
   const [addGroup, setAddGroup] = useState("")
   const [msg, setMsg] = useState("")
@@ -182,6 +183,16 @@ function CatalogSection({ lang }: { lang: Lang }) {
       await load()
     } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
     finally { setSyncing(false) }
+  }
+
+  const rematch = async () => {
+    if (!window.confirm(t('setup_rematch_confirm', lang))) return
+    setRematching(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/catalog/rematch", { method: "POST" })
+      setMsg(t('setup_rematch_done', lang)(r.updated, r.elapsed))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setRematching(false) }
   }
 
   const add = async () => {
@@ -207,8 +218,8 @@ function CatalogSection({ lang }: { lang: Lang }) {
     finally { setRemoving(null) }
   }
 
-  const items: string[] = (tab === "osearch"
-    ? catalog.osearch.map(o => o.technology)
+  const items: string[] = (tab === "osearch" || tab === "ems" || tab === "cms"
+    ? (catalog[tab] as unknown as {technology: string; group: string}[]).map(e => e.technology)
     : catalog[tab] as string[]
   ).slice().sort((a, b) => a.localeCompare(b, "uk"))
 
@@ -219,13 +230,16 @@ function CatalogSection({ lang }: { lang: Lang }) {
         <button className="btn-export" onClick={sync} disabled={syncing}>
           {syncing ? t('setup_syncing', lang) : t('setup_sync_btn', lang)}
         </button>
+        <button className="btn-export" onClick={rematch} disabled={rematching} style={{marginLeft: 8}}>
+          {rematching ? t('setup_rematching', lang) : t('setup_rematch_btn', lang)}
+        </button>
       </div>
       <div className="setup-tabs">
         {(Object.keys(SHEET_LABELS) as Sheet[]).map(s => (
           <button key={s} className={`setup-tab${tab === s ? " active" : ""}`} onClick={() => setTab(s)}>
             {SHEET_LABELS[s]}
             <span className="setup-tab-count">
-              {s === "osearch" ? catalog.osearch.length : (catalog[s] as string[]).length}
+              {catalog[s].length}
             </span>
           </button>
         ))}
@@ -250,6 +264,11 @@ function CatalogSection({ lang }: { lang: Lang }) {
               {tab === "osearch" && (
                 <span className="setup-catalog-group">
                   {catalog.osearch.find(o => o.technology === tech)?.group || ""}
+                </span>
+              )}
+              {(tab === "ems" || tab === "cms") && (
+                <span className="setup-catalog-group">
+                  {(catalog[tab] as unknown as {technology: string; group: string}[]).find(e => e.technology === tech)?.group || ""}
                 </span>
               )}
               <button className="setup-remove-btn" onClick={() => remove(tech)}

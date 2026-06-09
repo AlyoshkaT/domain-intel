@@ -186,6 +186,18 @@ async def sync_catalog_endpoint():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/catalog/rematch", dependencies=[require_permission("admin")])
+async def rematch_catalog_endpoint():
+    """Re-apply current catalog (CMS/OSearch/EMS) to all domain_profiles without touching SW/AI fields."""
+    from services.domain_profiles import rematch_catalog
+    from api.explorer import invalidate_profiles_cache
+    result = await asyncio.to_thread(rematch_catalog)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    invalidate_profiles_cache()
+    return result
+
+
 @app.get("/api/catalog/status")
 def catalog_status():
     _bq_touch("priv_r")
@@ -298,6 +310,13 @@ def list_jobs_endpoint():
 
 @app.get("/api/jobs/{job_id}")
 def get_job_endpoint(job_id: str):
+    # Running jobs: serve from in-memory progress — zero BQ calls
+    from processing.batch import get_live_progress
+    live = get_live_progress(job_id)
+    if live is not None:
+        return live
+
+    # Completed / historical jobs: use short-TTL BQ cache
     now = time.time()
     cached = _job_cache.get(job_id)
     if cached and (now - cached[0]) < _JOBS_CACHE_TTL:
@@ -392,16 +411,26 @@ async def retry_errors(request: Request, job_id: str):
     new_job_id = start_job(error_domains, services, f"retry_{job_id[:8]}.txt", username=username)
     return {"count": len(error_domains), "job_id": new_job_id}
 
-@app.post("/api/admin/sync_parsed_from_corp", dependencies=[require_permission("admin")])
-async def sync_parsed_from_corp_endpoint():
+@app.get("/api/admin/sync_health", dependencies=[require_permission("admin")])
+async def sync_health_endpoint():
     """
-    One-time migration: populate privateBQ sw_parsed / bw_parsed from corpBQ raw JSON.
-    Run this once after first deploy to avoid waiting for the 03:00 UTC nightly sync.
-    After this completes, run /explorer/refresh to rebuild domain_profiles.
-    Runs synchronously (may take several minutes).
+    Check consistency between corpBQ raw tables and privateBQ parsed tables.
+    Returns: domain counts, missing domains, stale domains, last sync time.
+    """
+    from core.bigquery import sync_health_check
+    return await asyncio.to_thread(sync_health_check)
+
+
+@app.post("/api/admin/sync_parsed_from_corp", dependencies=[require_permission("admin")])
+async def sync_parsed_from_corp_endpoint(body: dict = {}):
+    """
+    Sync privateBQ sw_parsed / bw_parsed from corpBQ raw JSON.
+    By default scans only the last 3 days (cheap nightly run).
+    Pass {"full_scan": true} to scan entire corpBQ tables (first deploy / catch-up).
     """
     from core.bigquery import sync_parsed_from_corp
-    result = await asyncio.to_thread(sync_parsed_from_corp)
+    full_scan = bool(body.get("full_scan", False))
+    result = await asyncio.to_thread(sync_parsed_from_corp, full_scan)
     return result
 
 
@@ -457,8 +486,8 @@ def export_csv(request: Request, job_id: str):
         log_activity(username, "job_export_csv", {"job_id": job_id, "row_count": len(results)})
     except Exception:
         pass
-    import pandas as pd
-    df = pd.DataFrame(results)
+    from services.sheets_export import results_to_dataframe
+    df = results_to_dataframe(results)
     stream = io.StringIO()
     df.to_csv(stream, index=False)
     stream.seek(0)
@@ -467,6 +496,7 @@ def export_csv(request: Request, job_id: str):
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=results_{job_id[:8]}.csv"}
     )
+
 
 @app.get("/api/jobs/{job_id}/export/xlsx", dependencies=[require_permission("download")])
 def export_xlsx(request: Request, job_id: str):
@@ -481,18 +511,8 @@ def export_xlsx(request: Request, job_id: str):
     except Exception:
         pass
     import pandas as pd
-    df = pd.DataFrame(results)
-    # Remove timezone from datetime columns
-    for col in df.columns:
-        if hasattr(df[col], 'dt') and hasattr(df[col].dt, 'tz') and df[col].dt.tz is not None:
-            df[col] = df[col].dt.tz_localize(None)
-        else:
-            try:
-                converted = pd.to_datetime(df[col], utc=True)
-                if converted.dt.tz is not None:
-                    df[col] = converted.dt.tz_localize(None)
-            except Exception:
-                pass
+    from services.sheets_export import results_to_dataframe
+    df = results_to_dataframe(results)
     stream = io.BytesIO()
     with pd.ExcelWriter(stream, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Results")
@@ -504,7 +524,8 @@ def export_xlsx(request: Request, job_id: str):
     )
 
 class SheetsExportRequest(BaseModel):
-    folder_id: str = ""  # Google Drive folder URL or ID (overrides env var)
+    folder_id: str = ""    # Google Drive folder URL or ID (overrides env var)
+    analytics: bool = False  # If True, adds an Analytics sheet with 4 pivot tables
 
 @app.post("/api/jobs/{job_id}/export/sheets", dependencies=[require_permission("sheets")])
 async def export_sheets(request: Request, job_id: str,
@@ -519,18 +540,34 @@ async def export_sheets(request: Request, job_id: str,
     username = getattr(request.state, "username", "unknown")
     try:
         from core.bigquery import log_activity
-        log_activity(username, "job_export_sheets", {"job_id": job_id, "row_count": len(results)})
+        log_activity(username, "job_export_sheets",
+                     {"job_id": job_id, "row_count": len(results), "analytics": body.analytics})
     except Exception:
         pass
 
-    folder_id = body.folder_id
+    # Folder: use body.folder_id if explicitly provided, otherwise look up user's google_folder
+    folder_id = body.folder_id or ""
+    if not folder_id:
+        try:
+            from core.bigquery import get_users
+            users = {u["username"]: u for u in get_users()}
+            folder_id = users.get(username, {}).get("google_folder") or ""
+        except Exception:
+            pass
+
+    analytics = body.analytics
 
     def do_export():
-        url = export_job_to_sheets(job_id, job.get("filename", "results"), results,
-                                   folder_id=folder_id)
-        if url:
+        try:
+            url = export_job_to_sheets(job_id, job.get("filename", "results"), results,
+                                       folder_id=folder_id, analytics=analytics)
+            if url:
+                from core.bigquery import set_setting
+                set_setting(f"sheet_url_{job_id}", url)
+        except Exception as e:
+            logger.error(f"Sheets export failed for job {job_id}: {e}", exc_info=True)
             from core.bigquery import set_setting
-            set_setting(f"sheet_url_{job_id}", url)
+            set_setting(f"sheet_url_{job_id}", f"ERROR:{e}")
 
     background_tasks.add_task(do_export)
     return {"status": "exporting"}
@@ -539,6 +576,8 @@ async def export_sheets(request: Request, job_id: str,
 async def get_sheets_url(job_id: str):
     from core.bigquery import get_setting
     url = get_setting(f"sheet_url_{job_id}")
+    if url and url.startswith("ERROR:"):
+        return {"url": None, "error": url[6:]}
     return {"url": url or None}
 
 
@@ -567,6 +606,15 @@ _flog.info(f"Frontend dist selected: {frontend_dist} (index.html exists: {os.pat
 
 if os.path.exists(assets_dir):
     app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+# Serve any static JSON / other root-level files from dist (e.g. world-110m-ua.json)
+@app.get("/world-110m-ua.json")
+async def serve_world_topo():
+    p = os.path.join(frontend_dist, "world-110m-ua.json")
+    if os.path.exists(p):
+        return FileResponse(p, media_type="application/json")
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="world-110m-ua.json not found")
 
 @app.get("/")
 async def serve_root():

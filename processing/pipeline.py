@@ -200,8 +200,13 @@ async def process_domain(
                 bw_data = await fetch_builtwith(working_domain)
 
         # ── Parse SimilarWeb result ───────────────────────────────────────────
-        if sw_data:
+        from services.similarweb import SW_RATE_LIMITED
+        if sw_data and sw_data is not SW_RATE_LIMITED:
             sw_parsed_cache = parse_similarweb(sw_data)
+        elif sw_data is SW_RATE_LIMITED:
+            # API returned 429 after all retries — mark domain so user knows to re-run
+            result["error_detail"] = (result.get("error_detail") or "") + "[SW:rate_limited] "
+            logger.warning(f"SW rate-limited for {working_domain} — marked in result")
 
         if sw_parsed_cache:
             p = sw_parsed_cache

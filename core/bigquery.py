@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from google.cloud import bigquery
@@ -317,7 +317,10 @@ def ensure_tables_exist():
         logger.error(f"jobs table migration error: {e}")
     # Parsed tables use migration logic to add new columns on first deploy
     _ensure_or_migrate_table(bq, SW_PARSED_TABLE, _SW_PARSED_SCHEMA, "sw_engagement")
-    _ensure_or_migrate_table(bq, BW_PARSED_TABLE, _BW_PARSED_SCHEMA, "technologies_json")
+    # sentinel = "techs_compact": recreates the table if this column is absent.
+    # (Previously "technologies_json" was sentinel, so tables created before techs_compact
+    #  was added would be missing that column and the BW MERGE INSERT would fail.)
+    _ensure_or_migrate_table(bq, BW_PARSED_TABLE, _BW_PARSED_SCHEMA, "techs_compact")
     bq_corp = corp_client()
     for table_name in [BQ_BUILTWITH_CACHE, BQ_SIMILARWEB_CACHE]:
         try:
@@ -784,9 +787,11 @@ def get_bq_bytes_stats() -> dict:
 
     location = BIGQUERY_LOCATION.lower()   # "eu", "us", "us-central1", etc.
     info_prefix = f"region-{location}"
+    # Requires project-level bigquery.jobs.list (roles/bigquery.metadataViewer or bigquery.user).
+    # Returns only this service account's own jobs (no bigquery.admin needed).
     sql = f"""
         SELECT ROUND(SUM(total_bytes_billed) / POW(1024, 3), 3) AS gb
-        FROM `{info_prefix}`.INFORMATION_SCHEMA.JOBS_BY_PROJECT
+        FROM `{info_prefix}`.INFORMATION_SCHEMA.JOBS_BY_USER
         WHERE creation_time >= TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), MONTH)
           AND state = 'DONE'
           AND job_type = 'QUERY'
@@ -800,7 +805,7 @@ def get_bq_bytes_stats() -> dict:
             v = rows[0]["gb"]
             result["priv_gb"] = float(v) if v is not None else 0.0
     except Exception as e:
-        logger.debug(f"get_bq_bytes_stats priv: {e}")
+        logger.warning(f"get_bq_bytes_stats priv (INFORMATION_SCHEMA): {e}")
 
     try:
         rows = list(corp_client().query(sql).result())
@@ -808,29 +813,69 @@ def get_bq_bytes_stats() -> dict:
             v = rows[0]["gb"]
             result["corp_gb"] = float(v) if v is not None else 0.0
     except Exception as e:
-        logger.debug(f"get_bq_bytes_stats corp: {e}")
+        logger.warning(f"get_bq_bytes_stats corp (INFORMATION_SCHEMA): {e}")
 
     _bytes_stats_cache = result
     _bytes_stats_cache_ts = now
     return result
 
 
-def sync_parsed_from_corp() -> dict:
+_LAST_SYNC_KEY  = "last_corp_sync_at"
+_SYNC_BUF_HOURS = 6   # overlap buffer — avoids missing rows near the boundary
+_SYNC_MAX_DAYS  = 90  # gap > 90 days → full scan (no point filtering that far back)
+
+
+def sync_parsed_from_corp(full_scan: bool = False) -> dict:
     """
     Daily sync: MERGE corpBQ raw JSON → privateBQ sw_parsed + bw_parsed.
     Extracts parsed fields in SQL so we never transfer full JSON blobs.
-    Intended to run once per day at 03:00 UTC, 1 hour before domain_profiles sync.
+    Intended to run once per day at 03:00 UTC.
+
+    Date range strategy (full_scan=False):
+      - Reads last_corp_sync_at from app_settings (saved after each successful sync).
+      - Syncs rows with fetched_at >= (last_sync - 6 h buffer).
+      - If the sync was off for 2 months → syncs from 2 months ago, not just 3 days.
+      - If gap > 90 days or never synced → falls back to full scan automatically.
+      - After success → saves current timestamp to app_settings.
+
+    full_scan=True: ignores saved timestamp, scans entire corpBQ tables.
+      Use via API: POST /api/admin/sync_parsed_from_corp {"full_scan": true}
     """
     t0 = time.time()
     _bq_touch("corp_r"); _bq_touch("priv_w")
-    logger.info("sync_parsed_from_corp: starting SW merge")
+
+    # ── Determine date filter based on last successful sync ────────────────────
+    date_filter = ""
+    scan_mode   = "FULL (first run)"
+
+    if not full_scan:
+        try:
+            last_sync_str = get_setting(_LAST_SYNC_KEY)
+            if last_sync_str:
+                last_sync_dt = datetime.fromisoformat(last_sync_str)
+                if last_sync_dt.tzinfo is None:
+                    last_sync_dt = last_sync_dt.replace(tzinfo=timezone.utc)
+                gap_days = (datetime.now(timezone.utc) - last_sync_dt).days
+                if gap_days <= _SYNC_MAX_DAYS:
+                    since = last_sync_dt - timedelta(hours=_SYNC_BUF_HOURS)
+                    since_sql = since.strftime("%Y-%m-%dT%H:%M:%S")
+                    date_filter = f"WHERE fetched_at >= TIMESTAMP('{since_sql}')"
+                    scan_mode   = f"since {since_sql} UTC (gap={gap_days}d)"
+                else:
+                    scan_mode = f"FULL (gap={gap_days}d > {_SYNC_MAX_DAYS}d — catch-up)"
+        except Exception as exc:
+            logger.warning(f"sync: cannot read last_sync setting ({exc}) — full scan")
+
+    logger.info(f"sync_parsed_from_corp: starting SW merge [{scan_mode}]")
 
     sw_tbl = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.similarweb_raw_data`"
     bw_tbl = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.builtwith_raw_data`"
     our_sw = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{SW_PARSED_TABLE}`"
     our_bw = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{BW_PARSED_TABLE}`"
 
-    bq = client()
+    # Run MERGE via corp_client(): it has read access to corp tables (own project)
+    # and write access to private es_analysis dataset (granted via BigQuery Data Editor).
+    bq = corp_client()
 
     # ── SW MERGE ─────────────────────────────────────────────────────────────
     try:
@@ -864,7 +909,7 @@ def sync_parsed_from_corp() -> dict:
                         LIMIT 5
                     )), '[]') AS sw_top_countries,
                     -- Extended: monthly visits history
-                    IFNULL(JSON_QUERY(response_json, '$.EstimatedMonthlyVisits'), '{{}}') AS sw_monthly_visits,
+                    IFNULL(TO_JSON_STRING(JSON_QUERY(response_json, '$.EstimatedMonthlyVisits')), '{{}}') AS sw_monthly_visits,
                     -- Extended: global rank
                     SAFE_CAST(JSON_VALUE(response_json, '$.GlobalRank.Rank') AS INT64) AS sw_global_rank,
                     -- Extended: engagement metrics
@@ -874,6 +919,7 @@ def sync_parsed_from_corp() -> dict:
                         SAFE_CAST(JSON_VALUE(response_json, '$.Engagments.TimeOnSite') AS FLOAT64) AS avg_visit_duration
                     )) AS sw_engagement
                 FROM {sw_tbl}
+                {date_filter}
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
             ) S
             ON T.domain = S.domain
@@ -919,8 +965,6 @@ def sync_parsed_from_corp() -> dict:
     # ── BW MERGE ─────────────────────────────────────────────────────────────
     logger.info("sync_parsed_from_corp: starting BW merge")
     t_bw = time.time()
-    _SEP_FIELD = "\x01"
-    _SEP_TECH  = "\x02"
     try:
         bw_merge = f"""
             MERGE {our_bw} T
@@ -936,15 +980,15 @@ def sync_parsed_from_corp() -> dict:
                     IFNULL((
                         SELECT STRING_AGG(
                             JSON_VALUE(tech, '$.Name')
-                            || '{_SEP_FIELD}'
+                            || '\x01'
                             || IFNULL(JSON_VALUE(tech, '$.LastDetected'), '0'),
-                            '{_SEP_TECH}'
+                            '\x02'
                         )
                         FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
                         UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
                         WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
                     ), '') AS techs_compact,
-                    -- Extended: ALL technologies as rich JSON array [{n, t, l}]
+                    -- Extended: ALL technologies as rich JSON array [{{n, t, l}}]
                     IFNULL((
                         SELECT TO_JSON_STRING(ARRAY_AGG(STRUCT(
                             JSON_VALUE(tech, '$.Name') AS n,
@@ -957,6 +1001,7 @@ def sync_parsed_from_corp() -> dict:
                         WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
                     ), '[]') AS technologies_json
                 FROM {bw_tbl}
+                {date_filter}
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
             ) S
             ON T.domain = S.domain
@@ -988,6 +1033,13 @@ def sync_parsed_from_corp() -> dict:
         logger.error(f"sync_parsed_from_corp BW error: {e}", exc_info=True)
         return {"error": str(e)}
 
+    # Save successful sync timestamp so next run knows where to start from
+    sync_ts = datetime.now(timezone.utc).isoformat()
+    try:
+        set_setting(_LAST_SYNC_KEY, sync_ts)
+    except Exception as exc:
+        logger.warning(f"sync: could not save last_sync timestamp: {exc}")
+
     total_elapsed = time.time() - t0
     logger.info(f"sync_parsed_from_corp: done in {total_elapsed:.1f}s total")
     return {
@@ -995,6 +1047,81 @@ def sync_parsed_from_corp() -> dict:
         "sw_rows": sw_job.num_dml_affected_rows,
         "bw_rows": bw_job.num_dml_affected_rows,
         "elapsed": round(total_elapsed, 1),
+        "scan_mode": scan_mode,
+        "synced_at": sync_ts,
+    }
+
+
+def sync_health_check() -> dict:
+    """
+    Cross-project check: compare corpBQ raw tables vs privateBQ parsed tables.
+    Returns counts of domains in corp, in private, missing in private, and stale
+    (corp has a newer fetch than private has recorded).
+
+    Uses corp_client() because it needs to JOIN cross-project tables.
+    A single query per table pair → 2 BQ queries total.
+    """
+    _bq_touch("corp_r")
+    bq = corp_client()
+
+    sw_corp  = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.similarweb_raw_data`"
+    bw_corp  = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.builtwith_raw_data`"
+    sw_priv  = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{SW_PARSED_TABLE}`"
+    bw_priv  = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{BW_PARSED_TABLE}`"
+
+    last_sync = get_setting(_LAST_SYNC_KEY, "never")
+
+    def _check(corp_tbl: str, priv_tbl: str, label: str) -> dict:
+        sql = f"""
+            WITH corp_latest AS (
+                SELECT domain, MAX(fetched_at) AS corp_fetched
+                FROM {corp_tbl}
+                GROUP BY domain
+            ),
+            priv_latest AS (
+                SELECT domain, MAX(fetched_at) AS priv_fetched
+                FROM {priv_tbl}
+                GROUP BY domain
+            )
+            SELECT
+                COUNT(DISTINCT c.domain)                              AS corp_domains,
+                COUNT(DISTINCT p.domain)                              AS private_domains,
+                COUNTIF(p.domain IS NULL)                             AS missing_in_private,
+                COUNTIF(p.domain IS NOT NULL
+                        AND c.corp_fetched > p.priv_fetched
+                        AND TIMESTAMP_DIFF(c.corp_fetched, p.priv_fetched, HOUR) > 6)
+                                                                      AS stale_in_private,
+                FORMAT_TIMESTAMP('%Y-%m-%d %H:%M UTC',
+                    MAX(c.corp_fetched))                              AS corp_latest_fetch,
+                FORMAT_TIMESTAMP('%Y-%m-%d %H:%M UTC',
+                    MAX(p.priv_fetched))                              AS private_latest_fetch
+            FROM corp_latest c
+            LEFT JOIN priv_latest p USING (domain)
+        """
+        try:
+            t0 = time.time()
+            rows = list(bq.query(sql, job_config=_bq_qcfg()).result())
+            elapsed = round(time.time() - t0, 1)
+            r = dict(rows[0]) if rows else {}
+            r["elapsed_s"] = elapsed
+            return r
+        except Exception as e:
+            logger.error(f"sync_health_check {label}: {e}")
+            return {"error": str(e)}
+
+    sw_result = _check(sw_corp, sw_priv, "SW")
+    bw_result = _check(bw_corp, bw_priv, "BW")
+
+    # Determine overall health status
+    sw_ok = sw_result.get("missing_in_private", 1) == 0 and sw_result.get("stale_in_private", 1) == 0
+    bw_ok = bw_result.get("missing_in_private", 1) == 0 and bw_result.get("stale_in_private", 1) == 0
+    status = "ok" if (sw_ok and bw_ok) else "needs_sync"
+
+    return {
+        "status": status,
+        "last_sync": last_sync,
+        "sw": sw_result,
+        "bw": bw_result,
     }
 
 
@@ -1215,7 +1342,7 @@ def save_result(result: dict):
 def get_results(job_id: str) -> list[dict]:
     bq = client()
     return [dict(row) for row in bq.query(
-        f"SELECT * FROM `{table_ref(BQ_RESULTS_TABLE)}` WHERE job_id = @job_id ORDER BY processed_at DESC",
+        f"SELECT * FROM `{table_ref(BQ_RESULTS_TABLE)}` WHERE job_id = @job_id ORDER BY processed_at ASC",
         job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("job_id", "STRING", job_id)])
     ).result()]
 

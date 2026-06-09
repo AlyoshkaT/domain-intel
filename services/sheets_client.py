@@ -25,13 +25,15 @@ def _get_creds(scopes: list[str]):
         try:
             from google.oauth2.credentials import Credentials
             info = json.loads(oauth_json)
+            # Always use SCOPES_WRITE for OAuth — the token was granted these scopes,
+            # passing a narrower scope (e.g. spreadsheets.readonly) causes invalid_scope.
             creds = Credentials(
                 token=None,
                 refresh_token=info["refresh_token"],
                 token_uri=info.get("token_uri", "https://oauth2.googleapis.com/token"),
                 client_id=info["client_id"],
                 client_secret=info["client_secret"],
-                scopes=scopes,
+                scopes=SCOPES_WRITE,
             )
             return creds
         except Exception as e:

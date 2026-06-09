@@ -177,9 +177,12 @@ def _match_bw_compact(bw_vertical: str, techs_compact: str, catalog: dict) -> di
 
     cms_match, cms_last = "", 0
     for cms in catalog.get("cms", []):
-        key = cms.lower()
+        tech = cms["technology"] if isinstance(cms, dict) else cms
+        grp  = cms.get("group", "") if isinstance(cms, dict) else ""
+        key  = tech.lower()
         if key in bw_index and bw_index[key][1] >= cms_last:
-            cms_match = bw_index[key][0]; cms_last = bw_index[key][1]
+            cms_match = grp if grp else bw_index[key][0]
+            cms_last  = bw_index[key][1]
 
     osearch_match, osearch_group, osearch_last = "", "", 0
     for entry in catalog.get("osearch", []):
@@ -190,10 +193,15 @@ def _match_bw_compact(bw_vertical: str, techs_compact: str, catalog: dict) -> di
             osearch_last = bw_index[key][1]
 
     ems_match, ems_last = "", 0
+    ems_group = ""
     for ems in catalog.get("ems", []):
-        key = ems.lower()
+        tech = ems["technology"] if isinstance(ems, dict) else ems
+        grp  = ems.get("group", "") if isinstance(ems, dict) else ""
+        key  = tech.lower()
         if key in bw_index and bw_index[key][1] >= ems_last:
-            ems_match = bw_index[key][0]; ems_last = bw_index[key][1]
+            ems_match = grp if grp else bw_index[key][0]
+            ems_group = grp
+            ems_last  = bw_index[key][1]
 
     return {
         "cms_list":      cms_match,
@@ -692,4 +700,99 @@ def sync_profiles_from_job_results(job_id: str) -> dict:
         return {"status": "ok", "elapsed": round(elapsed, 1)}
     except Exception as e:
         logger.error(f"sync_from_results error job={job_id}: {e}", exc_info=True)
+        return {"error": str(e)}
+
+
+def rematch_catalog() -> dict:
+    """
+    Re-run catalog matching (CMS / OSearch / EMS) for all domains in domain_profiles
+    using the current technology_catalog in BQ.
+    Only updates cms_list / osearch / osearch_group / ems_list — does NOT touch SW/AI fields.
+    Uses bw_parsed table as source of techs_compact.
+    """
+    t0 = time.time()
+    try:
+        from services.technology_catalog import get_catalog
+        catalog = get_catalog()
+
+        our = client()
+        bw_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.bw_parsed`"
+        profiles_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{PROFILES_TABLE}`"
+
+        rows = list(our.query(f"""
+            SELECT domain, bw_vertical, techs_compact
+            FROM {bw_table}
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+        """).result())
+
+        if not rows:
+            return {"status": "ok", "updated": 0, "elapsed": 0}
+
+        logger.info(f"rematch_catalog: {len(rows)} domains to rematch")
+
+        # Build NDJSON with new catalog matches (deduplicated by normalized domain)
+        import io as _io, json as _json
+        deduped: dict[str, dict] = {}
+        for r in rows:
+            domain = normalize_domain(r["domain"])
+            if not domain:
+                continue
+            m = _match_bw_compact(r["bw_vertical"] or "", r["techs_compact"] or "", catalog)
+            deduped[domain] = {
+                "domain":        domain,
+                "cms_list":      m.get("cms_list", ""),
+                "osearch":       m.get("osearch", ""),
+                "osearch_group": m.get("osearch_group", ""),
+                "ems_list":      m.get("ems_list", ""),
+            }
+        ndjson_lines = [_json.dumps(v) for v in deduped.values()]
+
+        tmp_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}`.catalog_rematch_tmp"
+        tmp_schema = [
+            bigquery.SchemaField("domain",        "STRING"),
+            bigquery.SchemaField("cms_list",      "STRING"),
+            bigquery.SchemaField("osearch",       "STRING"),
+            bigquery.SchemaField("osearch_group", "STRING"),
+            bigquery.SchemaField("ems_list",      "STRING"),
+        ]
+        tmp_ref = f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.catalog_rematch_tmp"
+        job_cfg = bigquery.LoadJobConfig(
+            schema=tmp_schema,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        )
+        load_job = our.load_table_from_file(
+            _io.BytesIO("\n".join(ndjson_lines).encode()),
+            tmp_ref,
+            job_config=job_cfg,
+        )
+        load_job.result()
+
+        # MERGE into domain_profiles
+        # Only overwrite when new value is non-empty — preserve existing data
+        # for domains whose techs_compact is empty (BW data not yet available).
+        merge_sql = f"""
+            MERGE {profiles_table} T
+            USING `{tmp_ref}` S ON T.domain = S.domain
+            WHEN MATCHED THEN UPDATE SET
+                T.cms_list      = IF(S.cms_list      != '', S.cms_list,      T.cms_list),
+                T.osearch       = IF(S.osearch        != '', S.osearch,       T.osearch),
+                T.osearch_group = IF(S.osearch        != '', S.osearch_group, T.osearch_group),
+                T.ems_list      = IF(S.ems_list       != '', S.ems_list,      T.ems_list)
+        """
+        merge_job = our.query(merge_sql)
+        merge_job.result()
+        updated = merge_job.num_dml_affected_rows or len(ndjson_lines)
+
+        # Drop temp table
+        try:
+            our.delete_table(tmp_ref)
+        except Exception:
+            pass
+
+        elapsed = round(time.time() - t0, 1)
+        logger.info(f"rematch_catalog done: {updated} domains updated in {elapsed}s")
+        return {"status": "ok", "updated": updated, "elapsed": elapsed}
+    except Exception as e:
+        logger.error(f"rematch_catalog error: {e}", exc_info=True)
         return {"error": str(e)}

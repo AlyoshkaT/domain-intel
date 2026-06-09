@@ -340,17 +340,27 @@ async def explore_export_sheets(request: Request, body: dict, background_tasks: 
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="No results")
     label = body.get("label", f"{len(results)} domains")
+    analytics = bool(body.get("analytics", False))
     username = getattr(request.state, "username", "unknown")
     try:
         from core.bigquery import log_activity
-        log_activity(username, "explore_export_sheets", {"row_count": len(results), "label": label})
+        log_activity(username, "explore_export_sheets", {"row_count": len(results), "label": label, "analytics": analytics})
     except Exception:
         pass
+    # Look up user's personal Drive folder
+    folder_id = ""
+    try:
+        from core.bigquery import get_users
+        users = {u["username"]: u for u in get_users()}
+        folder_id = users.get(username, {}).get("google_folder") or ""
+    except Exception:
+        pass
+
     def do_export():
         global _explore_sheet_url, _explore_sheet_error
         try:
             from services.sheets_export import export_explorer_to_sheets
-            url = export_explorer_to_sheets(label, results)
+            url = export_explorer_to_sheets(label, results, folder_id=folder_id, analytics=analytics)
             _explore_sheet_url = url
         except Exception as e:
             _explore_sheet_error = str(e)

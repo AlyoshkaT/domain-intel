@@ -397,7 +397,8 @@ function JobsPage({ onSelect, can, lang }: { onSelect: (id: string) => void; can
 // ─── Page: Results ─────────────────────────────────────────────────────────────
 const COLUMNS = [
   { key: "domain", label: "Domain", w: "160px" }, { key: "sw_visits", label: "Traffic", w: "110px" },
-  { key: "cms_list", label: "CMS", w: "120px" }, { key: "ai_category", label: "AI Category", w: "140px" },
+  { key: "cms_list", label: "CMS", w: "120px" }, { key: "ems_list", label: "EMS", w: "120px" },
+  { key: "ai_category", label: "AI Category", w: "140px" },
   { key: "ai_is_ecommerce", label: "AI Ecomm", w: "90px" }, { key: "ai_industry", label: "AI Industry", w: "150px" },
   { key: "bw_vertical", label: "Industry BW", w: "120px" }, { key: "sw_category", label: "Category SW", w: "160px" },
   { key: "sw_subcategory", label: "Subcategory SW", w: "160px" }, { key: "sw_description", label: "Description", w: "200px" },
@@ -434,20 +435,19 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
       try {
         const d = await apiFetch(`/api/jobs/${jobId}/export/sheets/url`)
         if (d.url) { setSheetUrl(d.url); clearInterval(iv) }
+        if (d.error) { alert(t('jobs_sheets_export_err', lang)(d.error)); clearInterval(iv) }
       } catch {}
       if (attempts >= 20) clearInterval(iv) // stop after ~60s
     }, 3000)
   }, [jobId])
 
-  const handleSheetsExport = useCallback(async () => {
-    const folder = window.prompt(t('jobs_sheets_folder_prompt', lang), '') ?? null
-    if (folder === null) return // cancelled
+  const handleSheetsExport = useCallback(async (analytics: boolean) => {
     setActing(true)
     try {
       await apiFetch(`/api/jobs/${jobId}/export/sheets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folder_id: folder })
+        body: JSON.stringify({ analytics })   // folder resolved server-side from user profile
       })
       alert(t('jobs_sheets_exporting', lang))
       pollSheetUrl()
@@ -538,8 +538,16 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/csv`, "_blank")}>CSV</button>}
           {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/xlsx`, "_blank")}>XLSX</button>}
           {can("sheets") && (
-            <button className="btn-export" disabled={acting} onClick={handleSheetsExport}>
+            <button className="btn-export" disabled={acting} onClick={() => handleSheetsExport(false)}>
               {acting ? "…" : t('jobs_sheets', lang)}
+            </button>
+          )}
+          {can("sheets") && (
+            <button className="btn-export" disabled={acting}
+              onClick={() => handleSheetsExport(true)}
+              title="Export with Analytics sheet (4 pivot tables: EMS / CMS / AI Category / oSearch)"
+              style={{ borderColor: "#6366f1", color: "#6366f1" }}>
+              {acting ? "…" : "↗ Sheets + Analytics"}
             </button>
           )}
           {sheetUrl && (

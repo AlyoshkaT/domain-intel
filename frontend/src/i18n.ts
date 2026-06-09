@@ -117,6 +117,8 @@ const T = {
     expl_refresh_started: (n: string, s: string) => `Started refresh for ${n} domains (${s})`,
     expl_refresh_err: 'Launch error',
     expl_sheets_err: (m: string) => `Sheets export error: ${m}`,
+    expl_xlsx_err: 'XLSX export error',
+    jobs_sheets_export_err: (m: string) => `Sheets export error: ${m}`,
     expl_sheets_timeout: 'Timeout — check Google Sheets API settings',
 
     // ── Technologies ──
@@ -169,6 +171,10 @@ const T = {
     setup_tab_settings: 'Settings',
     setup_sync_btn: '↻ Sync from Google Sheets',
     setup_syncing: '⏳ Syncing…',
+    setup_rematch_btn: '⟳ Rematch → Explorer',
+    setup_rematching: '⏳ Rematching…',
+    setup_rematch_confirm: 'Recalculate CMS / OSearch / EMS for all domains in Explorer based on the current catalog?',
+    setup_rematch_done: (n: number, sec: number) => `✓ Rematch complete: ${n} domains updated in ${sec}s`,
     setup_delete: 'Delete',
     setup_perm_explorer: 'Browse Explorer and dashboard',
     setup_perm_jobs: 'Create and run jobs',
@@ -383,6 +389,8 @@ const T = {
     expl_refresh_started: (n: string, s: string) => `Запущено оновлення ${n} доменів (${s})`,
     expl_refresh_err: 'Помилка запуску',
     expl_sheets_err: (m: string) => `Sheets export помилка: ${m}`,
+    expl_xlsx_err: 'Помилка XLSX export',
+    jobs_sheets_export_err: (m: string) => `Sheets export помилка: ${m}`,
     expl_sheets_timeout: 'Timeout — перевір налаштування Google Sheets API',
 
     // ── Technologies ──
@@ -434,6 +442,10 @@ const T = {
     setup_tab_logs: 'Logs',
     setup_tab_settings: 'Settings',
     setup_sync_btn: '↻ Sync з Google Sheets',
+    setup_rematch_btn: '⟳ Rematch → Explorer',
+    setup_rematching: '⏳ Перерахунок…',
+    setup_rematch_confirm: 'Перерахувати CMS / OSearch / EMS для всіх доменів у Explorer на основі поточного каталогу?',
+    setup_rematch_done: (n: number, sec: number) => `✓ Rematch завершено: ${n} доменів оновлено за ${sec}с`,
     setup_syncing: '⏳ Синхронізація…',
     setup_delete: 'Видалити',
     setup_perm_explorer: 'Перегляд Explorer та дашборду',

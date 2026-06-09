@@ -27,8 +27,16 @@ def _get_sw_semaphore() -> asyncio.Semaphore:
     return _sw_semaphore
 
 
-async def fetch_similarweb(domain: str, _retries: int = 3) -> Optional[dict]:
-    """Fetch SimilarWeb data via RapidAPI with rate-limit retry + concurrency cap."""
+# Sentinel returned when SW API is rate-limited (429) — distinguishable from genuine 0 traffic.
+SW_RATE_LIMITED = {"_sw_rate_limited": True}
+
+
+async def fetch_similarweb(domain: str, _retries: int = 5) -> Optional[dict]:
+    """
+    Fetch SimilarWeb data via RapidAPI with rate-limit retry + concurrency cap.
+    Returns SW_RATE_LIMITED sentinel (not None) on persistent 429 so callers can
+    distinguish "rate limited" from "genuinely no data".
+    """
     if not SIMILARWEB_RAPIDAPI_KEY:
         logger.warning("SIMILARWEB_RAPIDAPI_KEY not set")
         return None
@@ -47,10 +55,14 @@ async def fetch_similarweb(domain: str, _retries: int = 3) -> Optional[dict]:
                     resp = await client.post(SIMILARWEB_URL, json=payload, headers=headers)
 
                     if resp.status_code == 429:
-                        wait = RATE_LIMIT_WAIT * (attempt + 1)  # 10s, 20s, 30s
-                        logger.warning(f"SW rate limit for {domain} — waiting {wait}s (attempt {attempt+1}/{_retries})")
+                        # Exponential backoff: 15s, 30s, 60s, 120s, 240s
+                        wait = RATE_LIMIT_WAIT * (2 ** attempt)
+                        logger.warning(
+                            f"SW 429 for {domain} — backoff {wait}s "
+                            f"(attempt {attempt+1}/{_retries})"
+                        )
                         await asyncio.sleep(wait)
-                        continue  # retry
+                        continue
 
                     resp.raise_for_status()
 
@@ -62,7 +74,6 @@ async def fetch_similarweb(domain: str, _retries: int = 3) -> Optional[dict]:
 
                     data = resp.json()
                     await asyncio.to_thread(save_cache, SIMILARWEB_CACHE_TABLE, domain, data)
-                    # Also save parsed fields to privateBQ sw_parsed
                     try:
                         from core.bigquery import save_sw_parsed
                         parsed = parse_similarweb(data)
@@ -74,13 +85,13 @@ async def fetch_similarweb(domain: str, _retries: int = 3) -> Optional[dict]:
             except httpx.TimeoutException:
                 logger.warning(f"SW timeout for {domain} (attempt {attempt+1}/{_retries})")
                 if attempt < _retries - 1:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
             except Exception as e:
                 logger.error(f"SimilarWeb error for {domain}: {e}")
                 break
 
-    logger.warning(f"SW failed for {domain} after {_retries} attempts")
-    return None
+    logger.warning(f"SW failed for {domain} after {_retries} attempts — returning rate-limited sentinel")
+    return SW_RATE_LIMITED
 
 
 def parse_similarweb(data: dict) -> dict:

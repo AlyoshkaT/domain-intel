@@ -207,7 +207,8 @@ function MultiSelect({ field, filter, allValues, onChange, lang }: {
   const filtered = allValues.filter(v => !filter.search || v.value.toLowerCase().includes(filter.search.toLowerCase()))
   const toggle = (v: string) => {
     const sel = filter.selected.includes(v) ? filter.selected.filter(s => s !== v) : [...filter.selected, v]
-    onChange({ ...filter, selected: sel, type: sel.length > 0 ? "in" : "all" })
+    const newType = sel.length > 0 ? filter.type : "all"
+    onChange({ ...filter, selected: sel, type: newType })
   }
   return (
     <div className="flt-multi" ref={ref}>
@@ -520,7 +521,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
       const blob = await res.blob()
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob)
       a.download = `explorer_${new Date().toISOString().slice(0, 10)}.xlsx`; a.click()
-    } catch { alert("XLSX export error") }
+    } catch { alert(t('expl_xlsx_err', lang)) }
   }
 
   const activeCount = Object.values(filters).filter((f: any) =>
@@ -530,14 +531,14 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
   const [sheetsExporting, setSheetsExporting] = useState(false)
   const [sheetsUrl, setSheetsUrl] = useState("")
 
-  const exportToSheets = async () => {
+  const exportToSheets = async (analytics = false) => {
     if (!filteredProfiles.length) return
     setSheetsExporting(true); setSheetsUrl("")
     try {
       const label = `${total.toLocaleString()} domains`
       const res = await fetch("/api/explore/export/sheets", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ results: filteredProfiles, label })
+        body: JSON.stringify({ results: filteredProfiles, label, analytics })
       })
       if (!res.ok) throw new Error("Export failed")
       let found = false
@@ -672,8 +673,13 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
               <>
                 {canDo("download") && <button className="btn-export" onClick={exportCSV}>↓ CSV</button>}
                 {canDo("download") && <button className="btn-export" onClick={exportXLSX}>↓ XLSX</button>}
-                {canDo("sheets") && <button className="btn-export" onClick={exportToSheets} disabled={sheetsExporting}>
+                {canDo("sheets") && <button className="btn-export" onClick={() => exportToSheets(false)} disabled={sheetsExporting}>
                   {sheetsExporting ? "⏳ Sheets..." : "↗ Sheets"}
+                </button>}
+                {canDo("sheets") && <button className="btn-export" onClick={() => exportToSheets(true)} disabled={sheetsExporting}
+                  title="Export with Analytics sheet (4 pivot tables)"
+                  style={{ borderColor: "#6366f1", color: "#6366f1" }}>
+                  {sheetsExporting ? "⏳..." : "↗ + Analytics"}
                 </button>}
                 {canDo("sheets") && sheetsUrl && (
                   <a href={sheetsUrl} target="_blank" rel="noopener"

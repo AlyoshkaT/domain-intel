@@ -50,7 +50,15 @@ def get_known_redirect(domain: str) -> Optional[str]:
             LIMIT 1
         """).result())
         if rows:
-            return rows[0]["resolved"]
+            resolved = rows[0]["resolved"]
+            # Sanity-check: reject any stored redirect that contains a port number.
+            # Such records were created by a bug (netloc instead of hostname) and
+            # would corrupt subsequent runs with domains like "site.com:443".
+            if resolved and ":" in resolved:
+                logger.warning(
+                    f"Ignoring bad stored redirect {domain} → {resolved} (contains port)")
+                return None
+            return resolved
         return None
     except Exception as e:
         logger.error(f"Redirect lookup error for {domain}: {e}")
@@ -109,10 +117,10 @@ def _extract_domain(url: str) -> Optional[str]:
         if not url.startswith("http"):
             url = "https://" + url
         parsed = urlparse(url)
-        domain = parsed.netloc.lower()
+        # Use .hostname (not .netloc) — .netloc includes port e.g. "site.com:443"
+        domain = (parsed.hostname or "").lower()
         if domain.startswith("www."):
             domain = domain[4:]
-        # Перевірка що це реальний домен (має крапку і мінімум 4 символи)
         if not domain or "." not in domain or len(domain) < 4:
             return None
         return domain
@@ -138,15 +146,15 @@ async def resolve_domain(domain: str, job_id: str) -> tuple[str, str]:
     resolved = await check_http_redirect(domain)
     if resolved and resolved != domain:
         orig_parts = domain.split(".")
-        res_parts = resolved.split(".")
+        res_parts  = resolved.split(".")
 
         if orig_parts[-2:] == res_parts[-2:]:
             redirect_type = "subdomain"
         else:
             redirect_type = "http_redirect"
 
-        # Fire-and-forget: save redirect in thread
-        _asyncio.get_event_loop().run_in_executor(None, save_redirect, domain, resolved, redirect_type, job_id)
+        _asyncio.get_event_loop().run_in_executor(
+            None, save_redirect, domain, resolved, redirect_type, job_id)
         return resolved, redirect_type
 
     return domain, "none"

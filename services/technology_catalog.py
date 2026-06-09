@@ -23,9 +23,9 @@ CATALOG_SCHEMA = [
 
 # Sheet tab name → BQ sheet value
 SHEET_TABS = {
-    "cms":     ("CMS",     "A2:A"),
+    "cms":     ("CMS",     "A2:B"),
     "osearch": ("OSearch", "A2:B"),
-    "ems":     ("EMS",     "A2:A"),
+    "ems":     ("EMS",     "A2:B"),
 }
 
 
@@ -56,12 +56,16 @@ def sync_catalog() -> dict:
 
     # CMS
     cms_data = sh.values().get(
-        spreadsheetId=GOOGLE_SHEETS_CATALOG_ID, range="CMS!A2:A"
+        spreadsheetId=GOOGLE_SHEETS_CATALOG_ID, range="CMS!A2:B"
     ).execute().get("values", [])
     cms_count = 0
     for row in cms_data:
         if row and row[0].strip():
-            rows_to_insert.append({"sheet": "cms", "technology": row[0].strip(), "group_name": ""})
+            rows_to_insert.append({
+                "sheet": "cms",
+                "technology": row[0].strip(),
+                "group_name": row[1].strip() if len(row) > 1 else "",
+            })
             cms_count += 1
     counts["cms"] = cms_count
 
@@ -82,12 +86,16 @@ def sync_catalog() -> dict:
 
     # EMS
     ems_data = sh.values().get(
-        spreadsheetId=GOOGLE_SHEETS_CATALOG_ID, range="EMS!A2:A"
+        spreadsheetId=GOOGLE_SHEETS_CATALOG_ID, range="EMS!A2:B"
     ).execute().get("values", [])
     ems_count = 0
     for row in ems_data:
         if row and row[0].strip():
-            rows_to_insert.append({"sheet": "ems", "technology": row[0].strip(), "group_name": ""})
+            rows_to_insert.append({
+                "sheet": "ems",
+                "technology": row[0].strip(),
+                "group_name": row[1].strip() if len(row) > 1 else "",
+            })
             ems_count += 1
     counts["ems"] = ems_count
 
@@ -144,7 +152,7 @@ def add_technology(sheet: str, technology: str, group_name: str = "") -> bool:
 
     # 2. Append to Google Sheet
     sh = sheets_client(write=True).spreadsheets()
-    row_values = [technology, group_name] if sheet == "osearch" else [technology]
+    row_values = [technology, group_name] if sheet in ("osearch", "ems", "cms") else [technology]
     sh.values().append(
         spreadsheetId=GOOGLE_SHEETS_CATALOG_ID,
         range=f"{tab_name}!A:A",
@@ -188,11 +196,11 @@ def get_catalog() -> dict:
     cms, osearch, ems = [], [], []
     for row in rows:
         if row["sheet"] == "cms":
-            cms.append(row["technology"])
+            cms.append({"technology": row["technology"], "group": row["group_name"] or ""})
         elif row["sheet"] == "osearch":
             osearch.append({"technology": row["technology"], "group": row["group_name"] or ""})
         elif row["sheet"] == "ems":
-            ems.append(row["technology"])
+            ems.append({"technology": row["technology"], "group": row["group_name"] or ""})
 
     return {"cms": cms, "osearch": osearch, "ems": ems}
 
@@ -221,9 +229,12 @@ def match_technologies(bw_data: dict, catalog: dict) -> dict:
 
     cms_match, cms_last = "", 0
     for cms in catalog.get("cms", []):
-        key = cms.lower()
+        tech = cms["technology"] if isinstance(cms, dict) else cms
+        grp  = cms.get("group", "") if isinstance(cms, dict) else ""
+        key  = tech.lower()
         if key in bw_index and bw_index[key][1] >= cms_last:
-            cms_match = bw_index[key][0]; cms_last = bw_index[key][1]
+            cms_match = grp if grp else bw_index[key][0]
+            cms_last  = bw_index[key][1]
 
     osearch_match, osearch_group, osearch_last = "", "", 0
     for entry in catalog.get("osearch", []):
@@ -235,9 +246,12 @@ def match_technologies(bw_data: dict, catalog: dict) -> dict:
 
     ems_match, ems_last = "", 0
     for ems in catalog.get("ems", []):
-        key = ems.lower()
+        tech = ems["technology"] if isinstance(ems, dict) else ems
+        grp  = ems.get("group", "") if isinstance(ems, dict) else ""
+        key  = tech.lower()
         if key in bw_index and bw_index[key][1] >= ems_last:
-            ems_match = bw_index[key][0]; ems_last = bw_index[key][1]
+            ems_match = grp if grp else bw_index[key][0]
+            ems_last  = bw_index[key][1]
 
     return {
         "cms_list": cms_match,

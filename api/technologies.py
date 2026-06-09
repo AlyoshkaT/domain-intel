@@ -79,11 +79,17 @@ def aggregate_technologies(body: dict):
 
         from_ts = 0
         to_ts = 9999999999999
+        from_dt_clip: datetime | None = None
+        to_dt_clip:   datetime | None = None
         if date_from:
-            try: from_ts = int(datetime.strptime(date_from + "-01", "%Y-%m-%d").timestamp() * 1000)
+            try:
+                from_dt_clip = datetime.strptime(date_from + "-01", "%Y-%m-%d").replace(tzinfo=timezone.utc, day=1)
+                from_ts = int(from_dt_clip.timestamp() * 1000)
             except: pass
         if date_to:
-            try: to_ts = int(datetime.strptime(date_to + "-01", "%Y-%m-%d").timestamp() * 1000)
+            try:
+                to_dt_clip = datetime.strptime(date_to + "-01", "%Y-%m-%d").replace(tzinfo=timezone.utc, day=1)
+                to_ts = int(to_dt_clip.timestamp() * 1000)
             except: pass
 
         tech_timeline: dict[str, dict[str, set]] = {}
@@ -126,8 +132,10 @@ def aggregate_technologies(body: dict):
                     if first_ms and last_ms:
                         f_dt = datetime.fromtimestamp(first_ms / 1000, tz=timezone.utc).replace(day=1)
                         l_dt = datetime.fromtimestamp(last_ms / 1000, tz=timezone.utc).replace(day=1)
-                        cur = f_dt
-                        while cur <= l_dt:
+                        # Clip timeline to selected date range so chart X-axis matches the filter
+                        cur = max(f_dt, from_dt_clip) if from_dt_clip else f_dt
+                        end_dt = min(l_dt, to_dt_clip) if to_dt_clip else l_dt
+                        while cur <= end_dt:
                             if granularity == "year":
                                 period = cur.strftime("%Y")
                             elif granularity == "quarter":

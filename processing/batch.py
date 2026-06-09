@@ -54,8 +54,39 @@ def _trigger_profiles_sync(job_id: str, domains: list[str]):
     t = threading.Thread(target=_do_sync, daemon=True, name=f"profiles-sync-{job_id[:8]}")
     t.start()
 
-# In-memory job registry for active jobs (worker status)
+# ── In-memory live progress ────────────────────────────────────────────────────
+# Tracks running jobs so /api/jobs/{id} never needs a BQ query during processing.
+# Format: { job_id: {status, total, processed, failed, started_at, services, ...} }
 _active_jobs: dict[str, asyncio.Task] = {}
+_job_progress: dict[str, dict] = {}
+
+
+def get_live_progress(job_id: str) -> Optional[dict]:
+    """Return live in-memory progress for a running job, or None if not active."""
+    return _job_progress.get(job_id)
+
+
+def _set_progress(job_id: str, **kwargs):
+    """Update in-memory progress — zero BQ calls, pure arithmetic."""
+    if job_id in _job_progress:
+        _job_progress[job_id].update(kwargs)
+    else:
+        _job_progress[job_id] = kwargs
+
+
+def _bq_checkpoint_interval(total: int) -> int:
+    """
+    How often to persist progress to BQ (for crash recovery only).
+    UI always reads from memory — so this only affects what BQ knows on restart.
+      <10   → never (start + end only)
+      <100  → every 10
+      <1000 → every 50
+      1000+ → every 200
+    """
+    if total < 10:   return total      # effectively: only at end
+    if total < 100:  return 10
+    if total < 1000: return 50
+    return 200
 
 
 async def run_batch_job(
@@ -66,23 +97,42 @@ async def run_batch_job(
     """
     Main batch processing coroutine. Runs in background.
     processed_offset / failed_offset: used when resuming a partially-done job.
+
+    Progress tracking strategy:
+      - In-memory _job_progress updated after every domain (no BQ calls).
+      - BQ written only at start (status=running) and end (status=completed/failed).
+      - /api/jobs/{id} reads from memory while job is active, BQ after it finishes.
     """
     total = len(domains)
     processed = processed_offset
-    failed = failed_offset
+    failed    = failed_offset
 
+    # Initialise in-memory snapshot
+    _set_progress(job_id,
+        status="running",
+        total_domains=total + processed_offset + failed_offset,
+        processed_domains=processed,
+        failed_domains=failed,
+        services=services,
+        started_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    # BQ write #1: mark job as running (start)
     if processed_offset == 0 and failed_offset == 0:
         logger.info(f"Job {job_id} started: {total} domains, services={services}")
-        await _update_job_safe(job_id, status="running", total_domains=total)
+        try:
+            await asyncio.to_thread(update_job, job_id, status="running", total_domains=total)
+        except Exception as e:
+            logger.error(f"Job {job_id}: failed to mark running in BQ: {e}")
     else:
-        logger.info(f"Job {job_id} resumed: {total} remaining, already done={processed_offset+failed_offset}, services={services}")
-        await _update_job_safe(job_id, status="running")
+        logger.info(f"Job {job_id} resumed: {total} remaining, already done={processed_offset+failed_offset}")
+        try:
+            await asyncio.to_thread(update_job, job_id, status="running")
+        except Exception as e:
+            logger.error(f"Job {job_id}: failed to mark running in BQ: {e}")
 
-    # Batch-prefetch SW+BW from privateBQ parsed tables (cheap) and AI from corpBQ.
-    # force_refresh=True means selected services skip cache → no point prefetching them.
-    # Non-selected services always read from cache → always prefetch those.
+    # Batch-prefetch: 2 privateBQ queries + 1 corpBQ query — total 3 BQ calls for whole job
     try:
-        # Prefetch SW + BW from privateBQ parsed tables
         prefetch_parsed(domains)
     except Exception as e:
         logger.warning(f"prefetch_parsed failed (will fall back to per-domain queries): {e}")
@@ -95,6 +145,9 @@ async def run_batch_job(
         logger.warning(f"Prefetch AI failed (will fall back to per-domain queries): {e}")
 
     semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
+    total_all  = total + processed_offset + failed_offset
+    checkpoint = _bq_checkpoint_interval(total_all)
+    logger.info(f"Job {job_id}: BQ checkpoint every {checkpoint} domains (total={total_all})")
 
     async def process_one(domain: str):
         nonlocal processed, failed
@@ -103,9 +156,8 @@ async def run_batch_job(
                 domain, job_id, services,
                 force_refresh=force_refresh,
                 username=username,
-                skip_redirect=force_refresh,  # force-refresh → domains already canonical
+                skip_redirect=force_refresh,
             )
-            # Run sync BQ write in thread — doesn't block the event loop
             await asyncio.to_thread(save_result, result)
 
             if result["status"] == "error":
@@ -113,14 +165,17 @@ async def run_batch_job(
             else:
                 processed += 1
 
-            # Update progress every 10 domains or on last
+            # UI: update in-memory counter after every domain — zero BQ calls
+            _set_progress(job_id, processed_domains=processed, failed_domains=failed)
+
+            # BQ: persist for crash recovery only — at computed interval
             total_done = processed + failed
-            if total_done % 10 == 0 or total_done == total:
-                await _update_job_safe(
-                    job_id,
-                    processed_domains=processed,
-                    failed_domains=failed,
-                )
+            if total_done % checkpoint == 0:
+                try:
+                    await asyncio.to_thread(update_job, job_id,
+                        processed_domains=processed, failed_domains=failed)
+                except Exception as e:
+                    logger.warning(f"Job {job_id}: checkpoint BQ write failed: {e}")
 
             if DELAY_BETWEEN_DOMAINS > 0:
                 await asyncio.sleep(DELAY_BETWEEN_DOMAINS)
@@ -129,24 +184,42 @@ async def run_batch_job(
     await asyncio.gather(*tasks, return_exceptions=True)
 
     final_status = "completed" if failed == 0 else "completed_with_errors"
-    await _update_job_safe(
-        job_id,
-        status=final_status,
-        processed_domains=processed,
-        failed_domains=failed,
-    )
+    _set_progress(job_id, status=final_status, processed_domains=processed, failed_domains=failed)
+
+    # BQ write #2: persist final state (end)
+    try:
+        await asyncio.to_thread(update_job, job_id,
+            status=final_status,
+            processed_domains=processed,
+            failed_domains=failed,
+        )
+    except Exception as e:
+        logger.error(f"Job {job_id}: failed to persist final state to BQ: {e}")
+
     logger.info(f"Job {job_id} finished: {processed} ok, {failed} failed")
     clear_prefetch_cache()
     clear_parsed_cache()
 
-    # Auto-export: use creator's google_folder, fall back to admin folder
+    # Remove from live progress after a short delay so last poll still gets the result
+    async def _cleanup_progress():
+        await asyncio.sleep(30)
+        _job_progress.pop(job_id, None)
+    asyncio.create_task(_cleanup_progress())
+
+    # Persist BQ call counters
+    try:
+        from core.bigquery import flush_bq_call_stats
+        await asyncio.to_thread(flush_bq_call_stats)
+    except Exception as e:
+        logger.warning(f"flush_bq_call_stats after job {job_id}: {e}")
+
+    # Auto-export to Sheets
     try:
         from core.bigquery import get_results, get_job, get_users
         from services.sheets_export import export_job_to_sheets
         job = get_job(job_id)
         results = get_results(job_id)
         if results:
-            # Look up creator's personal Drive folder
             creator = job.get("created_by", "") or username or ""
             folder_id = ""
             if creator:
@@ -160,20 +233,11 @@ async def run_batch_job(
             if url:
                 from services.credits import _save_setting
                 _save_setting(f"sheet_url_{job_id}", url)
-                logger.info(f"Auto-exported job {job_id} to Sheets (folder={folder_id or 'admin'}): {url}")
+                logger.info(f"Auto-exported job {job_id} to Sheets: {url}")
     except Exception as e:
         logger.warning(f"Auto Sheets export failed for job {job_id}: {e}")
 
-    # Fast incremental upsert — only updates profiles for the just-processed domains
     _trigger_profiles_sync(job_id, domains)
-
-
-async def _update_job_safe(job_id: str, **kwargs):
-    """Update job without raising on BQ errors. Runs in thread to avoid blocking event loop."""
-    try:
-        await asyncio.to_thread(update_job, job_id, **kwargs)
-    except Exception as e:
-        logger.error(f"Failed to update job {job_id}: {e}")
 
 
 def resume_job(job_id: str, username: str = "") -> dict:
