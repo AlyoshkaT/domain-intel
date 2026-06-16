@@ -67,6 +67,44 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Auto-resume error: {e}")
 
+    # Catch-up: re-sync recently completed jobs whose post-job profiles sync was
+    # killed by a server restart (sync runs in a daemon thread → dies with the server).
+    def _startup_resync_recent_jobs():
+        try:
+            from core.bigquery import client as _bqc, _bq_qcfg
+            from services.domain_profiles import sync_profiles_from_job_results
+            from api.explorer import invalidate_profiles_cache
+            bq = _bqc()
+            from config.settings import GCP_PROJECT_ID, BIGQUERY_DATASET
+            P = f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}"
+            rows = list(bq.query(f"""
+                SELECT r.job_id, COUNT(*) AS missing
+                FROM `{P}.analysis_results` r
+                JOIN (
+                    SELECT job_id FROM `{P}.analysis_jobs`
+                    WHERE status IN ('completed', 'completed_with_errors')
+                      AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+                ) j ON j.job_id = r.job_id
+                LEFT JOIN `{P}.domain_profiles` p ON p.domain = r.domain
+                WHERE p.domain IS NULL
+                GROUP BY r.job_id
+                HAVING missing > 0
+            """, job_config=_bq_qcfg()).result())
+            if not rows:
+                logger.info("Startup re-sync check: all recent jobs are in Explorer ✓")
+                return
+            for r in rows:
+                logger.warning(f"Startup re-sync: job {r['job_id'][:8]} has {r['missing']} domains "
+                               f"missing from Explorer — syncing")
+                result = sync_profiles_from_job_results(r["job_id"])
+                logger.info(f"Startup re-sync done for {r['job_id'][:8]}: {result}")
+            invalidate_profiles_cache()
+        except Exception as e:
+            logger.warning(f"Startup re-sync check failed: {e}")
+
+    import threading as _threading
+    _threading.Thread(target=_startup_resync_recent_jobs, daemon=True, name="startup-resync").start()
+
     try:
         await fetch_builtwith_credits()
     except Exception as e:

@@ -19,39 +19,60 @@ from core.bigquery import (
 
 logger = logging.getLogger(__name__)
 
-# Track whether a profiles sync is already running (avoid pile-up)
+# Track whether a profiles sync is already running (avoid pile-up).
+# Domains arriving while a sync is in flight are queued and processed
+# by the same worker thread right after — nothing is ever skipped.
 _sync_lock = threading.Lock()
 _sync_running = False
+_pending_sync_jobs: list[str] = []
 
 
 def _trigger_profiles_sync(job_id: str, domains: list[str]):
     """
-    Fast incremental upsert — only updates profiles for the processed domains.
-    Skips if a sync is already running to avoid pile-up.
+    Sync the FULL job's results into domain_profiles at completion.
+    Reads every domain from analysis_results for this job_id (not just the current
+    run's batch) — so domains processed across multiple resumes/restarts all land
+    in Explorer. If a sync is already running, the job is queued and synced after.
+    (`domains` kept for signature compatibility; full-job sync is by job_id.)
     """
     global _sync_running
     with _sync_lock:
         if _sync_running:
-            logger.info(f"Profiles sync already running — skipping auto-sync for job {job_id}")
+            if job_id not in _pending_sync_jobs:
+                _pending_sync_jobs.append(job_id)
+            logger.info(f"Profiles sync busy — queued job {job_id[:8]} "
+                        f"(queue size: {len(_pending_sync_jobs)})")
             return
         _sync_running = True
 
-    def _do_sync():
+    def _do_sync(jid: str):
         global _sync_running
         try:
-            logger.info(f"Incremental profiles sync triggered by job {job_id}: {len(domains)} domains")
-            from services.domain_profiles import sync_domain_profiles_incremental
-            from api.explorer import invalidate_profiles_cache
-            result = sync_domain_profiles_incremental(domains)
-            invalidate_profiles_cache()
-            logger.info(f"Incremental profiles sync done: {result}")
-        except Exception as e:
-            logger.warning(f"Auto-sync profiles error: {e}")
-        finally:
+            while True:
+                try:
+                    logger.info(f"Full job→profiles sync (job {jid[:8]})")
+                    from services.domain_profiles import sync_profiles_from_job_results
+                    from api.explorer import invalidate_profiles_cache
+                    result = sync_profiles_from_job_results(jid)
+                    invalidate_profiles_cache()
+                    logger.info(f"Job→profiles sync done: {result}")
+                except Exception as e:
+                    logger.warning(f"Auto-sync profiles error: {e}")
+                # Drain the queue: sync any jobs that completed during this sync
+                with _sync_lock:
+                    if _pending_sync_jobs:
+                        jid = _pending_sync_jobs.pop(0)
+                        logger.info(f"Profiles sync: draining queue → job {jid[:8]}")
+                    else:
+                        _sync_running = False
+                        return
+        except BaseException:
+            # Safety net: never leave the flag stuck on unexpected exit
             with _sync_lock:
                 _sync_running = False
+            raise
 
-    t = threading.Thread(target=_do_sync, daemon=True, name=f"profiles-sync-{job_id[:8]}")
+    t = threading.Thread(target=_do_sync, args=(job_id,), daemon=True, name=f"profiles-sync-{job_id[:8]}")
     t.start()
 
 # ── In-memory live progress ────────────────────────────────────────────────────
@@ -137,6 +158,14 @@ async def run_batch_job(
     except Exception as e:
         logger.warning(f"prefetch_parsed failed (will fall back to per-domain queries): {e}")
 
+    # Batch-prefetch known redirects in ONE query instead of 1 BQ query per domain
+    # (each billed the 10MB minimum → ~$0.89 per 15K-domain job).
+    try:
+        from services.redirect_resolver import prefetch_redirects
+        await asyncio.to_thread(prefetch_redirects, domains)
+    except Exception as e:
+        logger.warning(f"prefetch_redirects failed (will fall back to per-domain queries): {e}")
+
     try:
         from services.claude_ai import CORP_AI_CACHE_KEY
         if not (force_refresh and "ai" in services):
@@ -144,10 +173,18 @@ async def run_batch_job(
     except Exception as e:
         logger.warning(f"Prefetch AI failed (will fall back to per-domain queries): {e}")
 
+    # Per-job domain cap (limits in-flight redirects/BQ writes per job).
+    # Actual API load is capped globally by per-service queues in processing/limits.py.
     semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
     total_all  = total + processed_offset + failed_offset
     checkpoint = _bq_checkpoint_interval(total_all)
     logger.info(f"Job {job_id}: BQ checkpoint every {checkpoint} domains (total={total_all})")
+
+    # Priority: small urgent jobs (≤ PRIORITY_MAX_DOMAINS) pause big jobs' new API calls
+    from processing.limits import PRIORITY_MAX_DOMAINS, priority_job_started, priority_job_finished
+    is_priority = total_all <= PRIORITY_MAX_DOMAINS
+    if is_priority:
+        priority_job_started()
 
     async def process_one(domain: str):
         nonlocal processed, failed
@@ -157,6 +194,7 @@ async def run_batch_job(
                 force_refresh=force_refresh,
                 username=username,
                 skip_redirect=force_refresh,
+                priority=is_priority,
             )
             await asyncio.to_thread(save_result, result)
 
@@ -180,8 +218,13 @@ async def run_batch_job(
             if DELAY_BETWEEN_DOMAINS > 0:
                 await asyncio.sleep(DELAY_BETWEEN_DOMAINS)
 
-    tasks = [process_one(d) for d in domains]
-    await asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        tasks = [process_one(d) for d in domains]
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        # Always release the priority gate — even if the job was cancelled
+        if is_priority:
+            priority_job_finished()
 
     final_status = "completed" if failed == 0 else "completed_with_errors"
     _set_progress(job_id, status=final_status, processed_domains=processed, failed_domains=failed)
@@ -197,8 +240,19 @@ async def run_batch_job(
         logger.error(f"Job {job_id}: failed to persist final state to BQ: {e}")
 
     logger.info(f"Job {job_id} finished: {processed} ok, {failed} failed")
-    clear_prefetch_cache()
-    clear_parsed_cache()
+    # Clear shared prefetch caches only when no OTHER job is still running —
+    # clearing mid-flight would force parallel jobs onto per-domain corpBQ
+    # slow-path queries (billed 10MB minimum each).
+    if len(_active_jobs) <= 1:   # current job is still registered at this point
+        clear_prefetch_cache()
+        clear_parsed_cache()
+        try:
+            from services.redirect_resolver import clear_redirect_cache
+            clear_redirect_cache()
+        except Exception:
+            pass
+    else:
+        logger.info(f"Job {job_id}: {len(_active_jobs) - 1} other job(s) active — keeping prefetch caches")
 
     # Remove from live progress after a short delay so last poll still gets the result
     async def _cleanup_progress():
@@ -212,6 +266,15 @@ async def run_batch_job(
         await asyncio.to_thread(flush_bq_call_stats)
     except Exception as e:
         logger.warning(f"flush_bq_call_stats after job {job_id}: {e}")
+
+    # Refresh BuiltWith credits — they aren't returned per-call (unlike SimilarWeb
+    # headers), so the cached value is stale until we re-query whoami after a BW job.
+    if "builtwith" in services:
+        try:
+            from services.credits import fetch_builtwith_credits
+            await fetch_builtwith_credits()
+        except Exception as e:
+            logger.warning(f"BuiltWith credits refresh after job {job_id}: {e}")
 
     # Auto-export to Sheets
     try:
@@ -264,8 +327,12 @@ def resume_job(job_id: str, username: str = "") -> dict:
         return {"ok": True, "remaining": 0, "already_done": already_done}
 
     services = job.get("services") or []
-    p_offset = job.get("processed_domains") or 0
-    f_offset = job.get("failed_domains") or 0
+    # Offset = actual count of already-processed domains (from analysis_results),
+    # NOT the stale processed_domains field in analysis_jobs (which may be 0 if the
+    # last checkpoint never got written before the restart). This keeps the
+    # progress counter accurate: already_done + remaining == total.
+    p_offset = already_done
+    f_offset = 0
 
     loop = asyncio.get_event_loop()
     task = loop.create_task(

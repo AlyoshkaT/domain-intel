@@ -353,30 +353,52 @@ def sync_domain_profiles() -> dict:
         track_bq_call("priv_bw")
         logger.info(f"BW parsed: {len(bw_parsed)}")
 
-        # Phase 3 — AI (70 → 80%): extract 3 fields directly in SQL
-        _sync_status.update({"progress": "3/4 · AI запит…", "pct": 70})
+        # Phase 3 — AI (70 → 80%): read from privateBQ ai_parsed (cheap).
+        # Fallback to corpBQ full scan only if ai_parsed is empty (not yet backfilled).
+        _sync_status.update({"progress": "3/4 · AI запит (privateBQ)…", "pct": 70})
         ai_data: dict[str, dict] = {}
-        ai_job = corp.query(f"""
-            SELECT
-                domain,
-                COALESCE(JSON_VALUE(response_json, '$.category'), '')        AS ai_category,
-                LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
-                COALESCE(JSON_VALUE(response_json, '$.subcategory'), '')      AS ai_industry
-            FROM {corp_ai_table}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """, job_config=_bq_qcfg(max_bytes=False))
-        _sync_status.update({"progress": "3/4 · AI отримуємо…", "pct": 72})
-        with _bq_op("corp_r"):
-            for r in ai_job.result():
-                key = normalize_domain(r["domain"])
-                if key:
-                    ai_data[key] = {
-                        "ai_category":     r["ai_category"] or "",
-                        "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
-                        "ai_industry":     r["ai_industry"] or "",
-                    }
+        ai_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.ai_parsed`"
+        try:
+            ai_job = our.query(f"""
+                SELECT domain, ai_category, ai_is_ecommerce, ai_industry
+                FROM {ai_priv_table}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            """, job_config=_bq_qcfg(max_bytes=False))
+            with _bq_op("priv_r"):
+                for r in ai_job.result():
+                    key = normalize_domain(r["domain"])
+                    if key:
+                        ai_data[key] = {
+                            "ai_category":     r["ai_category"] or "",
+                            "ai_is_ecommerce": r["ai_is_ecommerce"] or "Ні",
+                            "ai_industry":     r["ai_industry"] or "",
+                        }
+        except Exception as e:
+            logger.warning(f"ai_parsed read failed ({e}) — falling back to corpBQ")
+
+        if not ai_data:
+            logger.info("ai_parsed empty — falling back to corpBQ claude_responses full scan")
+            _sync_status.update({"progress": "3/4 · AI запит (corpBQ fallback)…", "pct": 71})
+            ai_job = corp.query(f"""
+                SELECT
+                    domain,
+                    COALESCE(JSON_VALUE(response_json, '$.category'), '')        AS ai_category,
+                    LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
+                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '')      AS ai_industry
+                FROM {corp_ai_table}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            """, job_config=_bq_qcfg(max_bytes=False))
+            with _bq_op("corp_r"):
+                for r in ai_job.result():
+                    key = normalize_domain(r["domain"])
+                    if key:
+                        ai_data[key] = {
+                            "ai_category":     r["ai_category"] or "",
+                            "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
+                            "ai_industry":     r["ai_industry"] or "",
+                        }
+            track_bq_call("corp_ai")
         _sync_status.update({"progress": f"3/4 · AI: {len(ai_data):,} доменів ✓", "pct": 80})
-        track_bq_call("corp_ai")
         logger.info(f"AI data total: {len(ai_data)} domains")
 
         all_domains = {d for d in sw_parsed.keys() | bw_parsed.keys() | ai_data.keys() if d}
@@ -536,26 +558,48 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
             if key:
                 bw_parsed[key] = _match_bw_compact(r["bw_vertical"] or "", r["techs_compact"] or "", catalog)
 
-        _bq_touch("corp_r")
+        # AI: privateBQ ai_parsed first (free for corpBQ), corp fallback only for missing domains
         ai_data: dict[str, dict] = {}
-        ai_in = f"LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({dom_list_sql})"
-        for r in corp.query(f"""
-            SELECT
-                domain,
-                COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
-                LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
-                COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry
-            FROM {corp_ai_table}
-            WHERE {ai_in}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """).result():
-            key = normalize_domain(r["domain"])
-            if key:
-                ai_data[key] = {
-                    "ai_category":     r["ai_category"] or "",
-                    "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
-                    "ai_industry":     r["ai_industry"] or "",
-                }
+        ai_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.ai_parsed`"
+        try:
+            for r in our.query(f"""
+                SELECT domain, ai_category, ai_is_ecommerce, ai_industry
+                FROM {ai_priv_table}
+                WHERE {in_clause}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            """).result():
+                key = normalize_domain(r["domain"])
+                if key:
+                    ai_data[key] = {
+                        "ai_category":     r["ai_category"] or "",
+                        "ai_is_ecommerce": r["ai_is_ecommerce"] or "Ні",
+                        "ai_industry":     r["ai_industry"] or "",
+                    }
+        except Exception as e:
+            logger.warning(f"incremental: ai_parsed read failed ({e}) — corp fallback for all domains")
+
+        missing_ai = [d for d in norm_domains if d not in ai_data]
+        if missing_ai:
+            _bq_touch("corp_r")
+            missing_sql = ", ".join(f"'{d}'" for d in missing_ai)
+            ai_in = f"LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({missing_sql})"
+            for r in corp.query(f"""
+                SELECT
+                    domain,
+                    COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
+                    LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
+                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry
+                FROM {corp_ai_table}
+                WHERE {ai_in}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            """).result():
+                key = normalize_domain(r["domain"])
+                if key:
+                    ai_data[key] = {
+                        "ai_category":     r["ai_category"] or "",
+                        "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
+                        "ai_industry":     r["ai_industry"] or "",
+                    }
 
         updated_at = datetime.now(timezone.utc).isoformat()
         tmp_file = None

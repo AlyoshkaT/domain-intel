@@ -121,14 +121,22 @@ def get_all_profiles():
         return _profiles_cache
     try:
         bq_client = client()
-        cols_sql = ", ".join(PROFILE_COLUMNS)
+        cols_sql = ", ".join(f"t.{c}" for c in PROFILE_COLUMNS)
+        # sw_fetched / bw_fetched — freshness dates from parsed tables (UI-only, not exported)
+        all_columns = PROFILE_COLUMNS + ["sw_fetched", "bw_fetched"]
         # _bq_op keeps the LED lit for the entire duration of this block (can be 5+ min)
         with _bq_op("priv_r"):
             # Use large page_size to reduce HTTP round-trips (default ~10K → 50K per request)
             job = bq_client.query(f"""
-                SELECT {cols_sql}
-                FROM `{table_ref(PROFILES_TABLE)}`
-                ORDER BY sw_visits DESC NULLS LAST
+                SELECT {cols_sql},
+                       FORMAT_TIMESTAMP('%Y-%m-%d', sw.fa) AS sw_fetched,
+                       FORMAT_TIMESTAMP('%Y-%m-%d', bw.fa) AS bw_fetched
+                FROM `{table_ref(PROFILES_TABLE)}` t
+                LEFT JOIN (SELECT domain, MAX(fetched_at) AS fa FROM `{table_ref("sw_parsed")}` GROUP BY domain) sw
+                  ON sw.domain = t.domain
+                LEFT JOIN (SELECT domain, MAX(fetched_at) AS fa FROM `{table_ref("bw_parsed")}` GROUP BY domain) bw
+                  ON bw.domain = t.domain
+                ORDER BY t.sw_visits DESC NULLS LAST
             """, job_config=_bq_qcfg())
             result_iter = job.result(page_size=50000)
 
@@ -138,7 +146,7 @@ def get_all_profiles():
             rows = []
             for i, r in enumerate(result_iter):
                 row = []
-                for col in PROFILE_COLUMNS:
+                for col in all_columns:
                     v = r[col]
                     if v is None:
                         row.append(None)
@@ -150,7 +158,7 @@ def get_all_profiles():
                 if i % 1000 == 0:
                     time.sleep(0)  # yield GIL → event loop can respond to bq_activity polls
 
-        _profiles_cache = {"columns": PROFILE_COLUMNS, "rows": rows, "total": len(rows)}
+        _profiles_cache = {"columns": all_columns, "rows": rows, "total": len(rows)}
         _profiles_cache_ts = now
         return _profiles_cache
     except Exception as e:

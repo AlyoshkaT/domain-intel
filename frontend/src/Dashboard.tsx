@@ -6,6 +6,7 @@ import {
   Geographies,
   Geography,
   ZoomableGroup,
+  Annotation,
 } from "react-simple-maps"
 
 interface Profile {
@@ -35,13 +36,20 @@ function flag(code: string) {
   return String.fromCodePoint(...code.toUpperCase().split("").map(c => 127397 + c.charCodeAt(0)))
 }
 
-interface Slice { label: string; count: number; color: string }
+interface Slice { label: string; count: number; color: string; items?: { label: string; count: number }[] }
 
 function topN(map: Map<string, number>, n: number, lang: Lang): Slice[] {
   const sorted = [...map.entries()].sort((a, b) => b[1] - a[1])
-  const top = sorted.slice(0, n).map(([label, count], i) => ({ label: label || t('dash_empty', lang), count, color: COLORS[i % COLORS.length] }))
-  const rest = sorted.slice(n).reduce((s, [, c]) => s + c, 0)
-  if (rest > 0) top.push({ label: t('dash_other', lang), count: rest, color: "#94a3b8" })
+  const top: Slice[] = sorted.slice(0, n).map(([label, count], i) => ({ label: label || t('dash_empty', lang), count, color: COLORS[i % COLORS.length] }))
+  const restEntries = sorted.slice(n)
+  const rest = restEntries.reduce((s, [, c]) => s + c, 0)
+  if (rest > 0) top.push({
+    label: t('dash_other', lang),
+    count: rest,
+    color: "#94a3b8",
+    // Keep what's folded into "Others" so the UI can expand it on click
+    items: restEntries.map(([label, count]) => ({ label: label || t('dash_empty', lang), count })),
+  })
   return top
 }
 
@@ -51,6 +59,7 @@ function Donut({ data, title, field, onFilter, lang }: {
   data: Slice[]; title: string; field?: string; onFilter?: OnFilter; lang: Lang
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
+  const [othersOpen, setOthersOpen] = useState(false)
   const total = data.reduce((s, d) => s + d.count, 0)
   if (!total) return null
   const sz = 120, cx = 60, cy = 60, r = 44, ir = 26
@@ -71,8 +80,15 @@ function Donut({ data, title, field, onFilter, lang }: {
   })
 
   const clickable = !!field && !!onFilter
+  const othersItems = data.find(d => d.label === other)?.items || []
   const handleClick = (label: string) => {
-    if (clickable && label !== other) onFilter!(field!, label)
+    if (!clickable) return
+    if (label === other) {
+      // Expand/collapse the hidden breakdown instead of filtering
+      if (othersItems.length) setOthersOpen(o => !o)
+      return
+    }
+    onFilter!(field!, label)
   }
 
   return (
@@ -85,12 +101,12 @@ function Donut({ data, title, field, onFilter, lang }: {
             const isDim = hovered !== null && !isHov
             return (
               <path key={i} d={s.d} fill={s.color} stroke="var(--bg)" strokeWidth={isDim ? 1 : 1.5}
-                style={{ cursor: clickable && s.label !== other ? "pointer" : "default", transition: "opacity 0.15s, stroke-width 0.15s" }}
+                style={{ cursor: clickable && (s.label !== other || othersItems.length) ? "pointer" : "default", transition: "opacity 0.15s, stroke-width 0.15s" }}
                 opacity={isDim ? 0.13 : isHov ? 1 : 0.9}
                 onClick={() => handleClick(s.label)}
                 onMouseEnter={() => setHovered(s.label)}
                 onMouseLeave={() => setHovered(null)}>
-                <title>{s.label}: {s.count.toLocaleString()} ({(s.pct * 100).toFixed(1)}%){clickable && s.label !== other ? t('dash_click_filter', lang) : ""}</title>
+                <title>{s.label}: {s.count.toLocaleString()} ({(s.pct * 100).toFixed(1)}%){clickable && s.label !== other ? t('dash_click_filter', lang) : s.label === other && othersItems.length ? t('dash_other_expand', lang) : ""}</title>
               </path>
             )
           })}
@@ -104,7 +120,7 @@ function Donut({ data, title, field, onFilter, lang }: {
               const isDim = hovered !== null && !isHov
               return (
                 <tr key={i}
-                  className={`dash-legend-row${clickable && item.label !== other ? " dash-row-clickable" : ""}`}
+                  className={`dash-legend-row${clickable && (item.label !== other || (item.items?.length)) ? " dash-row-clickable" : ""}`}
                   style={{ opacity: isDim ? 0.25 : 1, transition: "opacity 0.15s" }}
                   onClick={() => handleClick(item.label)}
                   onMouseEnter={() => setHovered(item.label)}
@@ -117,7 +133,7 @@ function Donut({ data, title, field, onFilter, lang }: {
                       display: "inline-block",
                     }} />
                   </td>
-                  <td className="dash-legend-label">{item.label}</td>
+                  <td className="dash-legend-label">{item.label}{item.label === other && item.items?.length ? (othersOpen ? " ▾" : " ▸") : ""}</td>
                   <td className="dash-legend-sep">–</td>
                   <td className="dash-legend-count">{item.count.toLocaleString()}</td>
                   <td className="dash-legend-pct">{((item.count / total) * 100).toFixed(1)}%</td>
@@ -127,32 +143,53 @@ function Donut({ data, title, field, onFilter, lang }: {
           </tbody>
         </table>
       </div>
+      {/* Expanded "Others" breakdown — click any to apply as filter */}
+      {othersOpen && othersItems.length > 0 && (
+        <div className="dash-others-list">
+          {othersItems.map((it, i) => (
+            <div key={i} className="dash-others-row dash-row-clickable"
+              onClick={() => onFilter!(field!, it.label)}
+              title={t('dash_click_filter', lang)}>
+              <span className="dash-others-label">{it.label}</span>
+              <span className="dash-others-count">{it.count.toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 function CountryBars({ data, onFilter, lang }: { data: Slice[]; onFilter?: OnFilter; lang: Lang }) {
   const [hovered, setHovered] = useState<string | null>(null)
+  const [othersOpen, setOthersOpen] = useState(false)
   if (!data.length) return null
   const max = data[0]?.count || 1
   const total = data.reduce((s, d) => s + d.count, 0)
+  const other = t('dash_other', lang)
+  const othersItems = data.find(d => d.label === other)?.items || []
   return (
     <div className="dash-chart">
       <div className="dash-chart-title">Country Map{onFilter && <span className="dash-filter-hint"> ↗ фільтр</span>}</div>
       <div className="dash-country-list">
         {data.slice(0, 12).map((item, i) => {
-          const clickable = !!onFilter && item.label !== t('dash_no_region', lang)
+          const isOther = item.label === other
+          const clickable = !!onFilter && item.label !== t('dash_no_region', lang) && (!isOther || othersItems.length > 0)
           const isHov = hovered === item.label
           const isDim = hovered !== null && !isHov
           return (
             <div key={i} className={`dash-country-row${clickable ? " dash-row-clickable" : ""}`}
               style={{ opacity: isDim ? 0.25 : 1, transition: "opacity 0.15s" }}
-              onClick={() => clickable && onFilter!("sw_primary_region", item.label)}
+              onClick={() => {
+                if (!clickable) return
+                if (isOther) setOthersOpen(o => !o)
+                else onFilter!("sw_primary_region", item.label)
+              }}
               onMouseEnter={() => setHovered(item.label)}
               onMouseLeave={() => setHovered(null)}
-              title={clickable ? t('dash_click_filter_country', lang) : undefined}>
-              <span className="dash-country-flag">{flag(item.label)}</span>
-              <span className="dash-country-code">{item.label}</span>
+              title={clickable ? (isOther ? t('dash_other_expand', lang) : t('dash_click_filter_country', lang)) : undefined}>
+              <span className="dash-country-flag">{isOther ? "•••" : flag(item.label)}</span>
+              <span className="dash-country-code">{isOther ? `${item.label}${othersItems.length ? (othersOpen ? " ▾" : " ▸") : ""}` : item.label}</span>
               <div className="dash-country-bar-wrap">
                 <div className="dash-country-bar" style={{ width: `${(item.count / max) * 100}%`, background: item.color }} />
               </div>
@@ -162,6 +199,18 @@ function CountryBars({ data, onFilter, lang }: { data: Slice[]; onFilter?: OnFil
           )
         })}
       </div>
+      {othersOpen && othersItems.length > 0 && (
+        <div className="dash-others-list">
+          {othersItems.map((it, i) => (
+            <div key={i} className="dash-others-row dash-row-clickable"
+              onClick={() => onFilter!("sw_primary_region", it.label)}
+              title={t('dash_click_filter_country', lang)}>
+              <span className="dash-others-label">{flag(it.label)} {it.label}</span>
+              <span className="dash-others-count">{it.count.toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -217,7 +266,7 @@ const ISO2_NAME: Record<string, string> = {
   NG:"Nigeria",NI:"Nicaragua",NL:"Netherlands",NO:"Norway",NP:"Nepal",NZ:"New Zealand",
   OM:"Oman",PA:"Panama",PE:"Peru",PG:"Papua N.G.",PH:"Philippines",PK:"Pakistan",
   PL:"Poland",PS:"Palestine",PT:"Portugal",PY:"Paraguay",QA:"Qatar",RO:"Romania",
-  RS:"Serbia",RU:"Russia",RW:"Rwanda",SA:"Saudi Arabia",SB:"Solomon Is.",SC:"Seychelles",
+  RS:"Serbia",RU:"MORDER",RW:"Rwanda",SA:"Saudi Arabia",SB:"Solomon Is.",SC:"Seychelles",
   SD:"Sudan",SE:"Sweden",SG:"Singapore",SI:"Slovenia",SK:"Slovakia",SL:"Sierra Leone",
   SN:"Senegal",SO:"Somalia",SR:"Suriname",SS:"South Sudan",SV:"El Salvador",SY:"Syria",
   SZ:"Eswatini",TD:"Chad",TG:"Togo",TH:"Thailand",TJ:"Tajikistan",TL:"Timor-Leste",
@@ -301,10 +350,11 @@ function WorldMap({ countryData, onFilter }: {
     for (const s of countryData) {
       if (s.label && s.label.length === 2) iso2count[s.label.toUpperCase()] = s.count
     }
-    // Keys are stored as strings in the topology ("643", "804", ...)
+    // Topology ids are zero-padded 3-char strings ("076" = Brazil, "040" = Austria),
+    // so pad numeric codes — otherwise countries with code < 100 never match.
     const m: Record<string, { count: number; iso2: string }> = {}
     for (const [iso2, num] of Object.entries(ISO2_NUM)) {
-      if (iso2count[iso2]) m[String(num)] = { count: iso2count[iso2], iso2 }
+      if (iso2count[iso2]) m[String(num).padStart(3, "0")] = { count: iso2count[iso2], iso2 }
     }
     return m
   }, [countryData])
@@ -376,7 +426,7 @@ function WorldMap({ countryData, onFilter }: {
             <Geographies geography={WORLD_TOPO}>
               {({ geographies }) =>
                 geographies.map(geo => {
-                  const info = numMap[String(geo.id)]
+                  const info = numMap[String(geo.id).padStart(3, "0")]
                   const count = info?.count || 0
                   const iso2 = info?.iso2 || ""
                   const clickable = !!onFilter && !!iso2
@@ -401,6 +451,31 @@ function WorldMap({ countryData, onFilter }: {
                 })
               }
             </Geographies>
+            {/* Country name labels — shown for countries with data */}
+            {countryData.map(s => {
+              const center = ISO2_CENTER[s.label]
+              const name = ISO2_NAME[s.label] || s.label
+              if (!center) return null
+              const fontSize = Math.max(2.5, Math.min(8, 8 / pos.zoom))
+              return (
+                <Annotation
+                  key={s.label}
+                  subject={center}
+                  dx={0} dy={0}
+                  connectorProps={{ stroke: "none" }}
+                >
+                  <text
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={fontSize}
+                    fill={isDark ? "rgba(255,255,255,0.75)" : "rgba(0,0,0,0.65)"}
+                    style={{ pointerEvents: "none", userSelect: "none", fontWeight: 500 }}
+                  >
+                    {name}
+                  </text>
+                </Annotation>
+              )
+            })}
           </ZoomableGroup>
         </ComposableMap>
 

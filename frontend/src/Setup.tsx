@@ -697,12 +697,15 @@ function CacheSection({ lang }: { lang: Lang }) {
   const [bqMaxBytes, setBqMaxBytes] = useState(50)
   const [bqFloor, setBqFloor] = useState(1)
   const [autoSync, setAutoSync] = useState(true)
+  const [syncFreq, setSyncFreq] = useState("daily")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savingBq, setSavingBq] = useState(false)
   const [togglingSync, setTogglingSync] = useState(false)
+  const [manualSyncing, setManualSyncing] = useState(false)
   const [msg, setMsg] = useState("")
   const [msgBq, setMsgBq] = useState("")
+  const [msgSync, setMsgSync] = useState("")
   const [showBqWarning, setShowBqWarning] = useState(false)
 
   useEffect(() => {
@@ -712,6 +715,7 @@ function CacheSection({ lang }: { lang: Lang }) {
         setBqMaxBytes(r.bq_max_bytes_gb ?? 50)
         setBqFloor(r.bq_max_bytes_gb_floor ?? 1)
         setAutoSync(r.auto_sync_enabled !== false)
+        setSyncFreq(r.auto_sync_frequency || "daily")
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -730,16 +734,28 @@ function CacheSection({ lang }: { lang: Lang }) {
     finally { setSaving(false) }
   }
 
-  const toggleAutoSync = async (enabled: boolean) => {
+  const setFrequency = async (freq: string) => {
     setTogglingSync(true)
     try {
       await apiFetch("/api/setup/settings", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ auto_sync_enabled: enabled })
+        body: JSON.stringify({ auto_sync_frequency: freq })
       })
-      setAutoSync(enabled)
+      setSyncFreq(freq)
+      setAutoSync(freq !== "off")
     } catch (e: any) { setMsgBq(t('setup_err', lang)(e.message)) }
     finally { setTogglingSync(false) }
+  }
+
+  const manualSync = async () => {
+    if (!window.confirm(t('manual_sync_confirm', lang))) return
+    setManualSyncing(true); setMsgSync("")
+    try {
+      const r = await apiFetch("/api/admin/sync_parsed_from_corp", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      if (r.error) setMsgSync(t('setup_err', lang)(r.error))
+      else setMsgSync(t('manual_sync_done', lang)(r.sw_rows ?? 0, r.bw_rows ?? 0, r.ai_rows ?? 0, r.elapsed ?? 0))
+    } catch (e: any) { setMsgSync(t('setup_err', lang)(e.message)) }
+    finally { setManualSyncing(false) }
   }
 
   const saveBqLimit = async () => {
@@ -817,32 +833,41 @@ function CacheSection({ lang }: { lang: Lang }) {
           <p style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 10 }}>
             {t('auto_sync_desc', lang)}
           </p>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button
-              onClick={() => toggleAutoSync(!autoSync)}
-              disabled={togglingSync}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
-                border: "none", cursor: togglingSync ? "wait" : "pointer",
-                background: autoSync ? "rgba(52,211,153,0.2)" : "rgba(239,68,68,0.15)",
-                color: autoSync ? "#34d399" : "#f87171",
-                transition: "all 0.2s",
-              }}
-            >
-              <span style={{
-                width: 10, height: 10, borderRadius: "50%",
-                background: autoSync ? "#34d399" : "#f87171",
-                boxShadow: autoSync ? "0 0 6px #34d399" : "none",
-                display: "inline-block", flexShrink: 0,
-              }} />
-              {togglingSync ? t('auto_sync_saving', lang) : autoSync ? t('auto_sync_on', lang) : t('auto_sync_off', lang)}
-            </button>
-            {!autoSync && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {(["daily", "weekly", "monthly", "off"] as const).map(f => {
+              const active = syncFreq === f
+              const isOff = f === "off"
+              return (
+                <button
+                  key={f}
+                  onClick={() => setFrequency(f)}
+                  disabled={togglingSync || active}
+                  style={{
+                    padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                    border: active ? "none" : "1px solid var(--border)",
+                    cursor: togglingSync ? "wait" : active ? "default" : "pointer",
+                    background: active
+                      ? (isOff ? "rgba(239,68,68,0.2)" : "rgba(52,211,153,0.2)")
+                      : "transparent",
+                    color: active ? (isOff ? "#f87171" : "#34d399") : "var(--text-2)",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  {t(`sync_freq_${f}` as any, lang)}
+                </button>
+              )
+            })}
+            {syncFreq === "off" && (
               <span style={{ fontSize: 12, color: "#f87171" }}>
                 {t('auto_sync_paused', lang)}
               </span>
             )}
+          </div>
+          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+            <button className="btn-export" onClick={manualSync} disabled={manualSyncing}>
+              {manualSyncing ? t('manual_sync_running', lang) : t('manual_sync_btn', lang)}
+            </button>
+            {msgSync && <span style={{ fontSize: 12, color: "var(--text-2)" }}>{msgSync}</span>}
           </div>
         </div>
       </>)}

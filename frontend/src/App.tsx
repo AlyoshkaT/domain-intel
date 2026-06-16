@@ -455,6 +455,20 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
     finally { setActing(false) }
   }, [jobId, lang, pollSheetUrl])
 
+  // Download via fetch→blob (no extra browser tab, like Explorer) instead of window.open
+  const downloadFile = useCallback(async (kind: "csv" | "xlsx") => {
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/export/${kind}`, { credentials: "same-origin" })
+      if (!res.ok) throw new Error("export failed")
+      const blob = await res.blob()
+      const a = document.createElement("a")
+      a.href = URL.createObjectURL(blob)
+      a.download = `${(job?.filename || "results").replace(/\.[^.]+$/, "")}.${kind}`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch { alert(`${kind.toUpperCase()} export error`) }
+  }, [jobId, job])
+
   const filtered = results.filter(r =>
     !filter || r.domain.includes(filter.toLowerCase()) ||
     (r.sw_category || "").toLowerCase().includes(filter.toLowerCase()) ||
@@ -535,8 +549,8 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
               {acting ? "…" : t('jobs_retry', lang)(job.failed_domains || 0)}
             </button>
           )}
-          {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/csv`, "_blank")}>CSV</button>}
-          {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/xlsx`, "_blank")}>XLSX</button>}
+          {can("download") && <button className="btn-export" onClick={() => downloadFile("csv")}>CSV</button>}
+          {can("download") && <button className="btn-export" onClick={() => downloadFile("xlsx")}>XLSX</button>}
           {can("sheets") && (
             <button className="btn-export" disabled={acting} onClick={() => handleSheetsExport(false)}>
               {acting ? "…" : t('jobs_sheets', lang)}
@@ -584,7 +598,7 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
           value={filter} onChange={e => setFilter(e.target.value)} />
         <span className="filter-count">{t('results_count', lang)(filtered.length)}</span>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap table-fixed-height">
         <table className="results-table">
           <thead><tr>{COLUMNS.map(c => <th key={c.key} style={{ minWidth: c.w }}>{c.label}</th>)}</tr></thead>
           <tbody>

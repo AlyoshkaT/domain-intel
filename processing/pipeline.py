@@ -62,6 +62,7 @@ async def process_domain(
     force_refresh: bool = False,
     username: str = "",
     skip_redirect: bool = False,
+    priority: bool = False,
 ) -> dict:
     domain = _clean_domain(domain)
 
@@ -172,12 +173,19 @@ async def process_domain(
         sw_data = None
         bw_data = None
 
+        from processing.limits import api_slot
+
+        async def _fetch_sw():
+            async with api_slot("sw", priority):
+                return await fetch_similarweb(working_domain)
+
+        async def _fetch_bw():
+            async with api_slot("bw", priority):
+                return await fetch_builtwith(working_domain)
+
         if sw_needs_fetch and bw_needs_fetch:
-            # Both uncached and requested — fetch concurrently
-            sw_data, bw_data = await asyncio.gather(
-                fetch_similarweb(working_domain),
-                fetch_builtwith(working_domain),
-            )
+            # Both uncached and requested — fetch concurrently (separate API queues)
+            sw_data, bw_data = await asyncio.gather(_fetch_sw(), _fetch_bw())
             if sw_data and username:
                 try:
                     from core.bigquery import increment_api_usage
@@ -187,7 +195,7 @@ async def process_domain(
         else:
             # At most one API call needed — keep it simple/sequential
             if sw_needs_fetch:
-                sw_data = await fetch_similarweb(working_domain)
+                sw_data = await _fetch_sw()
                 if sw_data and username:
                     try:
                         from core.bigquery import increment_api_usage
@@ -197,7 +205,7 @@ async def process_domain(
                 if sw_want:
                     await asyncio.sleep(DELAY_BETWEEN_API_CALLS / 1000)
             if bw_needs_fetch:
-                bw_data = await fetch_builtwith(working_domain)
+                bw_data = await _fetch_bw()
 
         # ── Parse SimilarWeb result ───────────────────────────────────────────
         from services.similarweb import SW_RATE_LIMITED
@@ -314,22 +322,30 @@ async def process_domain(
             result["ai_is_ecommerce"] = ai_cached.get("ai_is_ecommerce")
             result["ai_industry"]     = ai_cached.get("ai_industry")
         elif "ai" in services:
-            homepage_text = await fetch_homepage_text(working_domain)
-            input_hash = _make_input_hash(working_domain, result.get("sw_title") or "", result.get("sw_description") or "")
-            ai_result = await classify_domain(
-                domain=working_domain,
-                sw_title=result.get("sw_title") or "",
-                sw_description=result.get("sw_description") or "",
-                sw_category=result.get("sw_category") or "",
-                bw_cms=result.get("cms_list") or "",
-                bw_ecommerce=result.get("bw_ecommerce") or "",
-                homepage_text=homepage_text,
-            )
+            async with api_slot("ai", priority):
+                homepage_text = await fetch_homepage_text(working_domain)
+                input_hash = _make_input_hash(working_domain, result.get("sw_title") or "", result.get("sw_description") or "")
+                ai_result = await classify_domain(
+                    domain=working_domain,
+                    sw_title=result.get("sw_title") or "",
+                    sw_description=result.get("sw_description") or "",
+                    sw_category=result.get("sw_category") or "",
+                    bw_cms=result.get("cms_list") or "",
+                    bw_ecommerce=result.get("bw_ecommerce") or "",
+                    homepage_text=homepage_text,
+                )
             if ai_result:
                 result["ai_category"]     = ai_result.get("ai_category")
                 result["ai_is_ecommerce"] = ai_result.get("ai_is_ecommerce")
                 result["ai_industry"]     = ai_result.get("ai_industry")
                 asyncio.create_task(asyncio.to_thread(save_corp_ai_result, working_domain, ai_result, input_hash))
+                # Mirror into privateBQ ai_parsed so profile syncs never need corpBQ for fresh results
+                from core.bigquery import save_ai_parsed
+                asyncio.create_task(asyncio.to_thread(save_ai_parsed, working_domain, {
+                    "ai_category":     ai_result.get("ai_category", ""),
+                    "ai_is_ecommerce": ai_result.get("ai_is_ecommerce", ""),
+                    "ai_industry":     ai_result.get("ai_industry", ""),
+                }))
 
     except Exception as e:
         logger.error(f"Pipeline error for {domain}: {e}")

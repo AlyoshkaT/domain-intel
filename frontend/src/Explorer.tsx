@@ -44,6 +44,7 @@ interface ExploreResult {
   ai_industry?: string; sw_category?: string; sw_subcategory?: string
   sw_description?: string; sw_title?: string; company_name?: string
   sw_primary_region?: string; sw_primary_region_pct?: number
+  sw_fetched?: string; bw_fetched?: string   // freshness dates, UI-only (not exported)
 }
 
 // ─── Module-level profile cache (survives component re-mounts / navigation) ──
@@ -360,9 +361,9 @@ function SyncButton({ onSync }: { onSync: () => void }) {
 }
 
 // ─── Filter panel ─────────────────────────────────────────────────────────────
-function FilterPanel({ filters, fieldValues, onChange, onReset, onSearch, loading, activeCount, lang }: {
+function FilterPanel({ filters, fieldValues, onChange, onInstant, onReset, onSearch, loading, activeCount, lang }: {
   filters: FilterState; fieldValues: Record<string, FilterValue[]>
-  onChange: (f: FilterState) => void; onReset: () => void; onSearch: () => void; loading: boolean; activeCount: number; lang: Lang
+  onChange: (f: FilterState) => void; onInstant: (f: FilterState) => void; onReset: () => void; onSearch: () => void; loading: boolean; activeCount: number; lang: Lang
 }) {
   const upd = (key: keyof FilterState, val: any) => onChange({ ...filters, [key]: val })
   const sections = [
@@ -372,16 +373,47 @@ function FilterPanel({ filters, fieldValues, onChange, onReset, onSearch, loadin
     { key: "osearch",                label: "oSearch",     type: "multi"  },
     { key: "ems_list",               label: "EMS",         type: "multi"  },
     { key: "ai_category",            label: "AI Category", type: "multi"  },
-    { key: "ai_is_ecommerce",        label: "AI Ecomm",    type: "multi"  },
     { key: "sw_category",            label: "Category SW", type: "multi"  },
     { key: "sw_primary_region",      label: "Region",      type: "multi"  },
     { key: "sw_primary_region_pct",  label: "Region %",    type: "num"    },
   ] as const
+  // eCommerce toggle (AI), multi-select: Yes="Так" / No="Ні" / ?=empty("").
+  // "?" is the empty string in the selected[] — filterProfiles matches null/'' as "".
+  // All selected (or none) → "all" (no filter). Instant-applies (no Apply needed).
+  const ecom = filters.ai_is_ecommerce as MultiFilter
+  const ecomSel = ecom.type === "in" ? ecom.selected : []
+  const ecomHas = (v: string) => ecomSel.includes(v)
+  const toggleEcom = (v: string) => {
+    const cur = ecom.type === "in" ? [...ecom.selected] : []
+    const i = cur.indexOf(v)
+    if (i >= 0) cur.splice(i, 1); else cur.push(v)
+    // none or all-three selected → no filter (All)
+    const val = (cur.length === 0 || cur.length === 3)
+      ? { type: "all", selected: [], search: "" }
+      : { type: "in", selected: cur, search: "" }
+    onInstant({ ...filters, ai_is_ecommerce: val as any })
+  }
+  const setEcomAll = () => onInstant({ ...filters, ai_is_ecommerce: { type: "all", selected: [], search: "" } as any })
+  const ecomAllActive = ecom.type !== "in" || ecom.selected.length === 0
+
   return (
     <div className="filter-panel">
       <div className="filter-panel-header">
         <span className="filter-panel-title">{t('expl_filters_title', lang)}</span>
         <button className="flt-reset-btn" onClick={onReset}>{t('expl_reset', lang)}</button>
+      </div>
+      <div className="filter-section">
+        <div className="filter-section-label">{t('expl_ecom_label', lang)}</div>
+        <div className="gran-btns">
+          <button className={`gran-btn${ecomAllActive ? " active" : ""}`} onClick={setEcomAll}>{t('expl_filter_all', lang)}</button>
+          {([["Так", t('expl_ecom_yes', lang)], ["Ні", t('expl_ecom_no', lang)], ["", "?"]] as const).map(([v, lbl]) => (
+            <button key={v || "q"}
+              className={`gran-btn${ecomHas(v) ? " active" : ""}`}
+              onClick={() => toggleEcom(v)}>
+              {lbl}
+            </button>
+          ))}
+        </div>
       </div>
       {sections.map(s => (
         <div key={s.key} className="filter-section">
@@ -574,8 +606,11 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
       else if (!nextGroup) next.sw_visits = { type: "gt", value: String(group.min), min: "", max: "" }
       else next.sw_visits = { type: "between", value: "", min: String(group.min), max: String(nextGroup.min) }
     } else if (label === t('expl_empty_val', lang)) {
+      // Toggle the "empty" filter: second click on (empty) clears it (like named segments)
       const cur = next[field as keyof FilterState] as MultiFilter
-      next[field as keyof FilterState] = { ...cur, type: "empty", selected: [] } as any
+      next[field as keyof FilterState] = cur.type === "empty"
+        ? { ...cur, type: "all", selected: [] } as any
+        : { ...cur, type: "empty", selected: [] } as any
     } else {
       const cur = next[field as keyof FilterState] as MultiFilter
       const sel = cur.selected.includes(label) ? cur.selected.filter(s => s !== label) : [...cur.selected, label]
@@ -611,6 +646,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
     <div className="explorer-layout">
       <aside className="explorer-sidebar">
         <FilterPanel filters={filters} fieldValues={fieldValues} onChange={setFilters}
+          onInstant={(next) => { setFilters(next); applyFilters(next, allProfiles) }}
           onReset={handleReset} onSearch={handleSearch} loading={loading} activeCount={activeCount} lang={lang} />
       </aside>
 
@@ -713,6 +749,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
                   <th>oSearch</th><th>EMS</th><th>AI Category</th><th>AI Ecomm</th>
                   <th>AI Industry</th><th>Category SW</th><th>Subcategory</th>
                   <th>Description</th><th>Region</th><th>Region %</th>
+                  <th title="SW data fetched">SW 📅</th><th title="BW data fetched">BW 📅</th>
                 </tr>
               </thead>
               <tbody>
@@ -732,6 +769,8 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
                     >{r.sw_description !== undefined ? cell(r.sw_description) : "—"}</td>
                     <td>{cell(r.sw_primary_region)}</td>
                     <td>{r.sw_primary_region_pct != null ? `${r.sw_primary_region_pct}%` : "—"}</td>
+                    <td className="td-date">{r.sw_fetched || "—"}</td>
+                    <td className="td-date">{r.bw_fetched || "—"}</td>
                   </tr>
                 ))}
               </tbody>

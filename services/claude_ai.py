@@ -134,7 +134,8 @@ def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
     }
 
     try:
-        errors = bq.insert_rows_json(CORP_AI_TABLE_ID, [row])
+        from core.bigquery import BQ_OP_TIMEOUT
+        errors = bq.insert_rows_json(CORP_AI_TABLE_ID, [row], timeout=BQ_OP_TIMEOUT)
         if errors:
             logger.error(f"Corp AI save error ({domain}): {errors}")
         else:

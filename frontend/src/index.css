@@ -354,7 +354,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .flt-option-selected{background:var(--accent-bg)!important}
 
 /* ── Fixed height table with vertical scroll ─────────────────────────────────── */
-.table-fixed-height{max-height:calc(15 * 37px + 40px);overflow-y:auto}
+.table-fixed-height{max-height:calc(100vh - 240px);min-height:360px;overflow-y:auto}
 .table-fixed-height thead th{position:sticky;top:0;z-index:2;background:var(--bg-2)}
 
 /* ── Row number cell ─────────────────────────────────────────────────────────── */
@@ -396,6 +396,12 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .dash-row-clickable:hover .dash-legend-label{color:var(--accent)}
 .dash-country-row.dash-row-clickable:hover{background:var(--accent-bg);border-radius:4px}
 .dash-country-row.dash-row-clickable:hover .dash-country-code{color:var(--accent)}
+/* Expanded "Others" breakdown list */
+.dash-others-list{margin-top:8px;max-height:180px;overflow-y:auto;border-top:1px solid var(--border);padding-top:6px}
+.dash-others-row{display:flex;justify-content:space-between;align-items:center;padding:3px 8px;border-radius:4px;font-size:11px;color:var(--text-2)}
+.dash-others-row .dash-others-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px}
+.dash-others-row .dash-others-count{font-family:var(--mono);font-size:10px;color:var(--text-3)}
+.dash-others-row.dash-row-clickable:hover .dash-others-label{color:var(--accent)}
 .dash-filter-hint{font-size:9px;color:var(--accent);font-weight:400;text-transform:none;letter-spacing:0;margin-left:4px;opacity:0.7}
 
 /* ── Dashboard world map row ─────────────────────────────────────────────────── */
