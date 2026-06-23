@@ -159,6 +159,22 @@ _SEP_TECH = "\x02"   # separator between tech entries in compact BW string
 _SEP_FIELD = "\x01"  # separator between name and lastDetected
 
 
+# "General newsletter / lightweight bulk-email / SMTP transport" platforms.
+# On a TRUE tie (same signal strength AND same date) a real ESP / marketing-automation
+# platform outranks these. Compared by group name, lower-cased.
+_LOW_PRIORITY_GROUPS = {
+    "mailchimp", "mailerlite", "constant contact", "moosend", "aweber", "benchmark",
+    "mad mimi", "emailoctopus", "flodesk", "beehiiv", "selzy", "freshmail", "boldem",
+    "mailganer", "campaign monitor", "convertkit", "mailjet", "elastic email",
+    "bronto", "feedgee", "emitrr",
+}
+
+
+def _group_priority(group: str) -> int:
+    """1 = real ESP / automation / CDP (default), 0 = general newsletter (demoted)."""
+    return 0 if (group or "").strip().lower() in _LOW_PRIORITY_GROUPS else 1
+
+
 def _signal_strength(name: str) -> int:
     """How strong is a BuiltWith detection as evidence the site *uses* a platform.
     3 = on-page script / core integration (e.g. "Klaviyo", "MailChimp for Shopify")
@@ -177,8 +193,9 @@ def _signal_strength(name: str) -> int:
 
 def _select_match(entries, bw_index):
     """Pick the best catalog match for one dimension.
-    Order: signal strength first, then recency (lastDetected), then a deterministic
-    alphabetical fallback — so co-present ties never depend on catalog row order.
+    Order: signal strength → recency (lastDetected) → platform class (real ESP beats
+    general newsletter) → deterministic alphabetical fallback. So co-present ties never
+    depend on catalog row order.
     Returns (matched_bw_name, group) or ("", "").
     """
     def sort_key(e):
@@ -187,7 +204,7 @@ def _select_match(entries, bw_index):
                     (e.get("technology") or "").lower())
         return (e.lower(), e.lower())
 
-    best_rank = None  # (strength, last)
+    best_rank = None  # (strength, last, group_priority)
     best = ("", "")
     for entry in sorted(entries, key=sort_key):
         tech = entry["technology"] if isinstance(entry, dict) else entry
@@ -196,7 +213,7 @@ def _select_match(entries, bw_index):
         if not hit:
             continue
         name, last = hit
-        rank = (_signal_strength(name), last)
+        rank = (_signal_strength(name), last, _group_priority(grp))
         if best_rank is None or rank > best_rank:
             best_rank = rank
             best = (name, grp)
