@@ -67,10 +67,13 @@ let _cachedProfilesTs = 0
 const PROFILES_CACHE_TTL = 5 * 60 * 1000 // 5 min client-side cache
 
 // ─── In-memory filter (mirrors BQ WHERE logic) ────────────────────────────────
-function filterProfiles(f: FilterState, profiles: ExploreResult[]): ExploreResult[] {
+function filterProfiles(f: FilterState, profiles: ExploreResult[], techDomains?: Set<string> | null): ExploreResult[] {
   return profiles.filter(p => {
     // Domain
     const dom = p.domain || ""
+
+    // Raw-technology filter (server-derived domain set)
+    if (techDomains && !techDomains.has(dom.toLowerCase())) return false
     if (f.domain.type === "in" && f.domain.selected.length > 0) {
       if (!f.domain.selected.includes(dom)) return false
     } else if (f.domain.type === "contains" && f.domain.value) {
@@ -374,10 +377,73 @@ function SyncButton({ onSync }: { onSync: () => void }) {
   )
 }
 
+// ─── Raw technology search (BuiltWith) ────────────────────────────────────────
+function TechSearch({ activeLabels, onApply, onClear, lang }: {
+  activeLabels: string[]; onApply: (techs: string[]) => void; onClear: () => void; lang: Lang
+}) {
+  const [q, setQ] = useState("")
+  const [results, setResults] = useState<{ tech: string; domain_count: number }[]>([])
+  const [checked, setChecked] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+  const timer = useRef<any>(null)
+
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current)
+    const term = q.trim()
+    if (term.length < 2) { setResults([]); return }
+    timer.current = setTimeout(async () => {
+      try {
+        const r = await apiFetch(`/api/explore/tech_search?q=${encodeURIComponent(term)}`)
+        setResults(r.results || [])
+      } catch { setResults([]) }
+    }, 300)
+    return () => timer.current && clearTimeout(timer.current)
+  }, [q])
+
+  const toggle = (tech: string) =>
+    setChecked(c => c.includes(tech) ? c.filter(x => x !== tech) : [...c, tech])
+
+  const apply = async () => { if (!checked.length) return; setBusy(true); await onApply(checked); setBusy(false) }
+  const clear = () => { setChecked([]); setQ(""); setResults([]); onClear() }
+
+  return (
+    <div className="filter-section">
+      <div className="filter-section-label">{t('expl_tech_label', lang)}</div>
+      <input className="filter-input" placeholder={t('expl_tech_ph', lang)}
+        value={q} onChange={e => setQ(e.target.value)} />
+      {results.length > 0 && (
+        <div className="tech-search-results">
+          {results.map(r => (
+            <label key={r.tech} className="tech-search-row">
+              <input type="checkbox" checked={checked.includes(r.tech)} onChange={() => toggle(r.tech)} />
+              <span className="tech-search-name">{r.tech}</span>
+              <span className="tech-search-count">{r.domain_count.toLocaleString()}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {checked.length > 0 && (
+        <button className="btn-primary" style={{ width: "100%", marginTop: 6, padding: "6px 0", fontSize: 13 }}
+          onClick={apply} disabled={busy}>
+          {busy ? <span className="spinner" /> : `${t('expl_tech_apply', lang)} (${checked.length})`}
+        </button>
+      )}
+      {activeLabels.length > 0 && (
+        <div className="tech-search-active">
+          <span title={activeLabels.join(", ")}>🔎 {activeLabels.join(", ")}</span>
+          <button className="flt-reset-btn" onClick={clear}>✕</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Filter panel ─────────────────────────────────────────────────────────────
-function FilterPanel({ filters, fieldValues, onChange, onInstant, onReset, onSearch, loading, activeCount, lang }: {
+function FilterPanel({ filters, fieldValues, onChange, onInstant, onReset, onSearch, loading, activeCount, lang,
+  techLabels, onApplyTech, onClearTech }: {
   filters: FilterState; fieldValues: Record<string, FilterValue[]>
   onChange: (f: FilterState) => void; onInstant: (f: FilterState) => void; onReset: () => void; onSearch: () => void; loading: boolean; activeCount: number; lang: Lang
+  techLabels: string[]; onApplyTech: (techs: string[]) => void; onClearTech: () => void
 }) {
   const upd = (key: keyof FilterState, val: any) => onChange({ ...filters, [key]: val })
   const sections = [
@@ -429,6 +495,7 @@ function FilterPanel({ filters, fieldValues, onChange, onInstant, onReset, onSea
           ))}
         </div>
       </div>
+      <TechSearch activeLabels={techLabels} onApply={onApplyTech} onClear={onClearTech} lang={lang} />
       {sections.map(s => (
         <div key={s.key} className="filter-section">
           <div className="filter-section-label">{s.label}</div>
@@ -518,19 +585,47 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
 
   useEffect(() => { loadProfiles() }, [loadProfiles])
 
+  // Raw-technology filter (server-derived domain set). Held in a ref so applyFilters
+  // always reads the latest set without being recreated.
+  const techDomainsRef = useRef<Set<string> | null>(null)
+  const [techLabels, setTechLabels] = useState<string[]>([])
+
   // ── Apply filters in-memory (instant, no BQ) ─────────────────────────────
   const applyFilters = useCallback((f: FilterState, profiles: ExploreResult[]) => {
-    const result = filterProfiles(f, profiles)
+    const result = filterProfiles(f, profiles, techDomainsRef.current)
     setFilteredProfiles(result)
     setOffset(0)
     // Notify App of current filtered domains (for Technologies nav button)
     onFilteredDomainsChange?.(result.map(r => r.domain))
   }, [onFilteredDomainsChange])
 
+  // Apply / clear the raw-technology filter
+  const applyTechFilter = useCallback(async (techs: string[]) => {
+    if (!techs.length) {
+      techDomainsRef.current = null; setTechLabels([])
+      applyFilters(filters, allProfiles); return
+    }
+    try {
+      const r = await apiFetch("/api/explore/tech_domains", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ techs }),
+      })
+      techDomainsRef.current = new Set((r.domains || []).map((d: string) => d.toLowerCase()))
+      setTechLabels(techs)
+      applyFilters(filters, allProfiles)
+    } catch (e: any) { alert(e.message) }
+  }, [filters, allProfiles, applyFilters])
+
+  const clearTechFilter = useCallback(() => {
+    techDomainsRef.current = null; setTechLabels([])
+    applyFilters(filters, allProfiles)
+  }, [filters, allProfiles, applyFilters])
+
   const handleSearch = () => applyFilters(filters, allProfiles)
   const handleReset = useCallback(() => {
     const def = defaultFilters()
     setFilters(def)
+    techDomainsRef.current = null; setTechLabels([])
     applyFilters(def, allProfiles)
   }, [allProfiles, applyFilters])
 
@@ -668,7 +763,8 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
       <aside className="explorer-sidebar">
         <FilterPanel filters={filters} fieldValues={fieldValues} onChange={setFilters}
           onInstant={(next) => { setFilters(next); applyFilters(next, allProfiles) }}
-          onReset={handleReset} onSearch={handleSearch} loading={loading} activeCount={activeCount} lang={lang} />
+          onReset={handleReset} onSearch={handleSearch} loading={loading} activeCount={activeCount} lang={lang}
+          techLabels={techLabels} onApplyTech={applyTechFilter} onClearTech={clearTechFilter} />
       </aside>
 
       <main className="explorer-main">

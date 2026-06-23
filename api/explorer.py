@@ -308,6 +308,35 @@ def sync_status():
     return get_sync_status()
 
 
+# ─── Raw technology search (BuiltWith) ────────────────────────────────────────
+@router.get("/tech_search")
+def tech_search(q: str, limit: int = 50):
+    """Autocomplete over the tech dictionary: full tech names containing `q` + counts."""
+    from services.tech_index import search_tech
+    with _bq_op("priv_r"):
+        return {"results": search_tech(q, limit)}
+
+
+@router.post("/tech_domains")
+def tech_domains(body: dict):
+    """Return domains that have ANY of the selected exact tech names."""
+    from services.tech_index import domains_for_techs
+    techs = body.get("techs", []) if isinstance(body, dict) else []
+    with _bq_op("priv_r"):
+        domains = domains_for_techs(techs)
+    return {"domains": domains, "count": len(domains)}
+
+
+@router.post("/tech_rebuild", dependencies=[require_permission("admin")])
+async def tech_rebuild():
+    """Full rebuild of the technology index from bw_parsed (admin / manual)."""
+    import asyncio
+    from services.tech_index import rebuild_tech_index
+    with _bq_op("priv_w"):
+        result = await asyncio.to_thread(rebuild_tech_index)
+    return result
+
+
 # ─── Sheets/XLSX export ───────────────────────────────────────────────────────
 _explore_sheet_url: str | None = None
 _explore_sheet_error: str | None = None

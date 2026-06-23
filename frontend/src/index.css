@@ -465,3 +465,22 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .tech-filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
 .tech-filter-group{display:flex;flex-direction:column;gap:4px}
 .tech-filter-label{font-size:10px;color:var(--text-3);font-weight:500;text-transform:uppercase;letter-spacing:0.04em}
+
+/* Raw technology search (Explorer filter panel) */
+.tech-search-results {
+  margin-top: 6px; max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-1);
+}
+.tech-search-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; font-size: 12px; cursor: pointer;
+}
+.tech-search-row:hover { background: var(--bg-2); }
+.tech-search-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tech-search-count { color: var(--text-3); font-family: var(--mono); font-size: 11px; }
+.tech-search-active {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin-top: 6px; padding: 4px 8px; font-size: 11px;
+  background: var(--bg-2); border-radius: 6px;
+}
+.tech-search-active span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -302,6 +302,18 @@ async def run_batch_job(
 
     _trigger_profiles_sync(job_id, domains)
 
+    # Refresh the technology search index for this job's domains (BW data only).
+    if "builtwith" in services:
+        def _update_tech_index(doms: list[str]):
+            try:
+                from services.tech_index import update_tech_index_for_domains
+                result = update_tech_index_for_domains(doms)
+                logger.info(f"Tech index updated for job {job_id[:8]}: {result}")
+            except Exception as e:
+                logger.warning(f"Tech index update failed for job {job_id[:8]}: {e}")
+        threading.Thread(target=_update_tech_index, args=(domains,), daemon=True,
+                         name=f"tech-index-{job_id[:8]}").start()
+
 
 def resume_job(job_id: str, username: str = "") -> dict:
     """

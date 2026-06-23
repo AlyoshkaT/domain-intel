@@ -162,6 +162,7 @@ function CatalogSection({ lang }: { lang: Lang }) {
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [rematching, setRematching] = useState(false)
+  const [rebuildingTech, setRebuildingTech] = useState(false)
   const [addVal, setAddVal] = useState("")
   const [addGroup, setAddGroup] = useState("")
   const [msg, setMsg] = useState("")
@@ -193,6 +194,16 @@ function CatalogSection({ lang }: { lang: Lang }) {
       setMsg(t('setup_rematch_done', lang)(r.updated, r.elapsed))
     } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
     finally { setRematching(false) }
+  }
+
+  const rebuildTech = async () => {
+    if (!window.confirm(t('setup_tech_rebuild_confirm', lang))) return
+    setRebuildingTech(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/explore/tech_rebuild", { method: "POST" })
+      setMsg(t('setup_tech_rebuild_done', lang)(r.techs, r.pairs, r.elapsed))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setRebuildingTech(false) }
   }
 
   const add = async () => {
@@ -232,6 +243,9 @@ function CatalogSection({ lang }: { lang: Lang }) {
         </button>
         <button className="btn-export" onClick={rematch} disabled={rematching} style={{marginLeft: 8}}>
           {rematching ? t('setup_rematching', lang) : t('setup_rematch_btn', lang)}
+        </button>
+        <button className="btn-export" onClick={rebuildTech} disabled={rebuildingTech} style={{marginLeft: 8}}>
+          {rebuildingTech ? t('setup_tech_rebuilding', lang) : t('setup_tech_rebuild_btn', lang)}
         </button>
       </div>
       <div className="setup-tabs">
