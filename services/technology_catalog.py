@@ -19,13 +19,14 @@ CATALOG_SCHEMA = [
     bq.SchemaField("sheet", "STRING"),       # cms / osearch / ems
     bq.SchemaField("technology", "STRING"),  # назва технології
     bq.SchemaField("group_name", "STRING"),  # група (тільки для osearch)
+    bq.SchemaField("class_name", "STRING"),  # функціональний клас (колонка C EMS) — драйвить пріоритет
 ]
 
 # Sheet tab name → BQ sheet value
 SHEET_TABS = {
     "cms":     ("CMS",     "A2:B"),
     "osearch": ("OSearch", "A2:B"),
-    "ems":     ("EMS",     "A2:B"),
+    "ems":     ("EMS",     "A2:C"),
 }
 
 
@@ -65,6 +66,7 @@ def sync_catalog() -> dict:
                 "sheet": "cms",
                 "technology": row[0].strip(),
                 "group_name": row[1].strip() if len(row) > 1 else "",
+                "class_name": "",
             })
             cms_count += 1
     counts["cms"] = cms_count
@@ -80,13 +82,14 @@ def sync_catalog() -> dict:
                 "sheet": "osearch",
                 "technology": row[0].strip(),
                 "group_name": row[1].strip() if len(row) > 1 else "",
+                "class_name": "",
             })
             osearch_count += 1
     counts["osearch"] = osearch_count
 
-    # EMS
+    # EMS — column C holds the functional class (drives tie-break priority)
     ems_data = sh.values().get(
-        spreadsheetId=GOOGLE_SHEETS_CATALOG_ID, range="EMS!A2:B"
+        spreadsheetId=GOOGLE_SHEETS_CATALOG_ID, range="EMS!A2:C"
     ).execute().get("values", [])
     ems_count = 0
     for row in ems_data:
@@ -95,6 +98,7 @@ def sync_catalog() -> dict:
                 "sheet": "ems",
                 "technology": row[0].strip(),
                 "group_name": row[1].strip() if len(row) > 1 else "",
+                "class_name": row[2].strip() if len(row) > 2 else "",
             })
             ems_count += 1
     counts["ems"] = ems_count
@@ -108,6 +112,7 @@ def sync_catalog() -> dict:
             bq.SchemaField("sheet", "STRING"),
             bq.SchemaField("technology", "STRING"),
             bq.SchemaField("group_name", "STRING"),
+            bq.SchemaField("class_name", "STRING"),
         ],
         write_disposition=bq.WriteDisposition.WRITE_TRUNCATE,
         source_format=bq.SourceFormat.NEWLINE_DELIMITED_JSON,
@@ -187,7 +192,8 @@ def get_catalog() -> dict:
     bq_client = client()
     try:
         rows = list(bq_client.query(
-            f"SELECT sheet, technology, group_name FROM `{table_ref(CATALOG_TABLE)}`"
+            f"SELECT sheet, technology, group_name, "
+            f"IFNULL(class_name, '') AS class_name FROM `{table_ref(CATALOG_TABLE)}`"
         ).result())
     except Exception as e:
         logger.error(f"Catalog load error: {e}")
@@ -195,12 +201,14 @@ def get_catalog() -> dict:
 
     cms, osearch, ems = [], [], []
     for row in rows:
+        entry = {"technology": row["technology"], "group": row["group_name"] or "",
+                 "class": (row["class_name"] or "")}
         if row["sheet"] == "cms":
-            cms.append({"technology": row["technology"], "group": row["group_name"] or ""})
+            cms.append(entry)
         elif row["sheet"] == "osearch":
-            osearch.append({"technology": row["technology"], "group": row["group_name"] or ""})
+            osearch.append(entry)
         elif row["sheet"] == "ems":
-            ems.append({"technology": row["technology"], "group": row["group_name"] or ""})
+            ems.append(entry)
 
     return {"cms": cms, "osearch": osearch, "ems": ems}
 

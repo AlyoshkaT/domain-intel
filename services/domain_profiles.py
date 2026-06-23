@@ -170,9 +170,35 @@ _LOW_PRIORITY_GROUPS = {
 }
 
 
-def _group_priority(group: str) -> int:
-    """1 = real ESP / automation / CDP (default), 0 = general newsletter (demoted)."""
-    return 0 if (group or "").strip().lower() in _LOW_PRIORITY_GROUPS else 1
+# Functional class → tie-break priority (higher wins a true tie).
+# Sourced from column C of the EMS sheet. When a catalog entry has a class, this
+# drives the priority; when it's blank we fall back to the legacy _LOW_PRIORITY_GROUPS.
+_CLASS_PRIORITY = {
+    "marketing automation":       5,
+    "ecommerce marketing":        5,
+    "cdp":                        4,
+    "mobile / push engagement":   4,
+    "sms marketing":              4,
+    "esp / email marketing":      3,
+    "sales engagement":           2,
+    "personalization":            2,
+    "data / identity":            2,
+    "other":                      2,
+    "tag manager":                1,
+    "behavioral data":            1,
+    "email infrastructure":       1,
+}
+
+
+def _entry_priority(group: str, klass: str) -> int:
+    """Tie-break priority for a catalog entry.
+    If column C (functional class) is set → use the class rank.
+    If it's empty → legacy behaviour: demoted general-newsletter groups = 1, else 3.
+    """
+    k = (klass or "").strip().lower()
+    if k:
+        return _CLASS_PRIORITY.get(k, 2)   # filled but unknown class → neutral
+    return 1 if (group or "").strip().lower() in _LOW_PRIORITY_GROUPS else 3
 
 
 def _signal_strength(name: str) -> int:
@@ -204,16 +230,17 @@ def _select_match(entries, bw_index):
                     (e.get("technology") or "").lower())
         return (e.lower(), e.lower())
 
-    best_rank = None  # (strength, last, group_priority)
+    best_rank = None  # (strength, last, class/group priority)
     best = ("", "")
     for entry in sorted(entries, key=sort_key):
-        tech = entry["technology"] if isinstance(entry, dict) else entry
-        grp  = entry.get("group", "") if isinstance(entry, dict) else ""
+        tech  = entry["technology"] if isinstance(entry, dict) else entry
+        grp   = entry.get("group", "") if isinstance(entry, dict) else ""
+        klass = entry.get("class", "") if isinstance(entry, dict) else ""
         hit = bw_index.get(tech.lower())
         if not hit:
             continue
         name, last = hit
-        rank = (_signal_strength(name), last, _group_priority(grp))
+        rank = (_signal_strength(name), last, _entry_priority(grp, klass))
         if best_rank is None or rank > best_rank:
             best_rank = rank
             best = (name, grp)
