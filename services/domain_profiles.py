@@ -159,6 +159,50 @@ _SEP_TECH = "\x02"   # separator between tech entries in compact BW string
 _SEP_FIELD = "\x01"  # separator between name and lastDetected
 
 
+def _signal_strength(name: str) -> int:
+    """How strong is a BuiltWith detection as evidence the site *uses* a platform.
+    3 = on-page script / core integration (e.g. "Klaviyo", "MailChimp for Shopify")
+    2 = plugin / form / widget connector (often dormant, e.g. "MailChimp for WordPress")
+    1 = SPF / DNS / mail record only (weakest, e.g. "MailChimp SPF", "Pardot Mail")
+    """
+    n = name.lower()
+    if "spf" in n or "dkim" in n or "dmarc" in n or n.endswith(" mail") or " dns" in n:
+        return 1
+    if any(k in n for k in (" for wordpress", " for woocommerce", " for wix",
+                            "wordpress", "plugin", "widget", "form", "subscribe",
+                            "sign up", "opt-in", "opt in", "optin", " by ")):
+        return 2
+    return 3
+
+
+def _select_match(entries, bw_index):
+    """Pick the best catalog match for one dimension.
+    Order: signal strength first, then recency (lastDetected), then a deterministic
+    alphabetical fallback — so co-present ties never depend on catalog row order.
+    Returns (matched_bw_name, group) or ("", "").
+    """
+    def sort_key(e):
+        if isinstance(e, dict):
+            return ((e.get("group") or e.get("technology") or "").lower(),
+                    (e.get("technology") or "").lower())
+        return (e.lower(), e.lower())
+
+    best_rank = None  # (strength, last)
+    best = ("", "")
+    for entry in sorted(entries, key=sort_key):
+        tech = entry["technology"] if isinstance(entry, dict) else entry
+        grp  = entry.get("group", "") if isinstance(entry, dict) else ""
+        hit = bw_index.get(tech.lower())
+        if not hit:
+            continue
+        name, last = hit
+        rank = (_signal_strength(name), last)
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best = (name, grp)
+    return best
+
+
 def _match_bw_compact(bw_vertical: str, techs_compact: str, catalog: dict) -> dict:
     """
     Match BW techs from compact SQL-extracted string instead of full JSON blob.
@@ -175,33 +219,13 @@ def _match_bw_compact(bw_vertical: str, techs_compact: str, catalog: dict) -> di
                 if key not in bw_index or last > bw_index[key][1]:
                     bw_index[key] = (name, last)
 
-    cms_match, cms_last = "", 0
-    for cms in catalog.get("cms", []):
-        tech = cms["technology"] if isinstance(cms, dict) else cms
-        grp  = cms.get("group", "") if isinstance(cms, dict) else ""
-        key  = tech.lower()
-        if key in bw_index and bw_index[key][1] >= cms_last:
-            cms_match = grp if grp else bw_index[key][0]
-            cms_last  = bw_index[key][1]
+    cms_name, cms_grp = _select_match(catalog.get("cms", []), bw_index)
+    cms_match = cms_grp if cms_grp else cms_name
 
-    osearch_match, osearch_group, osearch_last = "", "", 0
-    for entry in catalog.get("osearch", []):
-        key = entry["technology"].lower()
-        if key in bw_index and bw_index[key][1] >= osearch_last:
-            osearch_match = bw_index[key][0]
-            osearch_group = entry.get("group", "")
-            osearch_last = bw_index[key][1]
+    osearch_match, osearch_group = _select_match(catalog.get("osearch", []), bw_index)
 
-    ems_match, ems_last = "", 0
-    ems_group = ""
-    for ems in catalog.get("ems", []):
-        tech = ems["technology"] if isinstance(ems, dict) else ems
-        grp  = ems.get("group", "") if isinstance(ems, dict) else ""
-        key  = tech.lower()
-        if key in bw_index and bw_index[key][1] >= ems_last:
-            ems_match = grp if grp else bw_index[key][0]
-            ems_group = grp
-            ems_last  = bw_index[key][1]
+    ems_name, ems_grp = _select_match(catalog.get("ems", []), bw_index)
+    ems_match = ems_grp if ems_grp else ems_name
 
     return {
         "cms_list":      cms_match,
@@ -781,6 +805,11 @@ def rematch_catalog() -> dict:
             domain = normalize_domain(r["domain"])
             if not domain:
                 continue
+            # Skip domains without BW techs — nothing to (re)match, and we must not
+            # touch them so their existing values are preserved (see MERGE below,
+            # which is now an authoritative overwrite for the domains it does touch).
+            if not (r["techs_compact"] or "").strip():
+                continue
             m = _match_bw_compact(r["bw_vertical"] or "", r["techs_compact"] or "", catalog)
             deduped[domain] = {
                 "domain":        domain,
@@ -812,17 +841,18 @@ def rematch_catalog() -> dict:
         )
         load_job.result()
 
-        # MERGE into domain_profiles
-        # Only overwrite when new value is non-empty — preserve existing data
-        # for domains whose techs_compact is empty (BW data not yet available).
+        # MERGE into domain_profiles — authoritative overwrite.
+        # Every domain in S comes from bw_parsed WITH non-empty techs_compact, so the
+        # recomputed match is definitive: overwrite directly (including with '') so that
+        # technologies removed from the catalog get cleared instead of lingering.
         merge_sql = f"""
             MERGE {profiles_table} T
             USING `{tmp_ref}` S ON T.domain = S.domain
             WHEN MATCHED THEN UPDATE SET
-                T.cms_list      = IF(S.cms_list      != '', S.cms_list,      T.cms_list),
-                T.osearch       = IF(S.osearch        != '', S.osearch,       T.osearch),
-                T.osearch_group = IF(S.osearch        != '', S.osearch_group, T.osearch_group),
-                T.ems_list      = IF(S.ems_list       != '', S.ems_list,      T.ems_list)
+                T.cms_list      = S.cms_list,
+                T.osearch       = S.osearch,
+                T.osearch_group = S.osearch_group,
+                T.ems_list      = S.ems_list
         """
         merge_job = our.query(merge_sql)
         merge_job.result()

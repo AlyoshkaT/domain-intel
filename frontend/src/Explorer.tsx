@@ -3,6 +3,20 @@ import Dashboard, { TRAFFIC_GROUPS } from "./Dashboard"
 import { t, type Lang } from "./i18n"
 
 const API = ""
+
+// Sortable traffic-rank label — mirrors traffic_rank() in services/sheets_export.py
+function trafficRank(visits?: number): string {
+  const n = Number(visits) || 0
+  if (n <= 0)          return ""
+  if (n > 1_000_000)   return "a.1M+"
+  if (n > 200_000)     return "b.200k+"
+  if (n > 100_000)     return "c.100k+"
+  if (n > 50_000)      return "d.50k+"
+  if (n > 30_000)      return "e.30k+"
+  if (n > 10_000)      return "f.Small"
+  return "g.micro"
+}
+
 async function apiFetch(path: string, opts?: RequestInit) {
   const res = await fetch(API + path, opts)
   if (!res.ok) { const e = await res.json().catch(() => ({ detail: res.statusText })); throw new Error(e.detail) }
@@ -532,9 +546,10 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
 
   // ── Export ─────────────────────────────────────────────────────────────────
   const exportCSV = () => {
-    const cols = ["domain","sw_visits","cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name"]
+    const cols = ["domain","sw_visits","traffic_rank","cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name"]
     const rows = filteredProfiles.map(r => cols.map(h => {
-      const v = (r as any)[h]; return v != null ? `"${String(v).replace(/"/g, '""')}"` : ""
+      const v = h === "traffic_rank" ? trafficRank((r as any).sw_visits) : (r as any)[h]
+      return v != null && v !== "" ? `"${String(v).replace(/"/g, '""')}"` : ""
     }).join(","))
     const csv = [cols.join(","), ...rows].join("\n")
     const a = document.createElement("a")
@@ -602,9 +617,15 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
       if (!group) return
       const idx = TRAFFIC_GROUPS.indexOf(group)
       const nextGroup = TRAFFIC_GROUPS[idx - 1]
-      if (label === "Nano <10k") next.sw_visits = { type: "lt", value: "10000", min: "", max: "" }
-      else if (!nextGroup) next.sw_visits = { type: "gt", value: String(group.min), min: "", max: "" }
-      else next.sw_visits = { type: "between", value: "", min: String(group.min), max: String(nextGroup.min) }
+      const target = label === "Nano <10k"
+        ? { type: "lt" as const, value: "10000", min: "", max: "" }
+        : !nextGroup
+          ? { type: "gt" as const, value: String(group.min), min: "", max: "" }
+          : { type: "between" as const, value: "", min: String(group.min), max: String(nextGroup.min) }
+      // Toggle: clicking the already-selected traffic group clears it back to "all"
+      const curV = next.sw_visits
+      const same = curV.type === target.type && curV.value === target.value && curV.min === target.min && curV.max === target.max
+      next.sw_visits = same ? defaultNum() : target
     } else if (label === t('expl_empty_val', lang)) {
       // Toggle the "empty" filter: second click on (empty) clears it (like named segments)
       const cur = next[field as keyof FilterState] as MultiFilter

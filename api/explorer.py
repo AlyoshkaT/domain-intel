@@ -328,6 +328,13 @@ async def explore_export_xlsx(request: Request, body: dict):
     except Exception:
         pass
     df = pd.DataFrame(results)
+    # Insert Traffic_Rank right after the Traffic (sw_visits) column
+    from services.sheets_export import traffic_rank
+    ranks = [traffic_rank(r.get("sw_visits")) for r in results]
+    if "sw_visits" in df.columns:
+        df.insert(df.columns.get_loc("sw_visits") + 1, "traffic_rank", ranks)
+    else:
+        df["traffic_rank"] = ranks
     stream = io.BytesIO()
     with pd.ExcelWriter(stream, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Explorer")

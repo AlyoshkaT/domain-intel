@@ -155,7 +155,7 @@ function JobStatusLine({ job, lang }: { job: Job; lang: Lang }) {
 
 // ─── Page: New Job ─────────────────────────────────────────────────────────────
 function NewJobPage({ onJobCreated, lang }: { onJobCreated: (id: string) => void; lang: Lang }) {
-  const [services, setServices] = useState<string[]>(["similarweb", "builtwith"])
+  const [services, setServices] = useState<string[]>(["similarweb"])
   const [file, setFile] = useState<File | null>(null)
   const [manualDomains, setManualDomains] = useState("")
   const [dragging, setDragging] = useState(false)

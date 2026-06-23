@@ -227,31 +227,15 @@ def match_technologies(bw_data: dict, catalog: dict) -> dict:
         if key not in bw_index or last > bw_index[key][1]:
             bw_index[key] = (name, last)
 
-    cms_match, cms_last = "", 0
-    for cms in catalog.get("cms", []):
-        tech = cms["technology"] if isinstance(cms, dict) else cms
-        grp  = cms.get("group", "") if isinstance(cms, dict) else ""
-        key  = tech.lower()
-        if key in bw_index and bw_index[key][1] >= cms_last:
-            cms_match = grp if grp else bw_index[key][0]
-            cms_last  = bw_index[key][1]
+    from services.domain_profiles import _select_match
 
-    osearch_match, osearch_group, osearch_last = "", "", 0
-    for entry in catalog.get("osearch", []):
-        key = entry["technology"].lower()
-        if key in bw_index and bw_index[key][1] >= osearch_last:
-            osearch_match = bw_index[key][0]
-            osearch_group = entry.get("group", "")
-            osearch_last = bw_index[key][1]
+    cms_name, cms_grp = _select_match(catalog.get("cms", []), bw_index)
+    cms_match = cms_grp if cms_grp else cms_name
 
-    ems_match, ems_last = "", 0
-    for ems in catalog.get("ems", []):
-        tech = ems["technology"] if isinstance(ems, dict) else ems
-        grp  = ems.get("group", "") if isinstance(ems, dict) else ""
-        key  = tech.lower()
-        if key in bw_index and bw_index[key][1] >= ems_last:
-            ems_match = grp if grp else bw_index[key][0]
-            ems_last  = bw_index[key][1]
+    osearch_match, osearch_group = _select_match(catalog.get("osearch", []), bw_index)
+
+    ems_name, ems_grp = _select_match(catalog.get("ems", []), bw_index)
+    ems_match = ems_grp if ems_grp else ems_name
 
     return {
         "cms_list": cms_match,
