@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import ExplorerPage from "./Explorer"
+import ExplorerPage, { requestExplorerRestore } from "./Explorer"
 import TechnologiesPage from "./Technologies"
 import RedirectsPage from "./Redirects"
 import SetupPage from "./Setup"
@@ -723,7 +723,7 @@ export default function App() {
         </div>
       </nav>
       <main className="main">
-        {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => setView("explorer")} can={can} lang={lang} />}
+        {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => { requestExplorerRestore(); setView("explorer") }} can={can} lang={lang} />}
         {view === "redirects" && <RedirectsPage lang={lang} />}
         {view === "setup" && <SetupPage lang={lang} />}
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} lang={lang} />}

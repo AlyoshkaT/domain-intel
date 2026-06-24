@@ -484,3 +484,13 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   background: var(--bg-2); border-radius: 6px;
 }
 .tech-search-active span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Per-site selector on Technologies page */
+.site-select { position: relative; }
+.site-select-panel {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0;
+  width: 280px; padding: 8px; background: var(--bg-1);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+}
+.site-select-list { max-height: 260px; overflow-y: auto; }

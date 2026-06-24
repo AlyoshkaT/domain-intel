@@ -15,6 +15,20 @@ from core.bigquery import client, table_ref, _bq_touch, _bq_op, track_bq_call, B
 router = APIRouter(prefix="/api/technologies")
 logger = logging.getLogger(__name__)
 
+# Cache of raw rows fetched for a given full domain set, so the per-site multi-filter
+# can re-aggregate any subset WITHOUT a new BQ query.
+import hashlib
+_tech_rows_cache: dict[str, tuple[float, list]] = {}
+_TECH_ROWS_TTL = 600  # 10 min
+
+
+def _norm_domain(d: str) -> str:
+    return re.sub(r'^www\.', '', (d or "").strip().lower())
+
+
+def _rows_key(domains: list[str]) -> str:
+    return hashlib.md5("|".join(sorted(_norm_domain(d) for d in domains)).encode()).hexdigest()
+
 
 def _strip_version(name: str) -> str:
     name = re.sub(r'\s+v?\d+[\d\.x]*$', '', name, flags=re.IGNORECASE)
@@ -36,7 +50,8 @@ def aggregate_technologies(body: dict):
     show_unknown = body.get("show_unknown", False)
     granularity = body.get("granularity", "month")
     filter_domains = body.get("domains", [])
-    logger.info(f"Technologies request: domains={len(filter_domains)}, from={date_from}, to={date_to}")
+    subset = body.get("subset", [])  # optional: aggregate only these (from cached rows)
+    logger.info(f"Technologies request: domains={len(filter_domains)}, subset={len(subset)}, from={date_from}, to={date_to}")
 
     try:
         from services.technology_catalog import get_catalog
@@ -55,30 +70,45 @@ def aggregate_technologies(body: dict):
                 if tech:
                     known[tech.lower()] = grp or tech
 
-        _bq_touch("priv_r")
-        bq_client = client()
+        # Fetch raw rows for the FULL domain set (cached), then optionally aggregate
+        # only a `subset` of them — so switching sites costs zero extra BQ.
+        all_rows = None
+        cache_key = _rows_key(filter_domains) if filter_domains else None
+        if cache_key:
+            cached = _tech_rows_cache.get(cache_key)
+            if cached and time.time() - cached[0] < _TECH_ROWS_TTL:
+                all_rows = cached[1]
 
-        # Build domain filter
-        if filter_domains:
-            domain_list = ", ".join(f"'{d}'" for d in filter_domains[:10000])
-            domain_where = f"WHERE LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({domain_list})"
+        if all_rows is None:
+            _bq_touch("priv_r")
+            bq_client = client()
+            if filter_domains:
+                domain_list = ", ".join(f"'{d}'" for d in filter_domains[:10000])
+                domain_where = f"WHERE LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({domain_list})"
+            else:
+                domain_where = ""
+            with _bq_op("priv_r"):
+                qrows = list(bq_client.query(f"""
+                    SELECT domain, technologies_json
+                    FROM (
+                        SELECT domain, technologies_json,
+                               ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                        FROM `{table_ref(BW_PARSED_TABLE)}`
+                        {domain_where}
+                    ) WHERE rn = 1
+                    LIMIT 50000
+                """, job_config=_bq_qcfg()).result())
+            track_bq_call("priv_bw")
+            all_rows = [(r["domain"], r["technologies_json"]) for r in qrows]
+            if cache_key:
+                _tech_rows_cache[cache_key] = (time.time(), all_rows)
+
+        # Select rows to aggregate: a chosen subset, or the whole set
+        if subset:
+            sub = {_norm_domain(d) for d in subset}
+            rows = [x for x in all_rows if _norm_domain(x[0]) in sub]
         else:
-            domain_where = ""
-
-        # Read only domain + technologies_json from privateBQ bw_parsed.
-        # This is orders of magnitude cheaper than reading full JSON blobs from corpBQ.
-        with _bq_op("priv_r"):
-            rows = list(bq_client.query(f"""
-                SELECT domain, technologies_json
-                FROM (
-                    SELECT domain, technologies_json,
-                           ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
-                    FROM `{table_ref(BW_PARSED_TABLE)}`
-                    {domain_where}
-                ) WHERE rn = 1
-                LIMIT 50000
-            """, job_config=_bq_qcfg()).result())
-        track_bq_call("priv_bw")
+            rows = all_rows
 
         from_ts = 0
         to_ts = 9999999999999
@@ -100,11 +130,9 @@ def aggregate_technologies(body: dict):
         unknown_techs: dict[str, int] = {}
         known_canon: set[str] = set()   # canonicals that come from the catalog
 
-        for idx, row in enumerate(rows):
+        for idx, (domain, tj) in enumerate(rows):
             if idx % 2000 == 0:
                 time.sleep(0)  # yield GIL so event loop can serve bq_activity polls
-            domain = row["domain"]
-            tj = row["technologies_json"]
             if not tj:
                 continue
             try:

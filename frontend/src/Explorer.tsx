@@ -66,6 +66,15 @@ let _cachedProfiles: ExploreResult[] | null = null
 let _cachedProfilesTs = 0
 const PROFILES_CACHE_TTL = 5 * 60 * 1000 // 5 min client-side cache
 
+// ─── Saved filter state (so "← Back to Explorer" returns to the same filter) ──
+// Persisted across unmounts. Restored ONLY when restore is requested (the back link),
+// not on a plain Explorer tab click — which keeps starting fresh.
+let _savedFilters: FilterState | null = null
+let _savedTechLabels: string[] = []
+let _savedTechDomains: Set<string> | null = null
+let _restoreOnMount = false
+export function requestExplorerRestore() { _restoreOnMount = true }
+
 // ─── In-memory filter (mirrors BQ WHERE logic) ────────────────────────────────
 function filterProfiles(f: FilterState, profiles: ExploreResult[], techDomains?: Set<string> | null): ExploreResult[] {
   return profiles.filter(p => {
@@ -522,7 +531,10 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
   can?: (p: string) => boolean; lang: Lang
 }) {
   const canDo = can || (() => true)  // default: allow all
-  const [filters, setFilters] = useState<FilterState>(defaultFilters())
+  // Capture & consume the restore intent once on mount.
+  const [restoreIntent] = useState(() => { const r = _restoreOnMount; _restoreOnMount = false; return r })
+  const [filters, setFilters] = useState<FilterState>(() =>
+    (restoreIntent && _savedFilters) ? _savedFilters : defaultFilters())
   const [allProfiles, setAllProfiles] = useState<ExploreResult[]>(_cachedProfiles || [])
   const [filteredProfiles, setFilteredProfiles] = useState<ExploreResult[]>(_cachedProfiles || [])
   const [loading, setLoading] = useState(!_cachedProfiles)
@@ -587,8 +599,11 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
 
   // Raw-technology filter (server-derived domain set). Held in a ref so applyFilters
   // always reads the latest set without being recreated.
-  const techDomainsRef = useRef<Set<string> | null>(null)
-  const [techLabels, setTechLabels] = useState<string[]>([])
+  const techDomainsRef = useRef<Set<string> | null>(restoreIntent ? _savedTechDomains : null)
+  const [techLabels, setTechLabels] = useState<string[]>(restoreIntent ? _savedTechLabels : [])
+
+  // Persist filter state so the back link can restore it later.
+  useEffect(() => { _savedFilters = filters }, [filters])
 
   // ── Apply filters in-memory (instant, no BQ) ─────────────────────────────
   const applyFilters = useCallback((f: FilterState, profiles: ExploreResult[]) => {
@@ -599,10 +614,17 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
     onFilteredDomainsChange?.(result.map(r => r.domain))
   }, [onFilteredDomainsChange])
 
+  // Re-apply current filters whenever the profile set becomes available — this also
+  // re-applies a restored filter on mount (closure captures the initial filters).
+  useEffect(() => {
+    if (allProfiles.length) applyFilters(filters, allProfiles)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allProfiles])
+
   // Apply / clear the raw-technology filter
   const applyTechFilter = useCallback(async (techs: string[]) => {
     if (!techs.length) {
-      techDomainsRef.current = null; setTechLabels([])
+      techDomainsRef.current = null; setTechLabels([]); _savedTechDomains = null; _savedTechLabels = []
       applyFilters(filters, allProfiles); return
     }
     try {
@@ -612,12 +634,13 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
       })
       techDomainsRef.current = new Set((r.domains || []).map((d: string) => d.toLowerCase()))
       setTechLabels(techs)
+      _savedTechDomains = techDomainsRef.current; _savedTechLabels = techs
       applyFilters(filters, allProfiles)
     } catch (e: any) { alert(e.message) }
   }, [filters, allProfiles, applyFilters])
 
   const clearTechFilter = useCallback(() => {
-    techDomainsRef.current = null; setTechLabels([])
+    techDomainsRef.current = null; setTechLabels([]); _savedTechDomains = null; _savedTechLabels = []
     applyFilters(filters, allProfiles)
   }, [filters, allProfiles, applyFilters])
 
@@ -625,7 +648,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
   const handleReset = useCallback(() => {
     const def = defaultFilters()
     setFilters(def)
-    techDomainsRef.current = null; setTechLabels([])
+    techDomainsRef.current = null; setTechLabels([]); _savedTechDomains = null; _savedTechLabels = []
     applyFilters(def, allProfiles)
   }, [allProfiles, applyFilters])
 
