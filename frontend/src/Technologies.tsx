@@ -117,31 +117,39 @@ function MonthPicker({ value, onChange }: { value: string; onChange: (v: string)
   )
 }
 
-// Per-site multi-select: ALL / one / several sites from the Explorer-filtered set.
-// Switching re-aggregates from the server cache — no new BQ query.
-function SiteSelect({ domains, subset, onApply, lang }: {
-  domains: string[]; subset: string[]; onApply: (sub: string[]) => void; lang: Lang
+// Per-site filter: ALL / "selected together" / one site — as quick toggle chips, plus
+// a dropdown to edit the working set. Switching re-aggregates from the server cache.
+function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSite, lang }: {
+  domains: string[]; pinned: string[]; active: string | null
+  onAll: () => void; onPin: (sub: string[]) => void; onViewAll: () => void; onViewSite: (s: string) => void; lang: Lang
 }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState("")
-  const [sel, setSel] = useState<string[]>(subset)
+  const [sel, setSel] = useState<string[]>(pinned)
   const sorted = useMemo(() => [...domains].sort((a, b) => a.localeCompare(b)), [domains])
   const shown = useMemo(() => {
     const term = q.trim().toLowerCase()
     return (term ? sorted.filter(d => d.toLowerCase().includes(term)) : sorted).slice(0, 300)
   }, [sorted, q])
   const toggle = (d: string) => setSel(s => s.includes(d) ? s.filter(x => x !== d) : [...s, d])
-  const label = subset.length === 0 ? t('tech_sites_all', lang)(domains.length)
-    : subset.length === 1 ? subset[0]
-    : t('tech_sites_n', lang)(subset.length)
+
   return (
     <div className="site-select">
-      <div className="gran-btns">
-        <button className={`gran-btn${subset.length === 0 ? " active" : ""}`}
-          onClick={() => { setSel([]); onApply([]) }}>{t('expl_filter_all', lang)}</button>
-        <button className="gran-btn" onClick={() => { setSel(subset); setOpen(o => !o) }}>
-          {label} ▾
+      <div className="gran-btns" style={{ flexWrap: "wrap" }}>
+        <button className={`gran-btn${pinned.length === 0 ? " active" : ""}`} onClick={onAll}>
+          {t('tech_sites_all', lang)(domains.length)}
         </button>
+        {pinned.length > 1 && (
+          <button className={`gran-btn${active === null ? " active" : ""}`} onClick={onViewAll}>
+            {t('tech_sites_sel', lang)(pinned.length)}
+          </button>
+        )}
+        {pinned.map(d => (
+          <button key={d} className={`gran-btn${active === d ? " active" : ""}`} onClick={() => onViewSite(d)} title={d}>
+            {d.length > 22 ? d.slice(0, 21) + "…" : d}
+          </button>
+        ))}
+        <button className="gran-btn" onClick={() => { setSel(pinned); setQ(""); setOpen(o => !o) }}>▾</button>
       </div>
       {open && (
         <div className="site-select-panel">
@@ -156,7 +164,7 @@ function SiteSelect({ domains, subset, onApply, lang }: {
             ))}
           </div>
           <button className="btn-primary" style={{ width: "100%", marginTop: 6, padding: "5px 0", fontSize: 13 }}
-            onClick={() => { setOpen(false); onApply(sel) }}>
+            onClick={() => { setOpen(false); onPin(sel) }}>
             {t('tech_sites_apply', lang)(sel.length)}
           </button>
         </div>
@@ -181,10 +189,11 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
   const [tableFilter, setTableFilter] = useState("")
   const [uniqueOnly, setUniqueOnly] = useState(false)
   const [hoveredSeries, setHoveredSeries] = useState<string|null>(null)
-  const [siteSubset, setSiteSubset] = useState<string[]>([])  // [] = ALL sites from the filter
+  const [siteSubset, setSiteSubset] = useState<string[]>([])  // pinned working set ([] = ALL)
+  const [activeSite, setActiveSite] = useState<string|null>(null)  // single site in focus, or null = pinned together
 
   const load = useCallback(async(subsetArg?:string[])=>{
-    const sub = subsetArg ?? siteSubset
+    const sub = subsetArg ?? (activeSite ? [activeSite] : siteSubset)
     setLoading(true)
     try {
       const data = await apiFetch("/api/technologies/aggregate",{
@@ -196,9 +205,13 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
       setVisible(new Set(data.series?.slice(0,15).map((s:Series)=>s.name)||[]))
     } catch(e){console.error(e)}
     finally{setLoading(false)}
-  },[dateFrom,dateTo,granularity,showUnknown,siteSubset,domains])
+  },[dateFrom,dateTo,granularity,showUnknown,siteSubset,activeSite,domains])
 
-  const applySites = useCallback((sub:string[])=>{ setSiteSubset(sub); load(sub) },[load])
+  // Site chips → re-aggregate from server cache
+  const sitesAll     = useCallback(()=>{ setSiteSubset([]); setActiveSite(null); load([]) },[load])
+  const sitesPin     = useCallback((sub:string[])=>{ setSiteSubset(sub); setActiveSite(null); load(sub) },[load])
+  const sitesViewAll = useCallback(()=>{ setActiveSite(null); load(siteSubset) },[load,siteSubset])
+  const sitesViewOne = useCallback((s:string)=>{ setActiveSite(s); load([s]) },[load])
 
   const toggleVisible=(name:string)=>setVisible(prev=>{const n=new Set(prev);n.has(name)?n.delete(name):n.add(name);return n})
   const filteredSeries=useMemo(()=>result?.series.filter(s=>visible.has(s.name))||[],[result,visible])
@@ -277,7 +290,8 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
           {domains.length > 0 && (
             <div className="tech-filter-group">
               <label className="tech-filter-label">{t('tech_sites', lang)}</label>
-              <SiteSelect domains={domains} subset={siteSubset} onApply={applySites} lang={lang} />
+              <SiteFilter domains={domains} pinned={siteSubset} active={activeSite}
+                onAll={sitesAll} onPin={sitesPin} onViewAll={sitesViewAll} onViewSite={sitesViewOne} lang={lang} />
             </div>
           )}
           <button className="btn-search" onClick={()=>load()} disabled={loading}>{loading?"⏳":"🔍"} {t('tech_apply', lang)}</button>
