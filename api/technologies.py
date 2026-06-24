@@ -41,16 +41,19 @@ def aggregate_technologies(body: dict):
     try:
         from services.technology_catalog import get_catalog
         catalog = get_catalog()
+        # catalog entries are dicts {technology, group, class} (or legacy strings).
+        # Map every known tech name → its display name so catalog techs are recognised
+        # (and not dumped into "unknown"). Group is used as the canonical label when set
+        # so variants collapse onto one line (e.g. "Klaviyo for Shopify" → "Klaviyo").
         known: dict[str, str] = {}
-        for t in catalog.get("cms", []):
-            name = t if isinstance(t, str) else t.get("name", "")
-            if name: known[name.lower()] = name
-        for t in catalog.get("ems", []):
-            name = t if isinstance(t, str) else t.get("name", "")
-            if name: known[name.lower()] = name
-        for t in catalog.get("osearch", []):
-            name = t if isinstance(t, str) else t.get("name", "")
-            if name: known[name.lower()] = name
+        for sheet in ("cms", "ems", "osearch"):
+            for t in catalog.get(sheet, []):
+                if isinstance(t, str):
+                    tech, grp = t, ""
+                else:
+                    tech, grp = t.get("technology", ""), t.get("group", "")
+                if tech:
+                    known[tech.lower()] = grp or tech
 
         _bq_touch("priv_r")
         bq_client = client()
@@ -95,6 +98,7 @@ def aggregate_technologies(body: dict):
         tech_timeline: dict[str, dict[str, set]] = {}
         tech_domains: dict[str, list] = {}
         unknown_techs: dict[str, int] = {}
+        known_canon: set[str] = set()   # canonicals that come from the catalog
 
         for idx, row in enumerate(rows):
             if idx % 2000 == 0:
@@ -125,6 +129,8 @@ def aggregate_technologies(body: dict):
                         if not show_unknown:
                             continue
                         canonical = name_clean
+                    else:
+                        known_canon.add(canonical)
 
                     if canonical not in tech_timeline:
                         tech_timeline[canonical] = {}
@@ -170,11 +176,14 @@ def aggregate_technologies(body: dict):
                 logger.warning(f"Parse error {domain}: {e}")
 
         all_periods = sorted(set(p for periods in tech_timeline.values() for p in periods))
+        # Catalog (known) techs first, then by reach — so the top-50 cap never drops a
+        # catalog technology in favour of a more frequent "unknown" one.
         series = sorted([{
             "name": name,
             "data": [len(periods.get(p, set())) for p in all_periods],
             "total": len(set(d for v in periods.values() for d in v)),
-        } for name, periods in tech_timeline.items()], key=lambda x: -x["total"])
+            "known": name in known_canon,
+        } for name, periods in tech_timeline.items()], key=lambda x: (not x["known"], -x["total"]))
 
         table_rows = []
         for rows_list in tech_domains.values():
