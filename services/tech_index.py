@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 TECH_DICTIONARY_TABLE = "tech_dictionary"
 DOMAIN_TECHS_TABLE = "domain_techs"
+TECH_DESCRIPTIONS_TABLE = "tech_descriptions"  # name → description + link (per-tech, from corp)
 
 
 def _bw() -> str:
@@ -131,6 +132,64 @@ def update_tech_index_for_domains(domains: list[str]) -> dict:
     elapsed = round(time.time() - t0, 1)
     logger.info(f"update_tech_index: {len(domains)} domains refreshed in {elapsed}s")
     return {"status": "ok", "domains": len(domains), "elapsed": elapsed}
+
+
+def refresh_tech_descriptions() -> dict:
+    """Rebuild the per-technology description+link dictionary from corp BuiltWith raw.
+    Description/Link are stable per technology (1 distinct value each), so we store one
+    row per name instead of bloating technologies_json. Scans corp once (~2 GB)."""
+    import time as _t
+    from core.bigquery import corp_client, CORP_PROJECT_ID, CORP_DATASET
+    t0 = _t.time()
+    cbq = corp_client()
+    q = f"""
+        SELECT name, ANY_VALUE(description) AS description, ANY_VALUE(link) AS link
+        FROM (
+            SELECT JSON_VALUE(tech, '$.Name')        AS name,
+                   JSON_VALUE(tech, '$.Description') AS description,
+                   JSON_VALUE(tech, '$.Link')        AS link
+            FROM `{CORP_PROJECT_ID}.{CORP_DATASET}.builtwith_raw_data`,
+                 UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
+                 UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
+            WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
+        )
+        WHERE name IS NOT NULL
+        GROUP BY name
+    """
+    job = cbq.query(q)
+    rows = [{"name": r["name"], "description": r["description"] or "", "link": r["link"] or ""}
+            for r in job.result()]
+
+    import io as _io, json as _json
+    from google.cloud import bigquery
+    bq = client()
+    schema = [bigquery.SchemaField("name", "STRING"),
+              bigquery.SchemaField("description", "STRING"),
+              bigquery.SchemaField("link", "STRING")]
+    cfg = bigquery.LoadJobConfig(schema=schema,
+                                 write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON)
+    data = "\n".join(_json.dumps(r) for r in rows).encode()
+    bq.load_table_from_file(_io.BytesIO(data), table_ref(TECH_DESCRIPTIONS_TABLE), job_config=cfg).result()
+    elapsed = round(_t.time() - t0, 1)
+    logger.info(f"refresh_tech_descriptions: {len(rows)} techs, {(job.total_bytes_billed or 0)/1e6:.0f} MB corp, {elapsed}s")
+    return {"status": "ok", "techs": len(rows),
+            "mb_billed_corp": round((job.total_bytes_billed or 0) / 1e6), "elapsed": elapsed}
+
+
+def get_tech_descriptions() -> dict:
+    """name(lower) → {description, link}. Empty dict if the table doesn't exist yet."""
+    bq = client()
+    try:
+        rows = bq.query(f"SELECT name, description, link FROM {_q(TECH_DESCRIPTIONS_TABLE)}").result()
+    except Exception:
+        return {}
+    return {r["name"].lower(): {"description": r["description"] or "", "link": r["link"] or ""}
+            for r in rows if r["name"]}
+
+
+def _q(table: str) -> str:
+    return f"`{table_ref(table)}`"
 
 
 def search_tech(q: str, limit: int = 50) -> list[dict]:

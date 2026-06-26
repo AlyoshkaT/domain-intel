@@ -337,6 +337,16 @@ async def tech_rebuild():
     return result
 
 
+@router.post("/tech_descriptions/refresh", dependencies=[require_permission("admin")])
+async def tech_descriptions_refresh():
+    """Rebuild the per-technology description+link dictionary from corp (admin / manual)."""
+    import asyncio
+    from services.tech_index import refresh_tech_descriptions
+    with _bq_op("corp_r"):
+        result = await asyncio.to_thread(refresh_tech_descriptions)
+    return result
+
+
 # ─── Sheets/XLSX export ───────────────────────────────────────────────────────
 _explore_sheet_url: str | None = None
 _explore_sheet_error: str | None = None

@@ -163,6 +163,7 @@ function CatalogSection({ lang }: { lang: Lang }) {
   const [syncing, setSyncing] = useState(false)
   const [rematching, setRematching] = useState(false)
   const [rebuildingTech, setRebuildingTech] = useState(false)
+  const [refreshingDesc, setRefreshingDesc] = useState(false)
   const [addVal, setAddVal] = useState("")
   const [addGroup, setAddGroup] = useState("")
   const [msg, setMsg] = useState("")
@@ -206,6 +207,16 @@ function CatalogSection({ lang }: { lang: Lang }) {
     finally { setRebuildingTech(false) }
   }
 
+  const refreshDesc = async () => {
+    if (!window.confirm(t('setup_tech_desc_confirm', lang))) return
+    setRefreshingDesc(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/explore/tech_descriptions/refresh", { method: "POST" })
+      setMsg(t('setup_tech_desc_done', lang)(r.techs, r.mb_billed_corp, r.elapsed))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setRefreshingDesc(false) }
+  }
+
   const add = async () => {
     if (!addVal.trim()) return
     setMsg("")
@@ -246,6 +257,9 @@ function CatalogSection({ lang }: { lang: Lang }) {
         </button>
         <button className="btn-export" onClick={rebuildTech} disabled={rebuildingTech} style={{marginLeft: 8}}>
           {rebuildingTech ? t('setup_tech_rebuilding', lang) : t('setup_tech_rebuild_btn', lang)}
+        </button>
+        <button className="btn-export" onClick={refreshDesc} disabled={refreshingDesc} style={{marginLeft: 8}}>
+          {refreshingDesc ? t('setup_tech_desc_refreshing', lang) : t('setup_tech_desc_btn', lang)}
         </button>
       </div>
       <div className="setup-tabs">

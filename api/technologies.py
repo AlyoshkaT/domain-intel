@@ -101,6 +101,13 @@ def aggregate_technologies(body: dict):
                 if tech:
                     known[tech.lower()] = grp or tech
 
+        # Per-technology description + link (BuiltWith) — empty dict if not built yet.
+        try:
+            from services.tech_index import get_tech_descriptions
+            descriptions = get_tech_descriptions()
+        except Exception:
+            descriptions = {}
+
         # Fetch raw rows for the FULL domain set (cached), then optionally aggregate
         # only a `subset` of them — so switching sites costs zero extra BQ.
         all_rows = _fetch_full_rows(filter_domains)
@@ -194,10 +201,11 @@ def aggregate_technologies(body: dict):
                     if canonical not in tech_domains:
                         tech_domains[canonical] = []
                     if len(tech_domains[canonical]) < 100:
+                        meta = descriptions.get(name_clean.lower()) or descriptions.get(canonical.lower()) or {}
                         tech_domains[canonical].append({
                             "domain": domain, "name": canonical,
-                            "description": "",
-                            "link": "",
+                            "description": meta.get("description", ""),
+                            "link": meta.get("link", ""),
                             "tag": tech.get("t", ""),
                             "first_detected": _ts_to_ym(first_ms) if first_ms else "",
                             "last_detected": _ts_to_ym(last_ms) if last_ms else "",
