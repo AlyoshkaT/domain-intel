@@ -494,3 +494,6 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   box-shadow: 0 6px 24px rgba(0,0,0,0.18);
 }
 .site-select-list { max-height: 260px; overflow-y: auto; }
+
+/* Co-occurrence tech picker */
+.tech-cooc-pick { display: flex; flex-wrap: wrap; gap: 6px; }

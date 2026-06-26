@@ -173,6 +173,54 @@ function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSi
   )
 }
 
+// Layer 2: co-occurrence / temporal-overlap of 2+ technologies across the domain set.
+function CoOccur({ domains, subset, techs, lang }: {
+  domains: string[]; subset: string[]; techs: string[]; lang: Lang
+}) {
+  const [sel, setSel] = useState<string[]>([])
+  const [res, setRes] = useState<any>(null)
+  const [busy, setBusy] = useState(false)
+  const toggle = (tn: string) => { setRes(null); setSel(s => s.includes(tn) ? s.filter(x => x !== tn) : [...s, tn]) }
+  const analyze = async () => {
+    if (sel.length < 2) return
+    setBusy(true)
+    try {
+      const r = await apiFetch("/api/technologies/cooccurrence", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains: domains.slice(0, 10000), subset: subset.slice(0, 10000), techs: sel }),
+      })
+      setRes(r)
+    } catch (e: any) { alert(e.message) } finally { setBusy(false) }
+  }
+  const pct = res && res.with_all ? Math.round(res.overlap / res.with_all * 100) : 0
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div className="card-section-title">{t('tech_cooc_title', lang)}</div>
+      <div className="tech-cooc-pick">
+        {techs.map(tn => (
+          <button key={tn} className={`gran-btn${sel.includes(tn) ? " active" : ""}`} onClick={() => toggle(tn)}>{tn}</button>
+        ))}
+      </div>
+      <button className="btn-primary" style={{ marginTop: 8, padding: "6px 16px", fontSize: 13 }}
+        disabled={sel.length < 2 || busy} onClick={analyze}>
+        {busy ? "⏳" : t('tech_cooc_btn', lang)}{sel.length >= 2 ? ` (${sel.length})` : ""}
+      </button>
+      {res && res.error && <div style={{ color: "var(--danger)", marginTop: 8, fontSize: 12 }}>{res.error}</div>}
+      {res && !res.error && (
+        <table className="results-table" style={{ marginTop: 10, maxWidth: 460 }}><tbody>
+          {res.per_tech.map((p: any) => (
+            <tr key={p.tech}><td>{p.tech}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{p.domains.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_has', lang)}</td></tr>
+          ))}
+          <tr><td><b>{t('tech_cooc_all', lang)}</b></td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}><b>{res.with_all.toLocaleString()}</b></td><td /></tr>
+          <tr><td>{t('tech_cooc_overlap', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.overlap.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>{pct}%</td></tr>
+          <tr><td>{t('tech_cooc_avg', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.avg_overlap_months}</td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_months', lang)}</td></tr>
+          <tr><td>{t('tech_cooc_short', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.short_overlap.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>&lt;2 {t('tech_cooc_months', lang)}</td></tr>
+        </tbody></table>
+      )}
+    </div>
+  )
+}
+
 export default function TechnologiesPage({ domains = [], onBack, can, lang }: { domains?: string[]; onBack?: () => void; can?: (p: string) => boolean; lang: Lang }) {
   const now = new Date()
   const defaultTo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"00")}`
@@ -325,6 +373,8 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
               {t('tech_hint', lang)}
             </div>
           </div>
+          <CoOccur domains={domains} subset={activeSite ? [activeSite] : siteSubset}
+            techs={result.series.map(s=>s.name)} lang={lang} />
           <div className="filter-row" style={{marginBottom:8}}>
             <input className="filter-input" placeholder={t('tech_filter_ph', lang)} value={tableFilter} onChange={e=>setTableFilter(e.target.value)}/>
             <span className="filter-count">{t('tech_records', lang)(filteredTable.length.toLocaleString())}</span>

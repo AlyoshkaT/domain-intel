@@ -30,6 +30,37 @@ def _rows_key(domains: list[str]) -> str:
     return hashlib.md5("|".join(sorted(_norm_domain(d) for d in domains)).encode()).hexdigest()
 
 
+def _fetch_full_rows(filter_domains: list[str]) -> list:
+    """Latest (domain, technologies_json) for the full set — cached by set hash."""
+    cache_key = _rows_key(filter_domains) if filter_domains else None
+    if cache_key:
+        cached = _tech_rows_cache.get(cache_key)
+        if cached and time.time() - cached[0] < _TECH_ROWS_TTL:
+            return cached[1]
+    _bq_touch("priv_r")
+    bq_client = client()
+    if filter_domains:
+        domain_list = ", ".join(f"'{d}'" for d in filter_domains[:10000])
+        domain_where = f"WHERE LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({domain_list})"
+    else:
+        domain_where = ""
+    with _bq_op("priv_r"):
+        qrows = list(bq_client.query(f"""
+            SELECT domain, technologies_json FROM (
+                SELECT domain, technologies_json,
+                       ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                FROM `{table_ref(BW_PARSED_TABLE)}`
+                {domain_where}
+            ) WHERE rn = 1
+            LIMIT 50000
+        """, job_config=_bq_qcfg()).result())
+    track_bq_call("priv_bw")
+    all_rows = [(r["domain"], r["technologies_json"]) for r in qrows]
+    if cache_key:
+        _tech_rows_cache[cache_key] = (time.time(), all_rows)
+    return all_rows
+
+
 def _strip_version(name: str) -> str:
     name = re.sub(r'\s+v?\d+[\d\.x]*$', '', name, flags=re.IGNORECASE)
     name = re.sub(r'\s+\d+[\d\.x]*$', '', name)
@@ -72,36 +103,7 @@ def aggregate_technologies(body: dict):
 
         # Fetch raw rows for the FULL domain set (cached), then optionally aggregate
         # only a `subset` of them — so switching sites costs zero extra BQ.
-        all_rows = None
-        cache_key = _rows_key(filter_domains) if filter_domains else None
-        if cache_key:
-            cached = _tech_rows_cache.get(cache_key)
-            if cached and time.time() - cached[0] < _TECH_ROWS_TTL:
-                all_rows = cached[1]
-
-        if all_rows is None:
-            _bq_touch("priv_r")
-            bq_client = client()
-            if filter_domains:
-                domain_list = ", ".join(f"'{d}'" for d in filter_domains[:10000])
-                domain_where = f"WHERE LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({domain_list})"
-            else:
-                domain_where = ""
-            with _bq_op("priv_r"):
-                qrows = list(bq_client.query(f"""
-                    SELECT domain, technologies_json
-                    FROM (
-                        SELECT domain, technologies_json,
-                               ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
-                        FROM `{table_ref(BW_PARSED_TABLE)}`
-                        {domain_where}
-                    ) WHERE rn = 1
-                    LIMIT 50000
-                """, job_config=_bq_qcfg()).result())
-            track_bq_call("priv_bw")
-            all_rows = [(r["domain"], r["technologies_json"]) for r in qrows]
-            if cache_key:
-                _tech_rows_cache[cache_key] = (time.time(), all_rows)
+        all_rows = _fetch_full_rows(filter_domains)
 
         # Select rows to aggregate: a chosen subset, or the whole set
         if subset:
@@ -229,6 +231,98 @@ def aggregate_technologies(body: dict):
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)
         return {"error": str(e), "periods": [], "series": [], "table": []}
+
+
+_MONTH_MS = 30.44 * 86400 * 1000
+
+
+@router.post("/cooccurrence")
+def cooccurrence(body: dict):
+    """Co-occurrence / temporal-overlap stats for 2+ selected technologies across the
+    (subset of the) domain set. Reuses the cached rows — no new BQ query."""
+    filter_domains = body.get("domains", [])
+    subset = body.get("subset", [])
+    sel = [s for s in body.get("techs", []) if s]
+    if len(sel) < 2:
+        return {"error": "select at least 2 technologies"}
+    try:
+        from services.technology_catalog import get_catalog
+        catalog = get_catalog()
+        known: dict[str, str] = {}
+        for sheet in ("cms", "ems", "osearch"):
+            for t in catalog.get(sheet, []):
+                if isinstance(t, str):
+                    tech, grp = t, ""
+                else:
+                    tech, grp = t.get("technology", ""), t.get("group", "")
+                if tech:
+                    known[tech.lower()] = grp or tech
+
+        rows = _fetch_full_rows(filter_domains)
+        if subset:
+            sub = {_norm_domain(d) for d in subset}
+            rows = [x for x in rows if _norm_domain(x[0]) in sub]
+
+        sel_set = set(sel)
+        per_tech = {s: 0 for s in sel}
+        with_all = overlap = short = 0
+        total_months = 0.0
+
+        for _domain, tj in rows:
+            if not tj:
+                continue
+            try:
+                techs = json.loads(tj) if isinstance(tj, str) else tj
+                if not isinstance(techs, list):
+                    continue
+            except Exception:
+                continue
+            spans: dict[str, list] = {}   # canonical → [min_first, max_last]
+            for tech in techs:
+                raw = tech.get("n", "")
+                if not raw:
+                    continue
+                nm = _strip_version(raw)
+                canon = known.get(nm.lower()) or nm
+                if canon not in sel_set:
+                    continue
+                f = tech.get("f") or 0
+                l = tech.get("l") or 0
+                if canon not in spans:
+                    spans[canon] = [f, l]
+                else:
+                    if f and (spans[canon][0] == 0 or f < spans[canon][0]):
+                        spans[canon][0] = f
+                    if l and l > spans[canon][1]:
+                        spans[canon][1] = l
+            present = set(spans.keys())
+            for s in present:
+                per_tech[s] += 1
+            if sel_set <= present:
+                with_all += 1
+                lows = [spans[s][0] for s in sel]
+                highs = [spans[s][1] for s in sel]
+                if all(lows) and all(highs):
+                    lo, hi = max(lows), min(highs)
+                    if hi >= lo:
+                        overlap += 1
+                        months = (hi - lo) / _MONTH_MS
+                        total_months += months
+                        if months < 2:
+                            short += 1
+
+        return {
+            "techs": sel,
+            "per_tech": [{"tech": s, "domains": per_tech[s]} for s in sel],
+            "with_all": with_all,
+            "overlap": overlap,
+            "short_overlap": short,
+            "avg_overlap_months": round(total_months / overlap, 1) if overlap else 0,
+            "total_domains": len(rows),
+        }
+    except Exception as e:
+        logger.error(f"cooccurrence error: {e}", exc_info=True)
+        return {"error": str(e)}
 
 
 @router.post("/catalog/add")
