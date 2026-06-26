@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useEffect } from "react"
 import { t, type Lang } from "./i18n"
 
 const API = ""
@@ -126,6 +126,8 @@ function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSi
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState("")
   const [sel, setSel] = useState<string[]>(pinned)
+  const [win, setWin] = useState(0)   // carousel window offset
+  const WIN = 4
   const sorted = useMemo(() => [...domains].sort((a, b) => a.localeCompare(b)), [domains])
   const shown = useMemo(() => {
     const term = q.trim().toLowerCase()
@@ -133,22 +135,35 @@ function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSi
   }, [sorted, q])
   const toggle = (d: string) => setSel(s => s.includes(d) ? s.filter(x => x !== d) : [...s, d])
 
+  // keep window in range when the set changes / a site is focused
+  useEffect(() => {
+    const i = active ? pinned.indexOf(active) : -1
+    if (i >= 0 && (i < win || i >= win + WIN)) setWin(Math.max(0, Math.min(i, pinned.length - WIN)))
+    else if (win > Math.max(0, pinned.length - WIN)) setWin(0)
+  }, [active, pinned]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const trunc = (d: string) => d.length > 20 ? d.slice(0, 19) + "…" : d
+  const hasArrows = pinned.length > WIN
+  const winSites = pinned.slice(win, win + WIN)
+
   return (
     <div className="site-select">
-      <div className="gran-btns" style={{ flexWrap: "wrap" }}>
+      <div className="gran-btns" style={{ flexWrap: "wrap", alignItems: "center" }}>
         <button className={`gran-btn${pinned.length === 0 ? " active" : ""}`} onClick={onAll}>
           {t('tech_sites_all', lang)(domains.length)}
         </button>
-        {pinned.length > 1 && (
-          <button className={`gran-btn${active === null ? " active" : ""}`} onClick={onViewAll}>
-            {t('tech_sites_sel', lang)(pinned.length)}
-          </button>
+        {pinned.length > 0 && (
+          <>
+            <button className={`gran-btn${active === null ? " active" : ""}`} onClick={onViewAll}>
+              ⊞ {t('tech_sites_sel', lang)(pinned.length)}
+            </button>
+            {hasArrows && <button className="gran-btn" disabled={win <= 0} onClick={() => setWin(w => Math.max(0, w - WIN))} title={t('tech_sites_prev', lang)}>◀</button>}
+            {winSites.map(d => (
+              <button key={d} className={`gran-btn${active === d ? " active" : ""}`} onClick={() => onViewSite(d)} title={d}>{trunc(d)}</button>
+            ))}
+            {hasArrows && <button className="gran-btn" disabled={win + WIN >= pinned.length} onClick={() => setWin(w => Math.min(pinned.length - WIN, w + WIN))} title={t('tech_sites_next', lang)}>▶</button>}
+          </>
         )}
-        {pinned.length <= 6 && pinned.map(d => (
-          <button key={d} className={`gran-btn${active === d ? " active" : ""}`} onClick={() => onViewSite(d)} title={d}>
-            {d.length > 22 ? d.slice(0, 21) + "…" : d}
-          </button>
-        ))}
         <button className="gran-btn" onClick={() => { setSel(pinned); setQ(""); setOpen(o => !o) }}>▾</button>
       </div>
       {open && (
@@ -267,7 +282,6 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
   const sitesAll     = useCallback(()=>{ setSiteSubset([]); setActiveSite(null); load([]) },[load])
   const sitesPin     = useCallback((sub:string[])=>{ setSiteSubset(sub); setActiveSite(null); load(sub) },[load])
   const sitesViewAll = useCallback(()=>{ setActiveSite(null); load(siteSubset) },[load,siteSubset])
-  const sitesViewOne = useCallback((s:string)=>{ setActiveSite(s); load([s]) },[load])
   // Focus a single site from the table: pin it (so it gets a chip) and view only it.
   const focusSite = useCallback((d:string)=>{
     setSiteSubset(prev => prev.includes(d) ? prev : [...prev, d])
@@ -278,6 +292,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
     if(!ds.length) return
     setSiteSubset(ds); setActiveSite(null); load(ds)
   },[load])
+  const sitesViewOne = useCallback((s:string)=>{ setActiveSite(s); load([s]) },[load])
 
   const toggleVisible=(name:string)=>setVisible(prev=>{const n=new Set(prev);n.has(name)?n.delete(name):n.add(name);return n})
   const filteredSeries=useMemo(()=>result?.series.filter(s=>visible.has(s.name))||[],[result,visible])
