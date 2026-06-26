@@ -318,7 +318,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
   },[result,tableFilter,uniqueOnly])
 
   const exportCSV = useCallback(()=>{
-    const cols = ["domain","name","tag","first_detected","last_detected","categories","description","link"]
+    const cols = ["domain","name","first_detected","last_detected","categories","description","link"]
     const rows = filteredTable.map(r => cols.map(h => `"${String((r as any)[h]||"").replace(/"/g,'""')}"`).join(","))
     const csv = [cols.join(","), ...rows].join("\n")
     const a = document.createElement("a")
@@ -329,7 +329,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
 
   const exportXLSX = useCallback(async()=>{
     try {
-      const cols = ["domain","name","tag","first_detected","last_detected","categories","description","link"]
+      const cols = ["domain","name","first_detected","last_detected","categories","description","link"]
       const res = await fetch("/api/technologies/export/xlsx",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({rows:filteredTable,columns:cols})
@@ -429,7 +429,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
           <div className="table-wrap table-fixed-height">
             <table className="results-table">
               <thead><tr>
-                <th>Domain</th><th>Technology</th><th>Tag</th>
+                <th>Domain</th><th>Technology</th>
                 <th>First Detected</th><th>Last Detected</th><th>Categories</th><th>Description</th><th>Link</th>
               </tr></thead>
               <tbody>
@@ -443,7 +443,6 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
                       <a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a>
                     </td>
                     <td style={{fontWeight:500}}>{r.name}</td>
-                    <td><span className="service-tag">{r.tag}</span></td>
                     <td style={{fontFamily:"var(--mono)",fontSize:11}}>{r.first_detected}</td>
                     <td style={{fontFamily:"var(--mono)",fontSize:11}}>{r.last_detected}</td>
                     <td className="td-desc" title={r.categories}>{r.categories||"—"}</td>
