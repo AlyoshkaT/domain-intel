@@ -204,6 +204,7 @@ def aggregate_technologies(body: dict):
                         meta = descriptions.get(name_clean.lower()) or descriptions.get(canonical.lower()) or {}
                         tech_domains[canonical].append({
                             "domain": domain, "name": canonical,
+                            "categories": meta.get("categories", ""),
                             "description": meta.get("description", ""),
                             "link": meta.get("link", ""),
                             "tag": tech.get("t", ""),

@@ -143,21 +143,27 @@ def refresh_tech_descriptions() -> dict:
     t0 = _t.time()
     cbq = corp_client()
     q = f"""
-        SELECT name, ANY_VALUE(description) AS description, ANY_VALUE(link) AS link
+        SELECT name,
+               ANY_VALUE(description) AS description,
+               ANY_VALUE(link) AS link,
+               ARRAY_TO_STRING(ARRAY_AGG(DISTINCT cat IGNORE NULLS ORDER BY cat), ', ') AS categories
         FROM (
             SELECT JSON_VALUE(tech, '$.Name')        AS name,
                    JSON_VALUE(tech, '$.Description') AS description,
-                   JSON_VALUE(tech, '$.Link')        AS link
+                   JSON_VALUE(tech, '$.Link')        AS link,
+                   cat
             FROM `{CORP_PROJECT_ID}.{CORP_DATASET}.builtwith_raw_data`,
                  UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
                  UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
+                 LEFT JOIN UNNEST(JSON_VALUE_ARRAY(tech, '$.Categories')) AS cat
             WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
         )
         WHERE name IS NOT NULL
         GROUP BY name
     """
     job = cbq.query(q)
-    rows = [{"name": r["name"], "description": r["description"] or "", "link": r["link"] or ""}
+    rows = [{"name": r["name"], "description": r["description"] or "", "link": r["link"] or "",
+             "categories": r["categories"] or ""}
             for r in job.result()]
 
     import io as _io, json as _json
@@ -165,7 +171,8 @@ def refresh_tech_descriptions() -> dict:
     bq = client()
     schema = [bigquery.SchemaField("name", "STRING"),
               bigquery.SchemaField("description", "STRING"),
-              bigquery.SchemaField("link", "STRING")]
+              bigquery.SchemaField("link", "STRING"),
+              bigquery.SchemaField("categories", "STRING")]
     cfg = bigquery.LoadJobConfig(schema=schema,
                                  write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
                                  source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON)
@@ -181,10 +188,12 @@ def get_tech_descriptions() -> dict:
     """name(lower) → {description, link}. Empty dict if the table doesn't exist yet."""
     bq = client()
     try:
-        rows = bq.query(f"SELECT name, description, link FROM {_q(TECH_DESCRIPTIONS_TABLE)}").result()
+        rows = bq.query(f"SELECT name, description, link, "
+                        f"IFNULL(categories, '') AS categories FROM {_q(TECH_DESCRIPTIONS_TABLE)}").result()
     except Exception:
         return {}
-    return {r["name"].lower(): {"description": r["description"] or "", "link": r["link"] or ""}
+    return {r["name"].lower(): {"description": r["description"] or "", "link": r["link"] or "",
+                                "categories": r["categories"] or ""}
             for r in rows if r["name"]}
 
 

@@ -9,7 +9,7 @@ async function apiFetch(path: string, opts?: RequestInit) {
 }
 
 interface Series { name: string; data: number[]; total: number }
-interface TableRow { domain: string; name: string; description: string; link: string; tag: string; first_detected: string; last_detected: string }
+interface TableRow { domain: string; name: string; categories: string; description: string; link: string; tag: string; first_detected: string; last_detected: string }
 interface AggResult { periods: string[]; series: Series[]; table: TableRow[]; unknown_count: number; unknown_top: [string,number][]; total_domains: number; error?: string }
 
 const COLORS = ["#6366f1","#22c55e","#f59e0b","#ef4444","#3b82f6","#a855f7","#14b8a6","#f97316","#ec4899","#64748b","#84cc16","#06b6d4","#8b5cf6","#d97706","#059669"]
@@ -318,7 +318,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
   },[result,tableFilter,uniqueOnly])
 
   const exportCSV = useCallback(()=>{
-    const cols = ["domain","name","tag","first_detected","last_detected","description","link"]
+    const cols = ["domain","name","tag","first_detected","last_detected","categories","description","link"]
     const rows = filteredTable.map(r => cols.map(h => `"${String((r as any)[h]||"").replace(/"/g,'""')}"`).join(","))
     const csv = [cols.join(","), ...rows].join("\n")
     const a = document.createElement("a")
@@ -329,7 +329,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
 
   const exportXLSX = useCallback(async()=>{
     try {
-      const cols = ["domain","name","tag","first_detected","last_detected","description","link"]
+      const cols = ["domain","name","tag","first_detected","last_detected","categories","description","link"]
       const res = await fetch("/api/technologies/export/xlsx",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({rows:filteredTable,columns:cols})
@@ -430,7 +430,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
             <table className="results-table">
               <thead><tr>
                 <th>Domain</th><th>Technology</th><th>Tag</th>
-                <th>First Detected</th><th>Last Detected</th><th>Description</th><th>Link</th>
+                <th>First Detected</th><th>Last Detected</th><th>Categories</th><th>Description</th><th>Link</th>
               </tr></thead>
               <tbody>
                 {filteredTable.map((r,i)=>(
@@ -446,6 +446,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
                     <td><span className="service-tag">{r.tag}</span></td>
                     <td style={{fontFamily:"var(--mono)",fontSize:11}}>{r.first_detected}</td>
                     <td style={{fontFamily:"var(--mono)",fontSize:11}}>{r.last_detected}</td>
+                    <td className="td-desc" title={r.categories}>{r.categories||"—"}</td>
                     <td className="td-desc" title={r.description}>{r.description||"—"}</td>
                     <td>{r.link?<a href={r.link} target="_blank" rel="noopener" style={{fontSize:11}}>&#8599;</a>:"—"}</td>
                   </tr>
