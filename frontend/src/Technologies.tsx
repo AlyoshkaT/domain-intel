@@ -129,10 +129,12 @@ function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSi
   const [win, setWin] = useState(0)   // carousel window offset
   const WIN = 4
   const sorted = useMemo(() => [...domains].sort((a, b) => a.localeCompare(b)), [domains])
-  const shown = useMemo(() => {
+  const matched = useMemo(() => {
     const term = q.trim().toLowerCase()
-    return (term ? sorted.filter(d => d.toLowerCase().includes(term)) : sorted).slice(0, 300)
+    return term ? sorted.filter(d => d.toLowerCase().includes(term)) : sorted
   }, [sorted, q])
+  const LIST_CAP = 2000
+  const shown = matched.slice(0, LIST_CAP)
   const toggle = (d: string) => setSel(s => s.includes(d) ? s.filter(x => x !== d) : [...s, d])
 
   // keep window in range when the set changes / a site is focused
@@ -178,6 +180,11 @@ function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSi
               </label>
             ))}
           </div>
+          {matched.length > LIST_CAP && (
+            <div style={{ fontSize: 10, color: "var(--text-3)", padding: "4px 2px 0" }}>
+              {t('tech_sites_more', lang)(shown.length, matched.length)}
+            </div>
+          )}
           <button className="btn-primary" style={{ width: "100%", marginTop: 6, padding: "5px 0", fontSize: 13 }}
             onClick={() => { setOpen(false); onPin(sel) }}>
             {t('tech_sites_apply', lang)(sel.length)}
