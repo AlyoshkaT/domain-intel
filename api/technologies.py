@@ -245,6 +245,15 @@ def cooccurrence(body: dict):
     sel = [s for s in body.get("techs", []) if s]
     if len(sel) < 2:
         return {"error": "select at least 2 technologies"}
+    # Honour the same date range as the chart/table so numbers are consistent.
+    from_ts, to_ts = 0, 9999999999999
+    df, dt = body.get("date_from", ""), body.get("date_to", "")
+    if df:
+        try: from_ts = int(datetime.strptime(df + "-01", "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+        except: pass
+    if dt:
+        try: to_ts = int(datetime.strptime(dt + "-01", "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+        except: pass
     try:
         from services.technology_catalog import get_catalog
         catalog = get_catalog()
@@ -290,6 +299,9 @@ def cooccurrence(body: dict):
                     continue
                 f = tech.get("f") or 0
                 l = tech.get("l") or 0
+                # skip detections fully outside the selected date range
+                if l and l < from_ts: continue
+                if f and f > to_ts: continue
                 if canon not in spans:
                     spans[canon] = [f, l]
                 else:

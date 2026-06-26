@@ -174,8 +174,8 @@ function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSi
 }
 
 // Layer 2: co-occurrence / temporal-overlap of 2+ technologies across the domain set.
-function CoOccur({ domains, subset, techs, lang }: {
-  domains: string[]; subset: string[]; techs: string[]; lang: Lang
+function CoOccur({ domains, subset, techs, dateFrom, dateTo, lang }: {
+  domains: string[]; subset: string[]; techs: string[]; dateFrom: string; dateTo: string; lang: Lang
 }) {
   const [sel, setSel] = useState<string[]>([])
   const [res, setRes] = useState<any>(null)
@@ -187,7 +187,7 @@ function CoOccur({ domains, subset, techs, lang }: {
     try {
       const r = await apiFetch("/api/technologies/cooccurrence", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domains: domains.slice(0, 10000), subset: subset.slice(0, 10000), techs: sel }),
+        body: JSON.stringify({ domains: domains.slice(0, 10000), subset: subset.slice(0, 10000), techs: sel, date_from: dateFrom, date_to: dateTo }),
       })
       setRes(r)
     } catch (e: any) { alert(e.message) } finally { setBusy(false) }
@@ -380,7 +380,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
             </div>
           </div>
           <CoOccur domains={domains} subset={activeSite ? [activeSite] : siteSubset}
-            techs={result.series.map(s=>s.name)} lang={lang} />
+            techs={result.series.map(s=>s.name)} dateFrom={dateFrom} dateTo={dateTo} lang={lang} />
           <div className="filter-row" style={{marginBottom:8}}>
             <input className="filter-input" placeholder={t('tech_filter_ph', lang)} value={tableFilter} onChange={e=>setTableFilter(e.target.value)}/>
             <span className="filter-count">{t('tech_records', lang)(filteredTable.length.toLocaleString())}</span>
