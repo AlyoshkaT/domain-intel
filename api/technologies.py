@@ -265,8 +265,10 @@ def cooccurrence(body: dict):
 
         sel_set = set(sel)
         per_tech = {s: 0 for s in sel}
-        with_all = overlap = short = 0
+        with_all = overlap = short = both_current = 0
         total_months = 0.0
+        # "currently live" = last detected within ~6 months of now
+        current_threshold = int(time.time() * 1000) - int(183 * 86400 * 1000)
 
         for _domain, tj in rows:
             if not tj:
@@ -310,11 +312,15 @@ def cooccurrence(body: dict):
                         total_months += months
                         if months < 2:
                             short += 1
+                # both still live now (distinguishes real co-use from migration A→B)
+                if all(spans[s][1] >= current_threshold for s in sel):
+                    both_current += 1
 
         return {
             "techs": sel,
             "per_tech": [{"tech": s, "domains": per_tech[s]} for s in sel],
             "with_all": with_all,
+            "both_current": both_current,
             "overlap": overlap,
             "short_overlap": short,
             "avg_overlap_months": round(total_months / overlap, 1) if overlap else 0,

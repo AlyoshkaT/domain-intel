@@ -197,7 +197,7 @@ function CoOccur({ domains, subset, techs, lang }: {
     <div className="card" style={{ marginBottom: 12 }}>
       <div className="card-section-title">{t('tech_cooc_title', lang)}</div>
       <div className="tech-cooc-pick">
-        {techs.map(tn => (
+        {[...techs].sort((a, b) => a.localeCompare(b)).map(tn => (
           <button key={tn} className={`gran-btn${sel.includes(tn) ? " active" : ""}`} onClick={() => toggle(tn)}>{tn}</button>
         ))}
       </div>
@@ -211,7 +211,8 @@ function CoOccur({ domains, subset, techs, lang }: {
           {res.per_tech.map((p: any) => (
             <tr key={p.tech}><td>{p.tech}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{p.domains.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_has', lang)}</td></tr>
           ))}
-          <tr><td><b>{t('tech_cooc_all', lang)}</b></td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}><b>{res.with_all.toLocaleString()}</b></td><td /></tr>
+          <tr><td><b>{t('tech_cooc_all', lang)}</b></td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}><b>{res.with_all.toLocaleString()}</b></td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_ever', lang)}</td></tr>
+          <tr><td><b>{t('tech_cooc_current', lang)}</b></td><td style={{ textAlign: "right", fontFamily: "var(--mono)", color: "var(--accent)" }}><b>{(res.both_current ?? 0).toLocaleString()}</b></td><td style={{ color: "var(--text-3)" }}>{res.with_all ? Math.round((res.both_current ?? 0) / res.with_all * 100) : 0}%</td></tr>
           <tr><td>{t('tech_cooc_overlap', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.overlap.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>{pct}%</td></tr>
           <tr><td>{t('tech_cooc_avg', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.avg_overlap_months}</td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_months', lang)}</td></tr>
           <tr><td>{t('tech_cooc_short', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.short_overlap.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>&lt;2 {t('tech_cooc_months', lang)}</td></tr>
@@ -260,6 +261,11 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
   const sitesPin     = useCallback((sub:string[])=>{ setSiteSubset(sub); setActiveSite(null); load(sub) },[load])
   const sitesViewAll = useCallback(()=>{ setActiveSite(null); load(siteSubset) },[load,siteSubset])
   const sitesViewOne = useCallback((s:string)=>{ setActiveSite(s); load([s]) },[load])
+  // Focus a single site from the table: pin it (so it gets a chip) and view only it.
+  const focusSite = useCallback((d:string)=>{
+    setSiteSubset(prev => prev.includes(d) ? prev : [...prev, d])
+    setActiveSite(d); load([d])
+  },[load])
 
   const toggleVisible=(name:string)=>setVisible(prev=>{const n=new Set(prev);n.has(name)?n.delete(name):n.add(name);return n})
   const filteredSeries=useMemo(()=>result?.series.filter(s=>visible.has(s.name))||[],[result,visible])
@@ -394,7 +400,13 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
               <tbody>
                 {filteredTable.map((r,i)=>(
                   <tr key={`${r.domain}-${r.name}-${i}`}>
-                    <td className="td-domain"><a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a></td>
+                    <td className="td-domain">
+                      {domains.length > 0 && (
+                        <button className="site-focus-btn" title={t('tech_focus_site', lang)}
+                          onClick={()=>focusSite(r.domain)}>📊</button>
+                      )}
+                      <a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a>
+                    </td>
                     <td style={{fontWeight:500}}>{r.name}</td>
                     <td><span className="service-tag">{r.tag}</span></td>
                     <td style={{fontFamily:"var(--mono)",fontSize:11}}>{r.first_detected}</td>

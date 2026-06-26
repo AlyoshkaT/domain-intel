@@ -497,3 +497,6 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 
 /* Co-occurrence tech picker */
 .tech-cooc-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.site-focus-btn { background: none; border: none; cursor: pointer; padding: 0 4px 0 0; font-size: 12px; opacity: 0.6; }
+.site-focus-btn:hover { opacity: 1; }
