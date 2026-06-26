@@ -278,11 +278,13 @@ def cooccurrence(body: dict):
         sel_set = set(sel)
         per_tech = {s: 0 for s in sel}
         with_all = overlap = short = both_current = 0
+        with_all_domains: list[str] = []
+        both_current_domains: list[str] = []
         total_months = 0.0
         # "currently live" = last detected within ~6 months of now
         current_threshold = int(time.time() * 1000) - int(183 * 86400 * 1000)
 
-        for _domain, tj in rows:
+        for domain, tj in rows:
             if not tj:
                 continue
             try:
@@ -317,6 +319,7 @@ def cooccurrence(body: dict):
                 per_tech[s] += 1
             if sel_set <= present:
                 with_all += 1
+                with_all_domains.append(domain)
                 lows = [spans[s][0] for s in sel]
                 highs = [spans[s][1] for s in sel]
                 if all(lows) and all(highs):
@@ -330,6 +333,7 @@ def cooccurrence(body: dict):
                 # both still live now (distinguishes real co-use from migration A→B)
                 if all(spans[s][1] >= current_threshold for s in sel):
                     both_current += 1
+                    both_current_domains.append(domain)
 
         return {
             "techs": sel,
@@ -340,6 +344,8 @@ def cooccurrence(body: dict):
             "short_overlap": short,
             "avg_overlap_months": round(total_months / overlap, 1) if overlap else 0,
             "total_domains": len(rows),
+            "with_all_domains": with_all_domains[:5000],
+            "both_current_domains": both_current_domains[:5000],
         }
     except Exception as e:
         logger.error(f"cooccurrence error: {e}", exc_info=True)

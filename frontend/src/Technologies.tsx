@@ -144,7 +144,7 @@ function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSi
             {t('tech_sites_sel', lang)(pinned.length)}
           </button>
         )}
-        {pinned.map(d => (
+        {pinned.length <= 6 && pinned.map(d => (
           <button key={d} className={`gran-btn${active === d ? " active" : ""}`} onClick={() => onViewSite(d)} title={d}>
             {d.length > 22 ? d.slice(0, 21) + "…" : d}
           </button>
@@ -174,8 +174,9 @@ function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSi
 }
 
 // Layer 2: co-occurrence / temporal-overlap of 2+ technologies across the domain set.
-function CoOccur({ domains, subset, techs, dateFrom, dateTo, lang }: {
-  domains: string[]; subset: string[]; techs: string[]; dateFrom: string; dateTo: string; lang: Lang
+function CoOccur({ domains, subset, techs, dateFrom, dateTo, onShowDomains, lang }: {
+  domains: string[]; subset: string[]; techs: string[]; dateFrom: string; dateTo: string
+  onShowDomains: (domains: string[]) => void; lang: Lang
 }) {
   const [sel, setSel] = useState<string[]>([])
   const [res, setRes] = useState<any>(null)
@@ -211,8 +212,14 @@ function CoOccur({ domains, subset, techs, dateFrom, dateTo, lang }: {
           {res.per_tech.map((p: any) => (
             <tr key={p.tech}><td>{p.tech}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{p.domains.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_has', lang)}</td></tr>
           ))}
-          <tr><td><b>{t('tech_cooc_all', lang)}</b></td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}><b>{res.with_all.toLocaleString()}</b></td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_ever', lang)}</td></tr>
-          <tr><td><b>{t('tech_cooc_current', lang)}</b></td><td style={{ textAlign: "right", fontFamily: "var(--mono)", color: "var(--accent)" }}><b>{(res.both_current ?? 0).toLocaleString()}</b></td><td style={{ color: "var(--text-3)" }}>{res.with_all ? Math.round((res.both_current ?? 0) / res.with_all * 100) : 0}%</td></tr>
+          <tr><td><b>{t('tech_cooc_all', lang)}</b></td>
+            <td className="cooc-clickable" style={{ textAlign: "right", fontFamily: "var(--mono)" }}
+              title={t('tech_cooc_show', lang)} onClick={() => res.with_all && onShowDomains(res.with_all_domains || [])}><b>{res.with_all.toLocaleString()}</b> ↴</td>
+            <td style={{ color: "var(--text-3)" }}>{t('tech_cooc_ever', lang)}</td></tr>
+          <tr><td><b>{t('tech_cooc_current', lang)}</b></td>
+            <td className="cooc-clickable" style={{ textAlign: "right", fontFamily: "var(--mono)", color: "var(--accent)" }}
+              title={t('tech_cooc_show', lang)} onClick={() => res.both_current && onShowDomains(res.both_current_domains || [])}><b>{(res.both_current ?? 0).toLocaleString()}</b> ↴</td>
+            <td style={{ color: "var(--text-3)" }}>{res.with_all ? Math.round((res.both_current ?? 0) / res.with_all * 100) : 0}%</td></tr>
           <tr><td>{t('tech_cooc_overlap', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.overlap.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>{pct}%</td></tr>
           <tr><td>{t('tech_cooc_avg', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.avg_overlap_months}</td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_months', lang)}</td></tr>
           <tr><td>{t('tech_cooc_short', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.short_overlap.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>&lt;2 {t('tech_cooc_months', lang)}</td></tr>
@@ -265,6 +272,11 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
   const focusSite = useCallback((d:string)=>{
     setSiteSubset(prev => prev.includes(d) ? prev : [...prev, d])
     setActiveSite(d); load([d])
+  },[load])
+  // Narrow the whole page to a co-occurrence domain list (chart + table + export).
+  const showCoocDomains = useCallback((ds:string[])=>{
+    if(!ds.length) return
+    setSiteSubset(ds); setActiveSite(null); load(ds)
   },[load])
 
   const toggleVisible=(name:string)=>setVisible(prev=>{const n=new Set(prev);n.has(name)?n.delete(name):n.add(name);return n})
@@ -380,7 +392,8 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
             </div>
           </div>
           <CoOccur domains={domains} subset={activeSite ? [activeSite] : siteSubset}
-            techs={result.series.map(s=>s.name)} dateFrom={dateFrom} dateTo={dateTo} lang={lang} />
+            techs={result.series.map(s=>s.name)} dateFrom={dateFrom} dateTo={dateTo}
+            onShowDomains={showCoocDomains} lang={lang} />
           <div className="filter-row" style={{marginBottom:8}}>
             <input className="filter-input" placeholder={t('tech_filter_ph', lang)} value={tableFilter} onChange={e=>setTableFilter(e.target.value)}/>
             <span className="filter-count">{t('tech_records', lang)(filteredTable.length.toLocaleString())}</span>

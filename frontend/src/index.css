@@ -500,3 +500,6 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 
 .site-focus-btn { background: none; border: none; cursor: pointer; padding: 0 4px 0 0; font-size: 12px; opacity: 0.6; }
 .site-focus-btn:hover { opacity: 1; }
+
+.cooc-clickable { cursor: pointer; }
+.cooc-clickable:hover { text-decoration: underline; background: var(--bg-2); }
