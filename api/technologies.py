@@ -218,12 +218,15 @@ def aggregate_technologies(body: dict):
         table_rows = []
         for rows_list in tech_domains.values():
             table_rows.extend(rows_list)
+        # Known (catalog) rows first, then by recency — so the row cap never drops a
+        # catalog technology that IS on the chart (was happening with a flat 1000 cap).
         table_rows.sort(key=lambda x: x.get("last_detected", ""), reverse=True)
+        table_rows.sort(key=lambda x: x["name"] not in known_canon)  # stable: known first
 
         return {
             "periods": all_periods,
             "series": series[:50],
-            "table": table_rows[:1000],
+            "table": table_rows[:10000],
             "unknown_count": len(unknown_techs),
             "unknown_top": sorted(unknown_techs.items(), key=lambda x: -x[1])[:20],
             "total_domains": len(rows),
