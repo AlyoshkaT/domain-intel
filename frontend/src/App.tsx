@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import ExplorerPage, { requestExplorerRestore } from "./Explorer"
 import TechnologiesPage from "./Technologies"
 import RedirectsPage from "./Redirects"
+import PipedrivePage from "./Pipedrive"
 import SetupPage from "./Setup"
 import { t, type Lang } from "./i18n"
 import "./index.css"
@@ -657,7 +658,7 @@ function BqIndicator() {
   )
 }
 
-type View = "new" | "jobs" | "results" | "explorer" | "technologies" | "redirects" | "setup"
+type View = "new" | "jobs" | "results" | "explorer" | "technologies" | "redirects" | "pipedrive" | "setup"
 
 export default function App() {
   const [view, setView] = useState<View>("new")
@@ -712,6 +713,7 @@ export default function App() {
           {can("explorer") && <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>{t('nav_explorer', lang)}</button>}
           {can("explorer") && <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => { setTechDomains(explorerFilteredDomains); setView("technologies") }}>{t('nav_technologies', lang)}</button>}
           {can("explorer") && <button className={`nav-link ${view === "redirects" ? "active" : ""}`} onClick={() => setView("redirects")}>{t('nav_redirects', lang)}</button>}
+          {can("explorer") && <button className={`nav-link ${view === "pipedrive" ? "active" : ""}`} onClick={() => setView("pipedrive")}>Pipedrive</button>}
           {can("admin") && <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>{t('nav_setup', lang)}</button>}
         </div>
         <div className="nav-right">
@@ -725,6 +727,7 @@ export default function App() {
       <main className="main">
         {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => { requestExplorerRestore(); setView("explorer") }} can={can} lang={lang} />}
         {view === "redirects" && <RedirectsPage lang={lang} />}
+        {view === "pipedrive" && <PipedrivePage lang={lang} can={can} />}
         {view === "setup" && <SetupPage lang={lang} />}
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} lang={lang} />}
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} can={can} lang={lang} />}

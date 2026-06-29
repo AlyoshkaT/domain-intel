@@ -162,6 +162,12 @@ try:
 except Exception as e:
     logger.warning(f"Redirects router not loaded: {e}")
 
+try:
+    from api.pipedrive import router as pipedrive_router
+    app.include_router(pipedrive_router)
+except Exception as e:
+    logger.warning(f"Pipedrive router not loaded: {e}")
+
 
 # ─── Health ───────────────────────────────────────────────────────────────────
 @app.get("/api/health")
