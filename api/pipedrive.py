@@ -17,10 +17,11 @@ router = APIRouter(prefix="/api/pipedrive", dependencies=[require_permission("pi
 
 
 @router.get("/status")
-async def status(as_of: str | None = None):
-    """Relationship-status rows. Optional as_of=YYYY-MM-DD recomputes status as of that date."""
-    rows = get_status_rows(as_of)
-    return {"rows": rows, "count": len(rows), "as_of": as_of,
+async def status(as_of: str | None = None, date_from: str | None = None):
+    """Relationship-status rows. as_of=YYYY-MM-DD recomputes status as of that date;
+    date_from restricts to domains active within [date_from, as_of]."""
+    rows = get_status_rows(as_of, date_from)
+    return {"rows": rows, "count": len(rows), "as_of": as_of, "date_from": date_from,
             "company": PIPEDRIVE_COMPANY_DOMAIN}
 
 

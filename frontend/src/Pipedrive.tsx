@@ -57,6 +57,7 @@ const L = (lang: Lang) => ({
   thOrg: lang === "ua" ? "Організація" : "Organization",
   thNum: "DEALS №",
   thPd: "DEALS Status",
+  dealsStatus: "STATUS DEALS",
   thFact: lang === "ua" ? "ФАКТ" : "FACT",
   thRisk: lang === "ua" ? "Ризик" : "Risk",
   thLast: lang === "ua" ? "Остання оплата" : "Last paid",
@@ -122,25 +123,30 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState("")
   const [factFilter, setFactFilter] = useState("")
+  const [dealsFilter, setDealsFilter] = useState("")
   const [riskFilter, setRiskFilter] = useState("")
   const [search, setSearch] = useState("")
   const [dateFrom, setDateFrom] = useState(yearAgo)
   const [dateTo, setDateTo] = useState(today)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [sortCol, setSortCol] = useState<string>("status_fact")
+  const [sortDir, setSortDir] = useState<1 | -1>(1)
 
   const load = useCallback(async () => {
     setLoading(true); setError("")
     try {
-      const asOf = dateTo && dateTo !== today ? `?as_of=${dateTo}` : ""
+      const p = new URLSearchParams()
+      if (dateTo) p.set("as_of", dateTo)
+      if (dateFrom) p.set("date_from", dateFrom)
       const [s, ts] = await Promise.all([
-        apiFetch(`/api/pipedrive/status${asOf}`),
+        apiFetch(`/api/pipedrive/status?${p.toString()}`),
         apiFetch(`/api/pipedrive/timeseries?date_from=${dateFrom}&date_to=${dateTo}`),
       ])
       setRows(s.rows || [])
       setCompany(s.company || "")
       setSeries(ts.series || [])
     } catch (e: any) { setError(e.message) } finally { setLoading(false) }
-  }, [dateFrom, dateTo, today])
+  }, [dateFrom, dateTo])
 
   useEffect(() => { load() }, [])  // initial load only; subsequent loads via Apply
 
@@ -161,12 +167,25 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return rows.filter(r =>
+    const out = rows.filter(r =>
       (!factFilter || r.status_fact === factFilter) &&
+      (!dealsFilter || r.deals_status === dealsFilter) &&
       (!riskFilter || r.risk === riskFilter) &&
       (!q || r.domain.includes(q) || (r.org_name || "").toLowerCase().includes(q))
     )
-  }, [rows, factFilter, riskFilter, search])
+    const cmp = (a: any, b: any) => {
+      const va = a[sortCol], vb = b[sortCol]
+      if (va == null && vb == null) return 0
+      if (va == null) return 1
+      if (vb == null) return -1
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * sortDir
+      return String(va).localeCompare(String(vb)) * sortDir
+    }
+    return [...out].sort(cmp)
+  }, [rows, factFilter, dealsFilter, riskFilter, search, sortCol, sortDir])
+
+  const toggleSort = (col: string) =>
+    sortCol === col ? setSortDir(d => (d === 1 ? -1 : 1)) : (setSortCol(col), setSortDir(1))
 
   const exportCSV = useCallback(() => {
     const cols = ["domain", "org_name", "main_deal_id", "deals_status", "status_pipedrive", "status_fact", "risk",
@@ -237,6 +256,13 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
             <input type="date" style={selStyle} value={dateTo} onChange={e => setDateTo(e.target.value)} />
           </div>
           <div className="tech-filter-group">
+            <label className="tech-filter-label">{tx.dealsStatus}</label>
+            <select style={selStyle} value={dealsFilter} onChange={e => setDealsFilter(e.target.value)}>
+              <option value="">{tx.allFact}</option>
+              {["won", "open", "lost"].map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+          <div className="tech-filter-group">
             <label className="tech-filter-label">{tx.fact}</label>
             <select style={selStyle} value={factFilter} onChange={e => setFactFilter(e.target.value)}>
               <option value="">{tx.allFact}</option>
@@ -276,15 +302,23 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
           <table className="results-table">
             <thead>
               <tr>
-                <th>{tx.thDomain}</th>
-                <th>{tx.thOrg}</th>
-                <th>{tx.thNum}</th>
-                <th>{tx.thPd}</th>
-                <th>{tx.thFact}</th>
-                <th>{tx.thRisk}</th>
-                <th title={tx.months}>{tx.months}</th>
-                <th>{tx.thLast}</th>
-                <th style={{ textAlign: "right" }}>{tx.thValue}</th>
+                {([
+                  ["domain", tx.thDomain, "left"],
+                  ["org_name", tx.thOrg, "left"],
+                  ["main_deal_id", tx.thNum, "left"],
+                  ["deals_status", tx.thPd, "left"],
+                  ["status_fact", tx.thFact, "left"],
+                  ["risk", tx.thRisk, "left"],
+                  ["paid_m1", tx.months, "left"],
+                  ["last_paid_at", tx.thLast, "left"],
+                  ["total_paid_value", tx.thValue, "right"],
+                ] as [string, string, string][]).map(([col, label, align]) => (
+                  <th key={col} onClick={() => toggleSort(col)}
+                    title={col === "paid_m1" ? tx.months : undefined}
+                    style={{ cursor: "pointer", userSelect: "none", textAlign: align as any, whiteSpace: "nowrap" }}>
+                    {label}{sortCol === col ? (sortDir === 1 ? " ▲" : " ▼") : ""}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>

@@ -318,20 +318,32 @@ def _read_raw_deals() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_status_rows(as_of: str | None = None) -> list[dict]:
+def get_status_rows(as_of: str | None = None, date_from: str | None = None) -> list[dict]:
     """Relationship-status rows for the dashboard.
 
-    as_of=None → the precomputed pipedrive_status table (current day).
-    as_of=YYYY-MM-DD → recompute on the fly from raw deals as of that date, so
-    the user can see the relationship status at the end of any chosen period.
+    as_of=None and date_from=None → the precomputed pipedrive_status table (today).
+    as_of=YYYY-MM-DD → recompute status from raw as of that date (period end).
+    date_from=YYYY-MM-DD → keep only domains with a deal event (won/lost/created)
+    inside [date_from, as_of], so the table truly rebuilds for the chosen period.
     Empty list if nothing is synced yet.
     """
     bq = client()
-    if as_of:
+    if as_of or date_from:
         try:
-            ad = date.fromisoformat(as_of)
-            return _compute_status(_read_raw_deals(), ad)
+            ad = date.fromisoformat(as_of) if as_of else date.today()
+            raw = _read_raw_deals()
+            rows = _compute_status(raw, ad)
+            if date_from:
+                end = ad.isoformat()
+                # A domain is "active in the period" if any of its deals has an
+                # event date (won/lost/created) within [date_from, end].
+                active = {r["domain"] for r in raw if r["domain"] and any(
+                    d and date_from <= d <= end
+                    for d in (r["won_time"], r["lost_time"], r["add_time"]))}
+                rows = [r for r in rows if r["domain"] in active]
+            return rows
         except Exception:
+            logger.exception("get_status_rows recompute failed")
             return []
     try:
         rows = bq.query(
