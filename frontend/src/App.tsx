@@ -713,7 +713,7 @@ export default function App() {
           {can("explorer") && <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>{t('nav_explorer', lang)}</button>}
           {can("explorer") && <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => { setTechDomains(explorerFilteredDomains); setView("technologies") }}>{t('nav_technologies', lang)}</button>}
           {can("explorer") && <button className={`nav-link ${view === "redirects" ? "active" : ""}`} onClick={() => setView("redirects")}>{t('nav_redirects', lang)}</button>}
-          {can("explorer") && <button className={`nav-link ${view === "pipedrive" ? "active" : ""}`} onClick={() => setView("pipedrive")}>Pipedrive</button>}
+          {can("pipedrive") && <button className={`nav-link ${view === "pipedrive" ? "active" : ""}`} onClick={() => setView("pipedrive")}>Pipedrive</button>}
           {can("admin") && <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>{t('nav_setup', lang)}</button>}
         </div>
         <div className="nav-right">

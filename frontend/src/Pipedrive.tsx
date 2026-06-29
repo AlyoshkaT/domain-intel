@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo, Fragment } from "react"
 import { type Lang } from "./i18n"
 
 const API = ""
@@ -8,24 +8,26 @@ async function apiFetch(path: string, opts?: RequestInit) {
   return res.json()
 }
 
+interface DealDetail {
+  title: string; status: string; value: number; currency: string
+  won_time: string | null; lost_time: string | null; tariff: string
+}
 interface StatusRow {
   domain: string
   status_pipedrive: string
-  paid_m1: boolean
-  paid_m2: boolean
-  paid_m3: boolean
+  paid_m1: boolean; paid_m2: boolean; paid_m3: boolean
   status_fact: string
   risk: string
   last_paid_at: string | null
-  won_deals: number
-  total_deals: number
+  won_deals: number; open_deals: number; lost_deals: number; total_deals: number
   total_paid_value: number
   currency: string
   org_name: string
+  deals_json: string
   computed_at: string
 }
+interface Point { month: string; won: number; open: number; lost: number }
 
-// Bilingual labels — the app is UA/EN.
 const L = (lang: Lang) => ({
   title: lang === "ua" ? "Pipedrive — статус відносин" : "Pipedrive — relationship status",
   subtitle: lang === "ua"
@@ -35,60 +37,106 @@ const L = (lang: Lang) => ({
   allFact: lang === "ua" ? "Усі статуси" : "All statuses",
   risk: lang === "ua" ? "Ризик" : "Risk",
   allRisk: lang === "ua" ? "Усі" : "All",
+  period: lang === "ua" ? "Період" : "Period",
+  from: lang === "ua" ? "від" : "from",
+  to: lang === "ua" ? "до" : "to",
   search: lang === "ua" ? "Пошук за доменом / організацією…" : "Search by domain / organization…",
   sync: lang === "ua" ? "↻ Синхронізувати" : "↻ Sync",
   syncing: lang === "ua" ? "Синхронізація…" : "Syncing…",
-  load: lang === "ua" ? "Оновити" : "Reload",
+  load: lang === "ua" ? "Застосувати" : "Apply",
   loading: lang === "ua" ? "Завантаження…" : "Loading…",
   empty: lang === "ua" ? "Немає даних. Натисни «Синхронізувати», щоб витягти з Pipedrive." : "No data. Click Sync to pull from Pipedrive.",
   noMatch: lang === "ua" ? "Нічого не знайдено за фільтром." : "Nothing matches the filter.",
   count: (a: string, b: string) => lang === "ua" ? `${a} з ${b}` : `${a} of ${b}`,
+  chartTitle: lang === "ua" ? "Динаміка Won / Open / Lost (по місяцях)" : "Won / Open / Lost trend (monthly)",
+  asOf: lang === "ua" ? "статус станом на" : "status as of",
   thDomain: lang === "ua" ? "Домен" : "Domain",
   thOrg: lang === "ua" ? "Організація" : "Organization",
-  thPd: "Pipedrive",
+  thPd: lang === "ua" ? "Угоди (Pipedrive)" : "Deals (Pipedrive)",
   thFact: lang === "ua" ? "ФАКТ" : "FACT",
   thRisk: lang === "ua" ? "Ризик" : "Risk",
   thLast: lang === "ua" ? "Остання оплата" : "Last paid",
-  thWon: lang === "ua" ? "Оплат" : "Payments",
   thValue: lang === "ua" ? "Сума оплат" : "Paid total",
   months: lang === "ua" ? "Цей міс / −1 / −2" : "This mo / −1 / −2",
+  dealsHdr: lang === "ua" ? "Угоди домену:" : "Deals for this domain:",
 })
 
-const FACT_COLORS: Record<string, string> = {
-  Won: "#22c55e", Open: "#3b82f6", Lost: "#ef4444",
-}
-const RISK_COLORS: Record<string, string> = {
-  Alarm: "#f59e0b", Churn: "#a855f7",
-}
+const FACT_COLORS: Record<string, string> = { Won: "#22c55e", Open: "#3b82f6", Lost: "#ef4444" }
+const RISK_COLORS: Record<string, string> = { Alarm: "#f59e0b", Churn: "#a855f7" }
+const KIND_COLORS = { won: "#22c55e", open: "#3b82f6", lost: "#ef4444" }
 
 function Badge({ text, color }: { text: string; color: string }) {
+  return <span className="service-tag" style={{ background: color + "22", color, border: `1px solid ${color}44` }}>{text}</span>
+}
+
+// Simple grouped bar chart (SVG) — Won/Open/Lost per month.
+function TrendChart({ data, title }: { data: Point[]; title: string }) {
+  if (!data.length) return null
+  const W = Math.max(640, data.length * 56), H = 220, pad = 28, base = H - pad
+  const max = Math.max(1, ...data.flatMap(d => [d.won, d.open, d.lost]))
+  const slot = (W - pad * 2) / data.length
+  const bw = Math.min(12, slot / 4)
+  const y = (v: number) => base - (v / max) * (base - 10)
+  const kinds: (keyof typeof KIND_COLORS)[] = ["won", "open", "lost"]
   return (
-    <span className="service-tag"
-      style={{ background: color + "22", color, border: `1px solid ${color}44` }}>
-      {text}
-    </span>
+    <div className="card" style={{ marginBottom: 12, overflowX: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)" }}>{title}</span>
+        <span style={{ display: "flex", gap: 12, fontSize: 11 }}>
+          {kinds.map(k => <span key={k} style={{ color: KIND_COLORS[k] }}>■ {k}</span>)}
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxHeight: 240 }}>
+        <line x1={pad} y1={base} x2={W - pad} y2={base} stroke="var(--border)" />
+        {data.map((d, i) => {
+          const x0 = pad + i * slot + slot / 2
+          return (
+            <g key={d.month}>
+              {kinds.map((k, j) => {
+                const bx = x0 + (j - 1) * (bw + 2) - bw / 2
+                return <rect key={k} x={bx} y={y(d[k])} width={bw} height={base - y(d[k])}
+                  fill={KIND_COLORS[k]} rx={1}><title>{`${d.month} ${k}: ${d[k]}`}</title></rect>
+              })}
+              <text x={x0} y={H - 8} textAnchor="middle" fontSize={9} fill="var(--text-3)">{d.month.slice(2)}</text>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
   )
 }
 
 export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: string) => boolean }) {
   const tx = L(lang)
+  const today = new Date().toISOString().slice(0, 10)
+  const yearAgo = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10)
+
   const [rows, setRows] = useState<StatusRow[]>([])
+  const [series, setSeries] = useState<Point[]>([])
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState("")
   const [factFilter, setFactFilter] = useState("")
   const [riskFilter, setRiskFilter] = useState("")
   const [search, setSearch] = useState("")
+  const [dateFrom, setDateFrom] = useState(yearAgo)
+  const [dateTo, setDateTo] = useState(today)
+  const [expanded, setExpanded] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setError("")
     try {
-      const d = await apiFetch("/api/pipedrive/status")
-      setRows(d.rows || [])
+      const asOf = dateTo && dateTo !== today ? `?as_of=${dateTo}` : ""
+      const [s, ts] = await Promise.all([
+        apiFetch(`/api/pipedrive/status${asOf}`),
+        apiFetch(`/api/pipedrive/timeseries?date_from=${dateFrom}&date_to=${dateTo}`),
+      ])
+      setRows(s.rows || [])
+      setSeries(ts.series || [])
     } catch (e: any) { setError(e.message) } finally { setLoading(false) }
-  }, [])
+  }, [dateFrom, dateTo, today])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [])  // initial load only; subsequent loads via Apply
 
   const sync = useCallback(async () => {
     setSyncing(true); setError("")
@@ -101,10 +149,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
 
   const summary = useMemo(() => {
     const s: Record<string, number> = { Won: 0, Open: 0, Lost: 0, Alarm: 0, Churn: 0 }
-    for (const r of rows) {
-      if (r.status_fact in s) s[r.status_fact]++
-      if (r.risk) s[r.risk]++
-    }
+    for (const r of rows) { if (r.status_fact in s) s[r.status_fact]++; if (r.risk) s[r.risk]++ }
     return s
   }, [rows])
 
@@ -119,32 +164,29 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
 
   const exportCSV = useCallback(() => {
     const cols = ["domain", "org_name", "status_pipedrive", "status_fact", "risk",
-      "paid_m1", "paid_m2", "paid_m3", "last_paid_at", "won_deals", "total_deals",
-      "total_paid_value", "currency", "computed_at"]
+      "paid_m1", "paid_m2", "paid_m3", "last_paid_at", "won_deals", "open_deals",
+      "lost_deals", "total_deals", "total_paid_value", "currency", "computed_at"]
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`
     const csv = [cols.join(","), ...filtered.map(r => cols.map(c => esc((r as any)[c])).join(","))].join("\n")
     const a = document.createElement("a")
     a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }))
-    a.download = `pipedrive_status_${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `pipedrive_status_${today}.csv`
     a.click()
-  }, [filtered])
+  }, [filtered, today])
 
   const selStyle: React.CSSProperties = {
     padding: "5px 8px", background: "var(--bg-2)", border: "1px solid var(--border)",
-    borderRadius: "var(--radius)", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 120,
+    borderRadius: "var(--radius)", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 110,
   }
-  const dot = (v: boolean) => (
-    <span title={v ? "paid" : "—"} style={{
-      display: "inline-block", width: 11, height: 11, borderRadius: "50%",
-      background: v ? "#22c55e" : "var(--border)", margin: "0 2px",
-    }} />
-  )
+  const dot = (v: boolean) => <span style={{ display: "inline-block", width: 11, height: 11, borderRadius: "50%", background: v ? "#22c55e" : "var(--border)", margin: "0 2px" }} />
 
   return (
     <div className="page page-wide">
       <div className="page-header">
         <h1 className="page-title">{tx.title}</h1>
-        <span style={{ fontSize: 12, color: "var(--text-3)" }}>{tx.subtitle}</span>
+        <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+          {tx.subtitle}{dateTo !== today ? ` · ${tx.asOf} ${dateTo}` : ""}
+        </span>
       </div>
 
       {/* Summary cards */}
@@ -165,9 +207,20 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
         ))}
       </div>
 
-      {/* Filters */}
+      {/* Trend chart */}
+      <TrendChart data={series} title={tx.chartTitle} />
+
+      {/* Filters + period */}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="tech-filters" style={{ flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
+          <div className="tech-filter-group">
+            <label className="tech-filter-label">{tx.period} ({tx.from})</label>
+            <input type="date" style={selStyle} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </div>
+          <div className="tech-filter-group">
+            <label className="tech-filter-label">{tx.to}</label>
+            <input type="date" style={selStyle} value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </div>
           <div className="tech-filter-group">
             <label className="tech-filter-label">{tx.fact}</label>
             <select style={selStyle} value={factFilter} onChange={e => setFactFilter(e.target.value)}>
@@ -182,9 +235,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
               {["Alarm", "Churn"].map(f => <option key={f} value={f}>{f}</option>)}
             </select>
           </div>
-          <button className="btn-search" onClick={load} disabled={loading}>
-            {loading ? tx.loading : "🔄"} {tx.load}
-          </button>
+          <button className="btn-search" onClick={load} disabled={loading}>{loading ? tx.loading : "🔄"} {tx.load}</button>
           {can("admin") && (
             <button className="btn-search" onClick={sync} disabled={syncing} style={{ marginLeft: "auto" }}>
               {syncing ? tx.syncing : tx.sync}
@@ -217,26 +268,51 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                 <th>{tx.thRisk}</th>
                 <th title={tx.months}>{tx.months}</th>
                 <th>{tx.thLast}</th>
-                <th style={{ textAlign: "right" }}>{tx.thWon}</th>
                 <th style={{ textAlign: "right" }}>{tx.thValue}</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => (
-                <tr key={i}>
-                  <td className="td-domain"><a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a></td>
-                  <td style={{ fontSize: 12, color: "var(--text-2)" }}>{r.org_name || "—"}</td>
-                  <td style={{ fontSize: 11, color: "var(--text-3)" }}>{r.status_pipedrive}</td>
-                  <td><Badge text={r.status_fact} color={FACT_COLORS[r.status_fact] || "#6b7280"} /></td>
-                  <td>{r.risk ? <Badge text={r.risk} color={RISK_COLORS[r.risk] || "#6b7280"} /> : ""}</td>
-                  <td style={{ whiteSpace: "nowrap" }}>{dot(r.paid_m1)}{dot(r.paid_m2)}{dot(r.paid_m3)}</td>
-                  <td style={{ fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>{r.last_paid_at || "—"}</td>
-                  <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11 }}>{r.won_deals}</td>
-                  <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>
-                    {r.total_paid_value ? r.total_paid_value.toLocaleString() : "0"} {r.currency}
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((r, i) => {
+                const multi = r.total_deals > 1
+                const isOpen = expanded === r.domain
+                let deals: DealDetail[] = []
+                if (isOpen) { try { deals = JSON.parse(r.deals_json || "[]") } catch { /* ignore */ } }
+                return (
+                  <Fragment key={r.domain}>
+                    <tr style={multi ? { cursor: "pointer" } : undefined}
+                      onClick={multi ? () => setExpanded(isOpen ? null : r.domain) : undefined}>
+                      <td className="td-domain">
+                        {multi && <span style={{ color: "var(--text-3)", marginRight: 4 }}>{isOpen ? "▾" : "▸"}</span>}
+                        <a href={`https://${r.domain}`} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}>{r.domain}</a>
+                      </td>
+                      <td style={{ fontSize: 12, color: "var(--text-2)" }}>{r.org_name || "—"}</td>
+                      <td style={{ fontSize: 11, color: "var(--text-3)", whiteSpace: "nowrap" }}>{r.status_pipedrive}</td>
+                      <td><Badge text={r.status_fact} color={FACT_COLORS[r.status_fact] || "#6b7280"} /></td>
+                      <td>{r.risk ? <Badge text={r.risk} color={RISK_COLORS[r.risk] || "#6b7280"} /> : ""}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{dot(r.paid_m1)}{dot(r.paid_m2)}{dot(r.paid_m3)}</td>
+                      <td style={{ fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>{r.last_paid_at || "—"}</td>
+                      <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>
+                        {r.total_paid_value ? r.total_paid_value.toLocaleString() : "0"} {r.currency}
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={8} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
+                          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>{tx.dealsHdr}</div>
+                          {deals.map((d, j) => (
+                            <div key={j} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, padding: "2px 0" }}>
+                              <Badge text={d.status} color={FACT_COLORS[d.status === "won" ? "Won" : d.status === "open" ? "Open" : "Lost"]} />
+                              <span style={{ flex: 1 }}>{d.title || "—"}</span>
+                              <span style={{ fontFamily: "var(--mono)", color: "var(--text-3)" }}>{d.won_time || d.lost_time || ""}</span>
+                              <span style={{ fontFamily: "var(--mono)" }}>{d.value ? d.value.toLocaleString() : ""} {d.currency}</span>
+                            </div>
+                          ))}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
             </tbody>
           </table>
         </div>

@@ -59,7 +59,7 @@ def get_auth_users() -> dict[str, str]:
     return {**bq_users, **env_users}
 
 
-_ALL_PERMS = {"explorer", "jobs", "download", "sheets", "admin"}
+_ALL_PERMS = {"explorer", "jobs", "download", "sheets", "pipedrive", "admin"}
 
 def get_user_permissions(username: str) -> set[str]:
     """Return set of permissions for the given username.

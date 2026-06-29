@@ -318,13 +318,14 @@ const ALL_PERMISSIONS = [
   { key: "jobs",     label: "Jobs",      descKey: "setup_perm_jobs" as const },
   { key: "download", label: "Download",  descKey: "setup_perm_download" as const },
   { key: "sheets",   label: "Sheets",    descKey: "setup_perm_sheets" as const },
+  { key: "pipedrive", label: "Pipedrive", descKey: "setup_perm_pipedrive" as const },
   { key: "admin",    label: "Admin",     descKey: "setup_perm_admin" as const },
 ]
 
 const PRESETS = [
   { label: "Viewer",  perms: ["explorer"] },
-  { label: "Manager", perms: ["explorer","jobs","download","sheets"] },
-  { label: "Admin",   perms: ["explorer","jobs","download","sheets","admin"] },
+  { label: "Manager", perms: ["explorer","jobs","download","sheets","pipedrive"] },
+  { label: "Admin",   perms: ["explorer","jobs","download","sheets","pipedrive","admin"] },
 ]
 
 const PERM_ORDER = ALL_PERMISSIONS.map(p => p.key)
@@ -336,7 +337,7 @@ function parsePerms(s?: string): string[] {
     read:     ["explorer"],
     add:      ["explorer","jobs"],
     download: ["explorer","download"],
-    admin:    ["explorer","jobs","download","sheets","admin"],
+    admin:    ["explorer","jobs","download","sheets","pipedrive","admin"],
   }
   const parts = s.split(",").map(p => p.trim()).filter(Boolean)
   // if single legacy value — map it

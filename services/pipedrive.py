@@ -97,6 +97,7 @@ def _deal_row(d: dict) -> dict:
     org_name = org.get("name") if isinstance(org, dict) else None
     org_id = org.get("value") if isinstance(org, dict) else org
     won = d.get("won_time") or None
+    lost = d.get("lost_time") or None
     return {
         "deal_id": d.get("id"),
         "domain": normalize_domain(d.get(F_DOMEN) or org_name),
@@ -106,6 +107,7 @@ def _deal_row(d: dict) -> dict:
         "value": float(d.get("value") or 0),
         "currency": d.get("currency") or "",
         "won_time": won[:10] if won else None,
+        "lost_time": lost[:10] if lost else None,
         "add_time": (d.get("add_time") or "")[:10] or None,
         "tariff": str(d.get(F_TARIFF) or ""),
         "org_id": org_id,
@@ -146,23 +148,36 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
         if r["domain"]:
             by_domain[r["domain"]].append(r)
 
+    as_of_iso = today.isoformat()
     result = []
     for domain, deals in by_domain.items():
-        won = [d for d in deals if d["status"] == "won" and d["won_time"]]
+        # Only consider deals that exist as-of the evaluation date (won/lost up to today).
+        won = [d for d in deals if d["status"] == "won" and d["won_time"] and d["won_time"] <= as_of_iso]
+        open_deals = [d for d in deals if d["status"] == "open"]
+        lost_deals = [d for d in deals if d["status"] == "lost"]
+
         paid_months = {d["won_time"][:7] for d in won}
         p1, p2, p3 = m1 in paid_months, m2 in paid_months, m3 in paid_months
         paid_3mo = p1 or p2 or p3
 
-        # current Pipedrive status = status of the most recent deal (by add/won time)
-        latest = max(deals, key=lambda d: (d["won_time"] or d["add_time"] or ""))
-        pd_status = latest["status"] or "open"
-
+        # A domain can hold several deals at once (main service won, add-on open,
+        # add-on lost). Status FACT is payment-driven: any recent payment → the
+        # relationship is alive (Won), regardless of how many side deals are
+        # open/lost. When there is no recent payment we fall back to the deal mix:
+        # an open deal means an active opportunity (Open), otherwise Lost.
         if paid_3mo:
             fact = "Won"
-        elif pd_status == "open":
+        elif open_deals:
             fact = "Open"
-        else:  # won (lapsed) or lost
+        else:
             fact = "Lost"
+
+        # Aggregate Pipedrive-side status as a count mix, e.g. "won:1 open:1 lost:1".
+        mix = []
+        if won: mix.append(f"won:{len(won)}")
+        if open_deals: mix.append(f"open:{len(open_deals)}")
+        if lost_deals: mix.append(f"lost:{len(lost_deals)}")
+        pd_status = " ".join(mix) or "—"
 
         risk = ""
         if (not p1) and (not p2) and p3:
@@ -172,6 +187,16 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
 
         last_paid = max((d["won_time"] for d in won), default=None)
         total_paid = sum(d["value"] for d in won)
+        currency = (won[0]["currency"] if won else (deals[0]["currency"] if deals else "")) or ""
+        org_name = next((d["org_name"] for d in deals if d["org_name"]), "")
+
+        # Per-deal breakdown so the dashboard can expand a domain with several deals.
+        deals_detail = sorted(
+            ({"title": d["title"], "status": d["status"], "value": d["value"],
+              "currency": d["currency"], "won_time": d["won_time"],
+              "lost_time": d["lost_time"], "tariff": d["tariff"]} for d in deals),
+            key=lambda x: (x["won_time"] or x["lost_time"] or "", x["title"]), reverse=True)
+
         result.append({
             "domain": domain,
             "status_pipedrive": pd_status,
@@ -180,11 +205,14 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
             "risk": risk,
             "last_paid_at": last_paid,
             "won_deals": len(won),
+            "open_deals": len(open_deals),
+            "lost_deals": len(lost_deals),
             "total_deals": len(deals),
             "total_paid_value": round(total_paid, 2),
-            "currency": latest["currency"] or "",
-            "org_name": latest["org_name"] or "",
-            "computed_at": today.isoformat(),
+            "currency": currency,
+            "org_name": org_name,
+            "deals_json": json.dumps(deals_detail, ensure_ascii=False),
+            "computed_at": as_of_iso,
         })
     return result
 
@@ -200,6 +228,7 @@ _DEALS_SCHEMA = [
     bigquery.SchemaField("value", "FLOAT"),
     bigquery.SchemaField("currency", "STRING"),
     bigquery.SchemaField("won_time", "DATE"),
+    bigquery.SchemaField("lost_time", "DATE"),
     bigquery.SchemaField("add_time", "DATE"),
     bigquery.SchemaField("tariff", "STRING"),
     bigquery.SchemaField("org_id", "INTEGER"),
@@ -216,10 +245,13 @@ _STATUS_SCHEMA = [
     bigquery.SchemaField("risk", "STRING"),
     bigquery.SchemaField("last_paid_at", "DATE"),
     bigquery.SchemaField("won_deals", "INTEGER"),
+    bigquery.SchemaField("open_deals", "INTEGER"),
+    bigquery.SchemaField("lost_deals", "INTEGER"),
     bigquery.SchemaField("total_deals", "INTEGER"),
     bigquery.SchemaField("total_paid_value", "FLOAT"),
     bigquery.SchemaField("currency", "STRING"),
     bigquery.SchemaField("org_name", "STRING"),
+    bigquery.SchemaField("deals_json", "STRING"),
     bigquery.SchemaField("computed_at", "DATE"),
 ]
 
@@ -251,9 +283,34 @@ def sync_pipedrive() -> dict:
             "deals_without_domain": no_domain, "elapsed": elapsed}
 
 
-def get_status_rows() -> list[dict]:
-    """Read pipedrive_status for the dashboard. Empty list if not synced yet."""
+def _read_raw_deals() -> list[dict]:
+    """Read pipedrive_deals_raw back into the dict shape _compute_status expects."""
     bq = client()
+    rows = bq.query(
+        f"""SELECT domain, status, value, currency, title, tariff, org_name,
+                   CAST(won_time AS STRING)  AS won_time,
+                   CAST(lost_time AS STRING) AS lost_time,
+                   CAST(add_time AS STRING)  AS add_time
+            FROM `{table_ref(DEALS_RAW_TABLE)}`"""
+    ).result()
+    return [dict(r) for r in rows]
+
+
+def get_status_rows(as_of: str | None = None) -> list[dict]:
+    """Relationship-status rows for the dashboard.
+
+    as_of=None → the precomputed pipedrive_status table (current day).
+    as_of=YYYY-MM-DD → recompute on the fly from raw deals as of that date, so
+    the user can see the relationship status at the end of any chosen period.
+    Empty list if nothing is synced yet.
+    """
+    bq = client()
+    if as_of:
+        try:
+            ad = date.fromisoformat(as_of)
+            return _compute_status(_read_raw_deals(), ad)
+        except Exception:
+            return []
     try:
         rows = bq.query(
             f"SELECT * FROM `{table_ref(STATUS_TABLE)}` ORDER BY status_fact, domain"
@@ -268,6 +325,39 @@ def get_status_rows() -> list[dict]:
                 d[k] = v.isoformat()
         out.append(d)
     return out
+
+
+def get_timeseries(date_from: str, date_to: str) -> list[dict]:
+    """Monthly deal-event counts over [date_from, date_to] for the trend chart:
+      won  = distinct domains with a won payment that month (won_time),
+      lost = distinct domains with a deal lost that month (lost_time),
+      open = distinct domains with a deal created that month (add_time).
+    Cheap GROUP BY over the raw table. Empty list if not synced yet."""
+    bq = client()
+    q = f"""
+        WITH ev AS (
+          SELECT domain, 'won'  AS kind, won_time  AS d FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE won_time  IS NOT NULL
+          UNION ALL
+          SELECT domain, 'lost' AS kind, lost_time AS d FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE lost_time IS NOT NULL
+          UNION ALL
+          SELECT domain, 'open' AS kind, add_time  AS d FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE status = 'open' AND add_time IS NOT NULL
+        )
+        SELECT FORMAT_DATE('%Y-%m', d) AS month,
+               COUNT(DISTINCT IF(kind='won',  domain, NULL)) AS won,
+               COUNT(DISTINCT IF(kind='open', domain, NULL)) AS open,
+               COUNT(DISTINCT IF(kind='lost', domain, NULL)) AS lost
+        FROM ev
+        WHERE domain != '' AND d BETWEEN @df AND @dt
+        GROUP BY month ORDER BY month
+    """
+    try:
+        rows = bq.query(q, job_config=bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("df", "DATE", date_from),
+            bigquery.ScalarQueryParameter("dt", "DATE", date_to),
+        ])).result()
+    except Exception:
+        return []
+    return [{"month": r["month"], "won": r["won"], "open": r["open"], "lost": r["lost"]} for r in rows]
 
 
 def get_status_for_domains(domains: list[str]) -> dict[str, dict]:
