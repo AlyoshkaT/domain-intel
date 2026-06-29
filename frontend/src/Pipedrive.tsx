@@ -54,6 +54,10 @@ const L = (lang: Lang) => ({
   noMatch: lang === "ua" ? "Нічого не знайдено за фільтром." : "Nothing matches the filter.",
   count: (a: string, b: string) => lang === "ua" ? `${a} з ${b}` : `${a} of ${b}`,
   chartTitle: lang === "ua" ? "Динаміка Won / Open / Lost (по місяцях)" : "Won / Open / Lost trend (monthly)",
+  boardCount: lang === "ua" ? "Продажі по менеджерах — кількість" : "Sales by manager — count",
+  boardMoney: lang === "ua" ? "Продажі по менеджерах — гроші (₴)" : "Sales by manager — money (₴)",
+  boardNote: lang === "ua" ? "сума оплат, переважно UAH" : "paid total, mostly UAH",
+  boardClients: lang === "ua" ? "клієнтів" : "clients",
   asOf: lang === "ua" ? "статус станом на" : "status as of",
   thDomain: lang === "ua" ? "Домен" : "Domain",
   thOrg: lang === "ua" ? "Організація" : "Organization",
@@ -73,6 +77,13 @@ const L = (lang: Lang) => ({
 const FACT_COLORS: Record<string, string> = { Won: "#22c55e", Open: "#3b82f6", Lost: "#ef4444" }
 const RISK_COLORS: Record<string, string> = { Alarm: "#f59e0b", Churn: "#a855f7" }
 const KIND_COLORS = { won: "#22c55e", open: "#3b82f6", lost: "#ef4444" }
+
+// Compact money formatter: 14_350_000 → "14.3M", 1_200 → "1.2K".
+function fmtMoney(n: number): string {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M"
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "K"
+  return Math.round(n).toLocaleString()
+}
 
 function Badge({ text, color }: { text: string; color: string }) {
   return <span className="service-tag" style={{ background: color + "22", color, border: `1px solid ${color}44` }}>{text}</span>
@@ -115,6 +126,45 @@ function TrendChart({ data, title }: { data: Point[]; title: string }) {
   )
 }
 
+// One ranked, clickable manager board (by a chosen metric). Bars are relative
+// to the top manager; clicking a row toggles the table filter.
+function ManagerBoard({ title, note, stats, metric, fmt, active, onPick }: {
+  title: string; note?: string
+  stats: { manager: string; count: number; money: number; clients: number }[]
+  metric: "count" | "money"; fmt: (n: number) => string
+  active: string; onPick: (m: string) => void
+}) {
+  const ranked = [...stats].filter(s => s[metric] > 0).sort((a, b) => b[metric] - a[metric])
+  const max = ranked.length ? ranked[0][metric] : 1
+  const color = metric === "money" ? "#22c55e" : "#3b82f6"
+  return (
+    <div className="card" style={{ flex: 1, minWidth: 280 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", marginBottom: 2 }}>{title}</div>
+      {note && <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 8 }}>{note}</div>}
+      <div style={{ maxHeight: 230, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
+        {ranked.map(s => {
+          const on = active === s.manager
+          return (
+            <div key={s.manager} onClick={() => onPick(on ? "" : s.manager)}
+              title={`${s.clients} ${"clients"}`}
+              style={{ cursor: "pointer", padding: "3px 6px", borderRadius: 4,
+                background: on ? color + "22" : "transparent", border: `1px solid ${on ? color + "66" : "transparent"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 2 }}>
+                <span style={{ color: "var(--text-1)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170 }}>{s.manager}</span>
+                <span style={{ fontFamily: "var(--mono)", color: "var(--text-2)" }}>{fmt(s[metric])}</span>
+              </div>
+              <div style={{ height: 5, background: "var(--bg-2)", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ width: `${Math.max(2, (s[metric] / max) * 100)}%`, height: "100%", background: color }} />
+              </div>
+            </div>
+          )
+        })}
+        {!ranked.length && <div style={{ fontSize: 12, color: "var(--text-3)" }}>—</div>}
+      </div>
+    </div>
+  )
+}
+
 export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: string) => boolean }) {
   const tx = L(lang)
   const today = new Date().toISOString().slice(0, 10)
@@ -127,6 +177,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState("")
   const [factFilter, setFactFilter] = useState("")
+  const [managerFilter, setManagerFilter] = useState("")
   const [dealsFilter, setDealsFilter] = useState("")
   const [riskFilter, setRiskFilter] = useState("")
   const [search, setSearch] = useState("")
@@ -175,6 +226,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
       (!factFilter || r.status_fact === factFilter) &&
       (!dealsFilter || r.deals_status === dealsFilter) &&
       (!riskFilter || r.risk === riskFilter) &&
+      (!managerFilter || r.manager === managerFilter) &&
       (!q || r.domain.includes(q) || (r.org_name || "").toLowerCase().includes(q))
     )
     const cmp = (a: any, b: any) => {
@@ -186,7 +238,22 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
       return String(va).localeCompare(String(vb)) * sortDir
     }
     return [...out].sort(cmp)
-  }, [rows, factFilter, dealsFilter, riskFilter, search, sortCol, sortDir])
+  }, [rows, factFilter, dealsFilter, riskFilter, managerFilter, search, sortCol, sortDir])
+
+  // Sales by manager (count = paid deals, money = Σ paid value), over the loaded
+  // period. Used by the two interactive boards; clicking filters the table.
+  const managerStats = useMemo(() => {
+    const m = new Map<string, { count: number; money: number; clients: number }>()
+    for (const r of rows) {
+      if (!r.manager) continue
+      const e = m.get(r.manager) || { count: 0, money: 0, clients: 0 }
+      e.count += r.won_deals || 0
+      e.money += r.total_paid_value || 0
+      e.clients += 1
+      m.set(r.manager, e)
+    }
+    return [...m.entries()].map(([manager, v]) => ({ manager, ...v }))
+  }, [rows])
 
   const toggleSort = (col: string) =>
     sortCol === col ? setSortDir(d => (d === 1 ? -1 : 1)) : (setSortCol(col), setSortDir(1))
@@ -248,6 +315,14 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
       {/* Trend chart */}
       <TrendChart data={series} title={tx.chartTitle} />
 
+      {/* Sales-by-manager boards (interactive → filter the table) */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+        <ManagerBoard title={tx.boardCount} stats={managerStats} metric="count"
+          active={managerFilter} onPick={setManagerFilter} fmt={n => n.toLocaleString()} />
+        <ManagerBoard title={tx.boardMoney} note={tx.boardNote} stats={managerStats} metric="money"
+          active={managerFilter} onPick={setManagerFilter} fmt={fmtMoney} />
+      </div>
+
       {/* Filters + period */}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="tech-filters" style={{ flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
@@ -294,6 +369,13 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
       {rows.length > 0 && (
         <div className="filter-row" style={{ marginBottom: 8 }}>
           <input className="filter-input" placeholder={tx.search} value={search} onChange={e => setSearch(e.target.value)} />
+          {managerFilter && (
+            <button onClick={() => setManagerFilter("")} title="clear manager filter"
+              style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
+                background: "rgba(59,130,246,0.18)", color: "#60a5fa", border: "1px solid rgba(59,130,246,0.4)" }}>
+              👤 {managerFilter} ✕
+            </button>
+          )}
           <span className="filter-count">{tx.count(filtered.length.toLocaleString(), rows.length.toLocaleString())}</span>
           <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
         </div>
