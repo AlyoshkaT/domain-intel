@@ -26,12 +26,13 @@ async def status(as_of: str | None = None, date_from: str | None = None):
 
 
 @router.get("/timeseries")
-async def timeseries(date_from: str | None = None, date_to: str | None = None):
-    """Monthly Won/Open/Lost trend. Defaults to the last 12 months."""
+async def timeseries(date_from: str | None = None, date_to: str | None = None,
+                     manager: str | None = None):
+    """Monthly Won/Open/Lost trend. Defaults to the last 12 months. Optional manager filter."""
     dt = date.fromisoformat(date_to) if date_to else date.today()
     df = date.fromisoformat(date_from) if date_from else (dt - timedelta(days=365))
-    return {"series": get_timeseries(df.isoformat(), dt.isoformat()),
-            "date_from": df.isoformat(), "date_to": dt.isoformat()}
+    return {"series": get_timeseries(df.isoformat(), dt.isoformat(), manager or None),
+            "date_from": df.isoformat(), "date_to": dt.isoformat(), "manager": manager}
 
 
 @router.get("/sync_settings", dependencies=[require_permission("admin")])

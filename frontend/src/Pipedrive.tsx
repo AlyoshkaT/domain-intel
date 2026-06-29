@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react"
 import { type Lang } from "./i18n"
 
 const API = ""
@@ -187,23 +187,36 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   const [sortCol, setSortCol] = useState<string>("last_contact_at")
   const [sortDir, setSortDir] = useState<1 | -1>(-1)  // newest contact first → oldest
 
+  // Trend chart is server-computed; reload it for the current period + manager.
+  const loadSeries = useCallback(async (manager: string) => {
+    const mp = manager ? `&manager=${encodeURIComponent(manager)}` : ""
+    const ts = await apiFetch(`/api/pipedrive/timeseries?date_from=${dateFrom}&date_to=${dateTo}${mp}`)
+    setSeries(ts.series || [])
+  }, [dateFrom, dateTo])
+
   const load = useCallback(async () => {
     setLoading(true); setError("")
     try {
       const p = new URLSearchParams()
       if (dateTo) p.set("as_of", dateTo)
       if (dateFrom) p.set("date_from", dateFrom)
-      const [s, ts] = await Promise.all([
+      const [s] = await Promise.all([
         apiFetch(`/api/pipedrive/status?${p.toString()}`),
-        apiFetch(`/api/pipedrive/timeseries?date_from=${dateFrom}&date_to=${dateTo}`),
+        loadSeries(managerFilter),
       ])
       setRows(s.rows || [])
       setCompany(s.company || "")
-      setSeries(ts.series || [])
     } catch (e: any) { setError(e.message) } finally { setLoading(false) }
-  }, [dateFrom, dateTo])
+  }, [dateFrom, dateTo, managerFilter, loadSeries])
 
-  useEffect(() => { load() }, [])  // initial load only; subsequent loads via Apply
+  useEffect(() => { load() }, [])  // initial load only; period changes apply via the button
+
+  // Rebuild the trend chart whenever the selected manager changes (skip mount).
+  const mounted = useRef(false)
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return }
+    loadSeries(managerFilter).catch(() => {})
+  }, [managerFilter, loadSeries])
 
   const sync = useCallback(async () => {
     setSyncing(true); setError("")
@@ -313,7 +326,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
       </div>
 
       {/* Trend chart */}
-      <TrendChart data={series} title={tx.chartTitle} />
+      <TrendChart data={series} title={tx.chartTitle + (managerFilter ? ` · 👤 ${managerFilter}` : "")} />
 
       {/* Sales-by-manager boards (interactive → filter the table) */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>

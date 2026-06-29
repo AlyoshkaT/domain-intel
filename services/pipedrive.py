@@ -382,20 +382,22 @@ def get_status_rows(as_of: str | None = None, date_from: str | None = None) -> l
     return out
 
 
-def get_timeseries(date_from: str, date_to: str) -> list[dict]:
+def get_timeseries(date_from: str, date_to: str, manager: str | None = None) -> list[dict]:
     """Monthly deal-event counts over [date_from, date_to] for the trend chart:
       won  = distinct domains with a won payment that month (won_time),
       lost = distinct domains with a deal lost that month (lost_time),
       open = distinct domains with a deal created that month (add_time).
+    Optional manager filter restricts to that owner's deals.
     Cheap GROUP BY over the raw table. Empty list if not synced yet."""
     bq = client()
+    mclause = "AND manager = @mgr" if manager else ""
     q = f"""
         WITH ev AS (
-          SELECT domain, 'won'  AS kind, won_time  AS d FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE won_time  IS NOT NULL
+          SELECT domain, 'won'  AS kind, won_time  AS d FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE won_time  IS NOT NULL {mclause}
           UNION ALL
-          SELECT domain, 'lost' AS kind, lost_time AS d FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE lost_time IS NOT NULL
+          SELECT domain, 'lost' AS kind, lost_time AS d FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE lost_time IS NOT NULL {mclause}
           UNION ALL
-          SELECT domain, 'open' AS kind, add_time  AS d FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE status = 'open' AND add_time IS NOT NULL
+          SELECT domain, 'open' AS kind, add_time  AS d FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE status = 'open' AND add_time IS NOT NULL {mclause}
         )
         SELECT FORMAT_DATE('%Y-%m', d) AS month,
                COUNT(DISTINCT IF(kind='won',  domain, NULL)) AS won,
@@ -405,11 +407,12 @@ def get_timeseries(date_from: str, date_to: str) -> list[dict]:
         WHERE domain != '' AND d BETWEEN @df AND @dt
         GROUP BY month ORDER BY month
     """
+    params = [bigquery.ScalarQueryParameter("df", "DATE", date_from),
+              bigquery.ScalarQueryParameter("dt", "DATE", date_to)]
+    if manager:
+        params.append(bigquery.ScalarQueryParameter("mgr", "STRING", manager))
     try:
-        rows = bq.query(q, job_config=bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("df", "DATE", date_from),
-            bigquery.ScalarQueryParameter("dt", "DATE", date_to),
-        ])).result()
+        rows = bq.query(q, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
     except Exception:
         return []
     return [{"month": r["month"], "won": r["won"], "open": r["open"], "lost": r["lost"]} for r in rows]
