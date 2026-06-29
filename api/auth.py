@@ -131,6 +131,7 @@ async def auth_middleware(request: Request, call_next):
     # Static assets and health — always public (no auth dialog for JS/CSS/favicon)
     if (path.startswith("/assets/") or
             path.endswith(".json") and not path.startswith("/api/") or
+            path.startswith("/api/pipedrive/webhook") or  # Pipedrive can't send Basic Auth; guarded by URL secret
             path in ("/api/health", "/favicon.ico", "/favicon.png", "/robots.txt")):
         return await call_next(request)
 

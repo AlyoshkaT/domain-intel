@@ -949,6 +949,108 @@ function JobsSection({ lang }: { lang: Lang }) {
   )
 }
 
+// ── Pipedrive Sync ────────────────────────────────────────────────────────────
+
+function PipedriveSyncSection({ lang }: { lang: Lang }) {
+  const ua = lang === "ua"
+  const [freq, setFreq] = useState("off")
+  const [loading, setLoading] = useState(true)
+  const [toggling, setToggling] = useState(false)
+  const [manualSyncing, setManualSyncing] = useState(false)
+  const [msg, setMsg] = useState("")
+  const [msgSync, setMsgSync] = useState("")
+
+  useEffect(() => {
+    apiFetch("/api/pipedrive/sync_settings")
+      .then(r => { setFreq(r.frequency || "off"); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const setFrequency = async (f: string) => {
+    setToggling(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/pipedrive/sync_settings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frequency: f, base_url: window.location.origin }),
+      })
+      if (r.status === "error") { setMsg(t('setup_err', lang)(r.error)); return }
+      setFreq(f)
+      if (f === "online") {
+        const w = r.webhook
+        if (w?.status === "ok") setMsg(ua ? `Online увімкнено — webhook #${w.id} зареєстровано` : `Online enabled — webhook #${w.id} registered`)
+        else if (w?.status === "no_base_url") setMsg(ua ? "Не вдалося визначити публічний URL" : "Could not determine public URL")
+        else setMsg(ua ? `Webhook: ${w?.detail || w?.status || "?"}` : `Webhook: ${w?.detail || w?.status || "?"}`)
+      } else setMsg(t('setup_saved', lang))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setToggling(false) }
+  }
+
+  const manualSync = async () => {
+    if (!window.confirm(ua ? "Запустити повну синхронізацію з Pipedrive зараз?" : "Run a full Pipedrive sync now?")) return
+    setManualSyncing(true); setMsgSync("")
+    try {
+      const r = await apiFetch("/api/pipedrive/sync", { method: "POST" })
+      if (r.status === "error") setMsgSync(t('setup_err', lang)(r.error))
+      else setMsgSync(ua
+        ? `Готово: ${r.deals} угод → ${r.domains} доменів (${r.elapsed}с)`
+        : `Done: ${r.deals} deals → ${r.domains} domains (${r.elapsed}s)`)
+    } catch (e: any) { setMsgSync(t('setup_err', lang)(e.message)) }
+    finally { setManualSyncing(false) }
+  }
+
+  const OPTS: { f: string; label: string }[] = [
+    { f: "online", label: "Online" },
+    { f: "daily", label: ua ? "Щодня" : "Daily" },
+    { f: "weekly", label: ua ? "Щотижня" : "Weekly" },
+    { f: "monthly", label: ua ? "Щомісяця" : "Monthly" },
+    { f: "off", label: ua ? "Вимкнено" : "Off" },
+  ]
+
+  return (
+    <div className="card">
+      <div className="card-section-title">{ua ? "Синхронізація Pipedrive" : "Pipedrive sync"}</div>
+      <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, marginBottom: 12 }}>
+        {ua
+          ? "Як часто оновлювати статуси відносин із Pipedrive. «Online» реєструє webhook — Pipedrive надсилає зміни угод у реальному часі."
+          : "How often to refresh relationship statuses from Pipedrive. “Online” registers a webhook — Pipedrive pushes deal changes in real time."}
+      </p>
+      {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (<>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {OPTS.map(({ f, label }) => {
+            const active = freq === f
+            const isOff = f === "off"
+            const isOnline = f === "online"
+            const activeBg = isOff ? "rgba(239,68,68,0.2)" : isOnline ? "rgba(59,130,246,0.2)" : "rgba(52,211,153,0.2)"
+            const activeColor = isOff ? "#f87171" : isOnline ? "#60a5fa" : "#34d399"
+            return (
+              <button key={f} onClick={() => setFrequency(f)} disabled={toggling || active}
+                style={{
+                  padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                  border: active ? "none" : "1px solid var(--border)",
+                  cursor: toggling ? "wait" : active ? "default" : "pointer",
+                  background: active ? activeBg : "transparent",
+                  color: active ? activeColor : "var(--text-2)", transition: "all 0.2s",
+                }}>
+                {isOnline && "⚡ "}{label}
+              </button>
+            )
+          })}
+          {freq === "online" && <span style={{ fontSize: 12, color: "#60a5fa" }}>{ua ? "реальний час (webhook)" : "real-time (webhook)"}</span>}
+          {freq === "off" && <span style={{ fontSize: 12, color: "#f87171" }}>{ua ? "автосинхронізацію вимкнено" : "auto-sync paused"}</span>}
+        </div>
+        {msg && <div className="setup-msg" style={{ marginTop: 8 }}>{msg}</div>}
+
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+          <button className="btn-export" onClick={manualSync} disabled={manualSyncing}>
+            {manualSyncing ? (ua ? "Синхронізація…" : "Syncing…") : (ua ? "↻ Синхронізувати зараз" : "↻ Sync now")}
+          </button>
+          {msgSync && <span style={{ fontSize: 12, color: "var(--text-2)" }}>{msgSync}</span>}
+        </div>
+      </>)}
+    </div>
+  )
+}
+
 // ── Main Setup Page ───────────────────────────────────────────────────────────
 
 export default function SetupPage({ lang }: { lang: Lang }) {
@@ -965,6 +1067,8 @@ export default function SetupPage({ lang }: { lang: Lang }) {
       <UsersSection lang={lang} />
       <div style={{ height: 16 }} />
       <CacheSection lang={lang} />
+      <div style={{ height: 16 }} />
+      <PipedriveSyncSection lang={lang} />
       <div style={{ height: 16 }} />
       <JobsSection lang={lang} />
       <div style={{ height: 16 }} />

@@ -404,3 +404,140 @@ def get_status_for_domains(domains: list[str]) -> dict[str, dict]:
                 d[k] = v.isoformat()
         out[d["domain"]] = d
     return out
+
+
+# ── Sync frequency (off / monthly / weekly / daily / online) ────────────────
+
+SYNC_FREQ_KEY = "pipedrive_sync_frequency"
+WEBHOOK_ID_KEY = "pipedrive_webhook_id"
+WEBHOOK_SECRET_KEY = "pipedrive_webhook_secret"
+VALID_FREQ = {"off", "monthly", "weekly", "daily", "online"}
+
+
+def get_webhook_secret() -> str:
+    """Shared secret embedded in the webhook URL (?token=) to authenticate callbacks."""
+    from core.bigquery import get_setting, set_setting
+    s = get_setting(WEBHOOK_SECRET_KEY, "")
+    if not s:
+        import secrets as _secrets
+        s = _secrets.token_urlsafe(24)
+        set_setting(WEBHOOK_SECRET_KEY, s)
+    return s
+
+
+def get_sync_frequency() -> str:
+    from core.bigquery import get_setting
+    try:
+        f = get_setting(SYNC_FREQ_KEY, "off")
+        return f if f in VALID_FREQ else "off"
+    except Exception:
+        return "off"
+
+
+def set_sync_frequency(freq: str, base_url: str | None = None) -> dict:
+    """Persist the frequency. For 'online' register a Pipedrive webhook against
+    base_url (the public app origin); leaving 'online' removes it."""
+    from core.bigquery import set_setting
+    if freq not in VALID_FREQ:
+        raise ValueError(f"bad frequency: {freq}")
+    prev = get_sync_frequency()
+    set_setting(SYNC_FREQ_KEY, freq)
+    hook = None
+    if freq == "online":
+        hook = register_webhook(base_url) if base_url else {"status": "no_base_url"}
+    elif prev == "online":
+        unregister_webhook()
+    return {"status": "ok", "frequency": freq, "webhook": hook}
+
+
+# ── Online mode: Pipedrive webhooks + incremental update ────────────────────
+
+def register_webhook(base_url: str) -> dict:
+    """Create a Pipedrive webhook for all deal events → <base_url>/api/pipedrive/webhook.
+    Stores the webhook id so we can delete it later. Removes a stale one first."""
+    from core.bigquery import get_setting, set_setting
+    unregister_webhook()  # avoid duplicates
+    url = base_url.rstrip("/") + "/api/pipedrive/webhook?token=" + get_webhook_secret()
+    with httpx.Client(timeout=30) as cli:
+        r = cli.post(f"{_base()}/webhooks", params={"api_token": PIPEDRIVE_API_TOKEN}, json={
+            "subscription_url": url,
+            "event_action": "*",
+            "event_object": "deal",
+        })
+    if r.status_code >= 300:
+        logger.warning(f"pipedrive webhook register failed: {r.status_code} {r.text[:200]}")
+        return {"status": "error", "code": r.status_code, "detail": r.text[:200]}
+    wid = (((r.json() or {}).get("data")) or {}).get("id")
+    if wid:
+        set_setting(WEBHOOK_ID_KEY, str(wid))
+    logger.info(f"pipedrive webhook registered id={wid} → {url}")
+    return {"status": "ok", "id": wid, "url": url}
+
+
+def unregister_webhook() -> dict:
+    from core.bigquery import get_setting, set_setting
+    wid = get_setting(WEBHOOK_ID_KEY, "")
+    if not wid:
+        return {"status": "none"}
+    try:
+        with httpx.Client(timeout=30) as cli:
+            cli.delete(f"{_base()}/webhooks/{wid}", params={"api_token": PIPEDRIVE_API_TOKEN})
+    except Exception as e:
+        logger.debug(f"webhook delete: {e}")
+    set_setting(WEBHOOK_ID_KEY, "")
+    return {"status": "deleted", "id": wid}
+
+
+def fetch_deal(deal_id: int) -> dict | None:
+    with httpx.Client(timeout=30) as cli:
+        r = cli.get(f"{_base()}/deals/{deal_id}", params={"api_token": PIPEDRIVE_API_TOKEN})
+    if r.status_code >= 300:
+        return None
+    return (r.json() or {}).get("data")
+
+
+def _recompute_domains(domains: list[str]) -> None:
+    """Recompute pipedrive_status for the given domains from raw (delete + insert)."""
+    domains = sorted({d for d in domains if d})
+    if not domains:
+        return
+    bq = client()
+    raw = [r for r in _read_raw_deals() if r["domain"] in domains]
+    new_rows = _compute_status(raw)
+    bq.query(f"DELETE FROM `{table_ref(STATUS_TABLE)}` WHERE domain IN UNNEST(@d)",
+             job_config=bigquery.QueryJobConfig(query_parameters=[
+                 bigquery.ArrayQueryParameter("d", "STRING", domains)])).result()
+    if new_rows:
+        bq.insert_rows_json(table_ref(STATUS_TABLE), new_rows)
+
+
+def apply_webhook_event(payload: dict) -> dict:
+    """Incrementally apply one Pipedrive deal webhook event to BQ.
+    Upserts the changed deal in pipedrive_deals_raw and recomputes its domain(s)."""
+    bq = client()
+    meta = payload.get("meta") or {}
+    current = payload.get("current")
+    previous = payload.get("previous")
+    deal_id = (current or previous or {}).get("id") or meta.get("id")
+    if not deal_id:
+        return {"status": "ignored", "reason": "no deal id"}
+
+    affected = set()
+    # Remove any existing raw row for this deal.
+    bq.query(f"DELETE FROM `{table_ref(DEALS_RAW_TABLE)}` WHERE deal_id = @id",
+             job_config=bigquery.QueryJobConfig(query_parameters=[
+                 bigquery.ScalarQueryParameter("id", "INT64", int(deal_id))])).result()
+    if previous:
+        prev_org = previous.get("org_id")
+        prev_org_name = prev_org.get("name") if isinstance(prev_org, dict) else None
+        affected.add(normalize_domain(previous.get(F_DOMEN) or prev_org_name))
+
+    if current:  # created/updated → insert fresh row
+        row = _deal_row(current)
+        bq.insert_rows_json(table_ref(DEALS_RAW_TABLE), [row])
+        affected.add(row["domain"])
+
+    affected.discard("")
+    _recompute_domains(list(affected))
+    logger.info(f"pipedrive webhook: deal {deal_id} → domains {affected or '∅'}")
+    return {"status": "ok", "deal_id": deal_id, "domains": sorted(affected)}
