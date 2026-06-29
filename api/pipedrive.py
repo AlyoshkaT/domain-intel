@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter
 
 from api.auth import require_permission
+from config.settings import PIPEDRIVE_COMPANY_DOMAIN
 from services.pipedrive import sync_pipedrive, get_status_rows, get_timeseries
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,8 @@ router = APIRouter(prefix="/api/pipedrive", dependencies=[require_permission("pi
 async def status(as_of: str | None = None):
     """Relationship-status rows. Optional as_of=YYYY-MM-DD recomputes status as of that date."""
     rows = get_status_rows(as_of)
-    return {"rows": rows, "count": len(rows), "as_of": as_of}
+    return {"rows": rows, "count": len(rows), "as_of": as_of,
+            "company": PIPEDRIVE_COMPANY_DOMAIN}
 
 
 @router.get("/timeseries")

@@ -9,12 +9,15 @@ async function apiFetch(path: string, opts?: RequestInit) {
 }
 
 interface DealDetail {
+  deal_id: number
   title: string; status: string; value: number; currency: string
   won_time: string | null; lost_time: string | null; tariff: string
 }
 interface StatusRow {
   domain: string
   status_pipedrive: string
+  deals_status: string
+  main_deal_id: number | null
   paid_m1: boolean; paid_m2: boolean; paid_m3: boolean
   status_fact: string
   risk: string
@@ -52,7 +55,8 @@ const L = (lang: Lang) => ({
   asOf: lang === "ua" ? "статус станом на" : "status as of",
   thDomain: lang === "ua" ? "Домен" : "Domain",
   thOrg: lang === "ua" ? "Організація" : "Organization",
-  thPd: lang === "ua" ? "Угоди (Pipedrive)" : "Deals (Pipedrive)",
+  thNum: "DEALS №",
+  thPd: "DEALS Status",
   thFact: lang === "ua" ? "ФАКТ" : "FACT",
   thRisk: lang === "ua" ? "Ризик" : "Risk",
   thLast: lang === "ua" ? "Остання оплата" : "Last paid",
@@ -112,6 +116,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   const yearAgo = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10)
 
   const [rows, setRows] = useState<StatusRow[]>([])
+  const [company, setCompany] = useState("")
   const [series, setSeries] = useState<Point[]>([])
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -132,6 +137,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
         apiFetch(`/api/pipedrive/timeseries?date_from=${dateFrom}&date_to=${dateTo}`),
       ])
       setRows(s.rows || [])
+      setCompany(s.company || "")
       setSeries(ts.series || [])
     } catch (e: any) { setError(e.message) } finally { setLoading(false) }
   }, [dateFrom, dateTo, today])
@@ -163,7 +169,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   }, [rows, factFilter, riskFilter, search])
 
   const exportCSV = useCallback(() => {
-    const cols = ["domain", "org_name", "status_pipedrive", "status_fact", "risk",
+    const cols = ["domain", "org_name", "main_deal_id", "deals_status", "status_pipedrive", "status_fact", "risk",
       "paid_m1", "paid_m2", "paid_m3", "last_paid_at", "won_deals", "open_deals",
       "lost_deals", "total_deals", "total_paid_value", "currency", "computed_at"]
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`
@@ -179,6 +185,15 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
     borderRadius: "var(--radius)", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 110,
   }
   const dot = (v: boolean) => <span style={{ display: "inline-block", width: 11, height: 11, borderRadius: "50%", background: v ? "#22c55e" : "var(--border)", margin: "0 2px" }} />
+  const dealUrl = (id: number | null) => (id && company) ? `https://${company}.pipedrive.com/deal/${id}` : ""
+  const factOf = (s: string) => s === "won" ? "Won" : s === "open" ? "Open" : "Lost"
+  const dealNum = (id: number | null) => {
+    if (!id) return <span style={{ color: "var(--text-3)" }}>—</span>
+    const u = dealUrl(id)
+    return u
+      ? <a href={u} target="_blank" rel="noopener" onClick={e => e.stopPropagation()} style={{ fontFamily: "var(--mono)", fontSize: 11 }}>#{id}</a>
+      : <span style={{ fontFamily: "var(--mono)", fontSize: 11 }}>#{id}</span>
+  }
 
   return (
     <div className="page page-wide">
@@ -263,6 +278,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
               <tr>
                 <th>{tx.thDomain}</th>
                 <th>{tx.thOrg}</th>
+                <th>{tx.thNum}</th>
                 <th>{tx.thPd}</th>
                 <th>{tx.thFact}</th>
                 <th>{tx.thRisk}</th>
@@ -286,7 +302,11 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                         <a href={`https://${r.domain}`} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}>{r.domain}</a>
                       </td>
                       <td style={{ fontSize: 12, color: "var(--text-2)" }}>{r.org_name || "—"}</td>
-                      <td style={{ fontSize: 11, color: "var(--text-3)", whiteSpace: "nowrap" }}>{r.status_pipedrive}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {dealNum(r.main_deal_id)}
+                        {multi && <span style={{ color: "var(--text-3)", fontSize: 10, marginLeft: 4 }}>+{r.total_deals - 1}</span>}
+                      </td>
+                      <td><Badge text={r.deals_status} color={FACT_COLORS[factOf(r.deals_status)] || "#6b7280"} /></td>
                       <td><Badge text={r.status_fact} color={FACT_COLORS[r.status_fact] || "#6b7280"} /></td>
                       <td>{r.risk ? <Badge text={r.risk} color={RISK_COLORS[r.risk] || "#6b7280"} /> : ""}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{dot(r.paid_m1)}{dot(r.paid_m2)}{dot(r.paid_m3)}</td>
@@ -297,11 +317,12 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={8} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
+                        <td colSpan={9} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
                           <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>{tx.dealsHdr}</div>
                           {deals.map((d, j) => (
                             <div key={j} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, padding: "2px 0" }}>
-                              <Badge text={d.status} color={FACT_COLORS[d.status === "won" ? "Won" : d.status === "open" ? "Open" : "Lost"]} />
+                              <span style={{ minWidth: 64 }}>{dealNum(d.deal_id)}</span>
+                              <Badge text={d.status} color={FACT_COLORS[factOf(d.status)]} />
                               <span style={{ flex: 1 }}>{d.title || "—"}</span>
                               <span style={{ fontFamily: "var(--mono)", color: "var(--text-3)" }}>{d.won_time || d.lost_time || ""}</span>
                               <span style={{ fontFamily: "var(--mono)" }}>{d.value ? d.value.toLocaleString() : ""} {d.currency}</span>

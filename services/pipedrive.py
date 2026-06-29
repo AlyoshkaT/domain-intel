@@ -179,6 +179,24 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
         if lost_deals: mix.append(f"lost:{len(lost_deals)}")
         pd_status = " ".join(mix) or "—"
 
+        # Combined deal status: any won → won, else any open → open, else lost.
+        # (A single won deal makes the combined verdict "won" regardless of how
+        # many lost/open deals sit alongside it.)
+        if won:
+            deals_status = "won"
+        elif open_deals:
+            deals_status = "open"
+        else:
+            deals_status = "lost"
+
+        # The "main" deal whose number we surface: highest priority (won>open>lost),
+        # then most recent. Used for the DEALS № column / Pipedrive deep-link.
+        _prio = {"won": 3, "open": 2, "lost": 1}
+        main_deal = max(deals, key=lambda d: (
+            _prio.get(d["status"], 0),
+            d["won_time"] or d["lost_time"] or d["add_time"] or ""))
+        main_deal_id = main_deal["deal_id"]
+
         risk = ""
         if (not p1) and (not p2) and p3:
             risk = "Alarm"
@@ -192,14 +210,16 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
 
         # Per-deal breakdown so the dashboard can expand a domain with several deals.
         deals_detail = sorted(
-            ({"title": d["title"], "status": d["status"], "value": d["value"],
-              "currency": d["currency"], "won_time": d["won_time"],
+            ({"deal_id": d["deal_id"], "title": d["title"], "status": d["status"],
+              "value": d["value"], "currency": d["currency"], "won_time": d["won_time"],
               "lost_time": d["lost_time"], "tariff": d["tariff"]} for d in deals),
             key=lambda x: (x["won_time"] or x["lost_time"] or "", x["title"]), reverse=True)
 
         result.append({
             "domain": domain,
             "status_pipedrive": pd_status,
+            "deals_status": deals_status,
+            "main_deal_id": main_deal_id,
             "paid_m1": p1, "paid_m2": p2, "paid_m3": p3,
             "status_fact": fact,
             "risk": risk,
@@ -238,6 +258,8 @@ _DEALS_SCHEMA = [
 _STATUS_SCHEMA = [
     bigquery.SchemaField("domain", "STRING"),
     bigquery.SchemaField("status_pipedrive", "STRING"),
+    bigquery.SchemaField("deals_status", "STRING"),
+    bigquery.SchemaField("main_deal_id", "INTEGER"),
     bigquery.SchemaField("paid_m1", "BOOLEAN"),
     bigquery.SchemaField("paid_m2", "BOOLEAN"),
     bigquery.SchemaField("paid_m3", "BOOLEAN"),
@@ -287,7 +309,7 @@ def _read_raw_deals() -> list[dict]:
     """Read pipedrive_deals_raw back into the dict shape _compute_status expects."""
     bq = client()
     rows = bq.query(
-        f"""SELECT domain, status, value, currency, title, tariff, org_name,
+        f"""SELECT deal_id, domain, status, value, currency, title, tariff, org_name,
                    CAST(won_time AS STRING)  AS won_time,
                    CAST(lost_time AS STRING) AS lost_time,
                    CAST(add_time AS STRING)  AS add_time
