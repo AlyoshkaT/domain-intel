@@ -27,6 +27,7 @@ interface StatusRow {
   total_paid_value: number
   currency: string
   org_name: string
+  manager: string
   deals_json: string
   computed_at: string
 }
@@ -56,6 +57,7 @@ const L = (lang: Lang) => ({
   asOf: lang === "ua" ? "статус станом на" : "status as of",
   thDomain: lang === "ua" ? "Домен" : "Domain",
   thOrg: lang === "ua" ? "Організація" : "Organization",
+  thManager: "MANAGER",
   thNum: "DEALS №",
   thPd: "DEALS Status",
   dealsStatus: "STATUS DEALS",
@@ -190,7 +192,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
     sortCol === col ? setSortDir(d => (d === 1 ? -1 : 1)) : (setSortCol(col), setSortDir(1))
 
   const exportCSV = useCallback(() => {
-    const cols = ["domain", "org_name", "main_deal_id", "deals_status", "status_pipedrive", "status_fact", "risk",
+    const cols = ["domain", "org_name", "manager", "main_deal_id", "deals_status", "status_pipedrive", "status_fact", "risk",
       "paid_m1", "paid_m2", "paid_m3", "last_contact_at", "last_paid_at", "won_deals", "open_deals",
       "lost_deals", "total_deals", "total_paid_value", "currency", "computed_at"]
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`
@@ -307,6 +309,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                 {([
                   ["domain", tx.thDomain, "left"],
                   ["org_name", tx.thOrg, "left"],
+                  ["manager", tx.thManager, "left"],
                   ["main_deal_id", tx.thNum, "left"],
                   ["deals_status", tx.thPd, "left"],
                   ["status_fact", tx.thFact, "left"],
@@ -339,6 +342,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                         <a href={`https://${r.domain}`} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}>{r.domain}</a>
                       </td>
                       <td style={{ fontSize: 12, color: "var(--text-2)" }}>{r.org_name || "—"}</td>
+                      <td style={{ fontSize: 12, color: "var(--text-2)", whiteSpace: "nowrap" }}>{r.manager || "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         {dealNum(r.main_deal_id)}
                         {multi && <span style={{ color: "var(--text-3)", fontSize: 10, marginLeft: 4 }}>+{r.total_deals - 1}</span>}
@@ -355,7 +359,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={10} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
+                        <td colSpan={11} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
                           <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>{tx.dealsHdr}</div>
                           {deals.map((d, j) => (
                             <div key={j} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, padding: "2px 0" }}>

@@ -96,6 +96,8 @@ def _deal_row(d: dict) -> dict:
     org = d.get("org_id")
     org_name = org.get("name") if isinstance(org, dict) else None
     org_id = org.get("value") if isinstance(org, dict) else org
+    owner = d.get("user_id")  # deal owner = the manager responsible for the client
+    manager = owner.get("name") if isinstance(owner, dict) else None
     won = d.get("won_time") or None
     lost = d.get("lost_time") or None
     # Last contact (excluding payment): newest of last activity, in/out emails,
@@ -118,6 +120,7 @@ def _deal_row(d: dict) -> dict:
         "tariff": str(d.get(F_TARIFF) or ""),
         "org_id": org_id,
         "org_name": org_name or "",
+        "manager": manager or "",
     }
 
 
@@ -202,6 +205,9 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
             _prio.get(d["status"], 0),
             d["won_time"] or d["lost_time"] or d["add_time"] or ""))
         main_deal_id = main_deal["deal_id"]
+        # Manager = owner of the main deal; fall back to any deal that has one.
+        manager = main_deal.get("manager") or next(
+            (d["manager"] for d in deals if d.get("manager")), "")
 
         risk = ""
         if (not p1) and (not p2) and p3:
@@ -240,6 +246,7 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
             "total_paid_value": round(total_paid, 2),
             "currency": currency,
             "org_name": org_name,
+            "manager": manager,
             "deals_json": json.dumps(deals_detail, ensure_ascii=False),
             "computed_at": as_of_iso,
         })
@@ -263,6 +270,7 @@ _DEALS_SCHEMA = [
     bigquery.SchemaField("tariff", "STRING"),
     bigquery.SchemaField("org_id", "INTEGER"),
     bigquery.SchemaField("org_name", "STRING"),
+    bigquery.SchemaField("manager", "STRING"),
 ]
 
 _STATUS_SCHEMA = [
@@ -284,6 +292,7 @@ _STATUS_SCHEMA = [
     bigquery.SchemaField("total_paid_value", "FLOAT"),
     bigquery.SchemaField("currency", "STRING"),
     bigquery.SchemaField("org_name", "STRING"),
+    bigquery.SchemaField("manager", "STRING"),
     bigquery.SchemaField("deals_json", "STRING"),
     bigquery.SchemaField("computed_at", "DATE"),
 ]
@@ -320,7 +329,7 @@ def _read_raw_deals() -> list[dict]:
     """Read pipedrive_deals_raw back into the dict shape _compute_status expects."""
     bq = client()
     rows = bq.query(
-        f"""SELECT deal_id, domain, status, value, currency, title, tariff, org_name,
+        f"""SELECT deal_id, domain, status, value, currency, title, tariff, org_name, manager,
                    CAST(won_time AS STRING)  AS won_time,
                    CAST(lost_time AS STRING) AS lost_time,
                    CAST(add_time AS STRING)  AS add_time,
