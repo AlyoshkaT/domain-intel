@@ -98,6 +98,11 @@ def _deal_row(d: dict) -> dict:
     org_id = org.get("value") if isinstance(org, dict) else org
     won = d.get("won_time") or None
     lost = d.get("lost_time") or None
+    # Last contact (excluding payment): newest of last activity, in/out emails,
+    # stage change — i.e. last touch via call/meeting/email/contract step.
+    contact = max((str(d.get(k))[:10] for k in (
+        "last_activity_date", "last_incoming_mail_time", "last_outgoing_mail_time",
+        "stage_change_time") if d.get(k)), default=None)
     return {
         "deal_id": d.get("id"),
         "domain": normalize_domain(d.get(F_DOMEN) or org_name),
@@ -109,6 +114,7 @@ def _deal_row(d: dict) -> dict:
         "won_time": won[:10] if won else None,
         "lost_time": lost[:10] if lost else None,
         "add_time": (d.get("add_time") or "")[:10] or None,
+        "last_contact": contact,
         "tariff": str(d.get(F_TARIFF) or ""),
         "org_id": org_id,
         "org_name": org_name or "",
@@ -204,6 +210,8 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
             risk = "Churn"
 
         last_paid = max((d["won_time"] for d in won), default=None)
+        last_contact = max((d["last_contact"] for d in deals
+                            if d.get("last_contact") and d["last_contact"] <= as_of_iso), default=None)
         total_paid = sum(d["value"] for d in won)
         currency = (won[0]["currency"] if won else (deals[0]["currency"] if deals else "")) or ""
         org_name = next((d["org_name"] for d in deals if d["org_name"]), "")
@@ -224,6 +232,7 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
             "status_fact": fact,
             "risk": risk,
             "last_paid_at": last_paid,
+            "last_contact_at": last_contact,
             "won_deals": len(won),
             "open_deals": len(open_deals),
             "lost_deals": len(lost_deals),
@@ -250,6 +259,7 @@ _DEALS_SCHEMA = [
     bigquery.SchemaField("won_time", "DATE"),
     bigquery.SchemaField("lost_time", "DATE"),
     bigquery.SchemaField("add_time", "DATE"),
+    bigquery.SchemaField("last_contact", "DATE"),
     bigquery.SchemaField("tariff", "STRING"),
     bigquery.SchemaField("org_id", "INTEGER"),
     bigquery.SchemaField("org_name", "STRING"),
@@ -266,6 +276,7 @@ _STATUS_SCHEMA = [
     bigquery.SchemaField("status_fact", "STRING"),
     bigquery.SchemaField("risk", "STRING"),
     bigquery.SchemaField("last_paid_at", "DATE"),
+    bigquery.SchemaField("last_contact_at", "DATE"),
     bigquery.SchemaField("won_deals", "INTEGER"),
     bigquery.SchemaField("open_deals", "INTEGER"),
     bigquery.SchemaField("lost_deals", "INTEGER"),
@@ -312,7 +323,8 @@ def _read_raw_deals() -> list[dict]:
         f"""SELECT deal_id, domain, status, value, currency, title, tariff, org_name,
                    CAST(won_time AS STRING)  AS won_time,
                    CAST(lost_time AS STRING) AS lost_time,
-                   CAST(add_time AS STRING)  AS add_time
+                   CAST(add_time AS STRING)  AS add_time,
+                   CAST(last_contact AS STRING) AS last_contact
             FROM `{table_ref(DEALS_RAW_TABLE)}`"""
     ).result()
     return [dict(r) for r in rows]

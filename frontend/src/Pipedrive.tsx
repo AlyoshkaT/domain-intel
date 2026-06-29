@@ -22,6 +22,7 @@ interface StatusRow {
   status_fact: string
   risk: string
   last_paid_at: string | null
+  last_contact_at: string | null
   won_deals: number; open_deals: number; lost_deals: number; total_deals: number
   total_paid_value: number
   currency: string
@@ -61,6 +62,7 @@ const L = (lang: Lang) => ({
   thFact: lang === "ua" ? "ФАКТ" : "FACT",
   thRisk: lang === "ua" ? "Ризик" : "Risk",
   thLast: lang === "ua" ? "Остання оплата" : "Last paid",
+  thContact: "LAST CONTACT",
   thValue: lang === "ua" ? "Сума оплат" : "Paid total",
   months: lang === "ua" ? "Цей міс / −1 / −2" : "This mo / −1 / −2",
   dealsHdr: lang === "ua" ? "Угоди домену:" : "Deals for this domain:",
@@ -129,8 +131,8 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   const [dateFrom, setDateFrom] = useState(yearAgo)
   const [dateTo, setDateTo] = useState(today)
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [sortCol, setSortCol] = useState<string>("status_fact")
-  const [sortDir, setSortDir] = useState<1 | -1>(1)
+  const [sortCol, setSortCol] = useState<string>("last_contact_at")
+  const [sortDir, setSortDir] = useState<1 | -1>(-1)  // newest contact first → oldest
 
   const load = useCallback(async () => {
     setLoading(true); setError("")
@@ -189,7 +191,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
 
   const exportCSV = useCallback(() => {
     const cols = ["domain", "org_name", "main_deal_id", "deals_status", "status_pipedrive", "status_fact", "risk",
-      "paid_m1", "paid_m2", "paid_m3", "last_paid_at", "won_deals", "open_deals",
+      "paid_m1", "paid_m2", "paid_m3", "last_contact_at", "last_paid_at", "won_deals", "open_deals",
       "lost_deals", "total_deals", "total_paid_value", "currency", "computed_at"]
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`
     const csv = [cols.join(","), ...filtered.map(r => cols.map(c => esc((r as any)[c])).join(","))].join("\n")
@@ -310,6 +312,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                   ["status_fact", tx.thFact, "left"],
                   ["risk", tx.thRisk, "left"],
                   ["paid_m1", tx.months, "left"],
+                  ["last_contact_at", tx.thContact, "left"],
                   ["last_paid_at", tx.thLast, "left"],
                   ["total_paid_value", tx.thValue, "right"],
                 ] as [string, string, string][]).map(([col, label, align]) => (
@@ -344,6 +347,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                       <td><Badge text={r.status_fact} color={FACT_COLORS[r.status_fact] || "#6b7280"} /></td>
                       <td>{r.risk ? <Badge text={r.risk} color={RISK_COLORS[r.risk] || "#6b7280"} /> : ""}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{dot(r.paid_m1)}{dot(r.paid_m2)}{dot(r.paid_m3)}</td>
+                      <td style={{ fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>{r.last_contact_at || "—"}</td>
                       <td style={{ fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>{r.last_paid_at || "—"}</td>
                       <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>
                         {r.total_paid_value ? r.total_paid_value.toLocaleString() : "0"} {r.currency}
@@ -351,7 +355,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={9} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
+                        <td colSpan={10} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
                           <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>{tx.dealsHdr}</div>
                           {deals.map((d, j) => (
                             <div key={j} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, padding: "2px 0" }}>
