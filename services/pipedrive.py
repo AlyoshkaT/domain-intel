@@ -268,8 +268,20 @@ def _compute_status(rows: list[dict], today: date | None = None,
         last_paid = max((d["won_time"] for d in won), default=None)
         last_contact = max((d["last_contact"] for d in deals
                             if d.get("last_contact") and d["last_contact"] <= as_of_iso), default=None)
-        total_paid = sum(d["value"] for d in won)
-        currency = (won[0]["currency"] if won else (deals[0]["currency"] if deals else "")) or ""
+        # Paid total per currency — a domain can have deals in UAH/USD/EUR, so a
+        # plain sum would mix currencies. Show the primary (largest) currency total
+        # in the column, with the full breakdown kept for a tooltip.
+        paid_by_cur: dict[str, float] = defaultdict(float)
+        for d in won:
+            paid_by_cur[(d["currency"] or "?")] += d["value"]
+        if paid_by_cur:
+            currency = max(paid_by_cur, key=paid_by_cur.get)
+            total_paid = paid_by_cur[currency]
+        else:
+            currency = (deals[0]["currency"] if deals else "") or ""
+            total_paid = 0.0
+        paid_breakdown = ", ".join(f"{round(v):,} {c}"
+                                   for c, v in sorted(paid_by_cur.items(), key=lambda x: -x[1]))
         org_name = next((d["org_name"] for d in deals if d["org_name"]), "")
 
         # Per-deal breakdown so the dashboard can expand a domain with several deals.
@@ -295,6 +307,7 @@ def _compute_status(rows: list[dict], today: date | None = None,
             "total_deals": len(deals),
             "total_paid_value": round(total_paid, 2),
             "currency": currency,
+            "paid_breakdown": paid_breakdown,
             "org_name": org_name,
             "manager": manager,
             "tariff": tariff,
@@ -344,6 +357,7 @@ _STATUS_SCHEMA = [
     bigquery.SchemaField("total_deals", "INTEGER"),
     bigquery.SchemaField("total_paid_value", "FLOAT"),
     bigquery.SchemaField("currency", "STRING"),
+    bigquery.SchemaField("paid_breakdown", "STRING"),
     bigquery.SchemaField("org_name", "STRING"),
     bigquery.SchemaField("manager", "STRING"),
     bigquery.SchemaField("tariff", "STRING"),

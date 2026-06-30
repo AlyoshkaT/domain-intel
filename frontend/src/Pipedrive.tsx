@@ -26,6 +26,7 @@ interface StatusRow {
   won_deals: number; open_deals: number; lost_deals: number; total_deals: number
   total_paid_value: number
   currency: string
+  paid_breakdown: string
   org_name: string
   manager: string
   tariff: string
@@ -278,7 +279,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   const exportCSV = useCallback(() => {
     const cols = ["domain", "org_name", "manager", "main_deal_id", "tariff", "deals_status", "status_pipedrive", "status_fact", "risk",
       "paid_m1", "paid_m2", "paid_m3", "last_contact_at", "last_paid_at", "won_deals", "open_deals",
-      "lost_deals", "total_deals", "total_paid_value", "mrr", "currency", "computed_at"]
+      "lost_deals", "total_deals", "total_paid_value", "currency", "paid_breakdown", "mrr", "computed_at"]
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`
     const csv = [cols.join(","), ...filtered.map(r => cols.map(c => esc((r as any)[c])).join(","))].join("\n")
     const a = document.createElement("a")
@@ -455,8 +456,10 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                       <td style={{ whiteSpace: "nowrap" }}>{dot(r.paid_m1)}{dot(r.paid_m2)}{dot(r.paid_m3)}</td>
                       <td style={{ fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>{r.last_contact_at || "—"}</td>
                       <td style={{ fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>{r.last_paid_at || "—"}</td>
-                      <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>
+                      <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}
+                        title={r.paid_breakdown && r.paid_breakdown.includes(",") ? r.paid_breakdown : undefined}>
                         {r.total_paid_value ? r.total_paid_value.toLocaleString() : "0"} {r.currency}
+                        {r.paid_breakdown && r.paid_breakdown.includes(",") && <span style={{ color: "var(--text-3)", marginLeft: 3 }}>＊</span>}
                       </td>
                       <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap", color: r.mrr ? "#22c55e" : "var(--text-3)" }}>
                         {r.mrr ? Math.round(r.mrr).toLocaleString() : "—"}
