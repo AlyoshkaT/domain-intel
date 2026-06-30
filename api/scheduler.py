@@ -12,6 +12,7 @@ _scheduler_thread: threading.Thread | None = None
 _stop_event = threading.Event()
 _SYNC_HOUR_UTC = 4         # 04:00 UTC = 06:00 Kyiv (UTC+2 winter)
 _PIPEDRIVE_SYNC_HOUR_UTC = 2  # 02:00 UTC — Pipedrive relationship-status sync
+_PIPEDRIVE_MRR_HOUR_UTC = 1   # 01:00 UTC — Pipedrive MRR pull from corpBQ
 _PARSED_SYNC_HOUR_UTC = 3  # 03:00 UTC — sync corpBQ raw → privateBQ parsed, 1 hour before profiles sync
 _RESET_BQ_LIMIT_HOUR_UTC = 0  # 00:00 UTC — daily reset of BQ byte limit back to safe default
 
@@ -109,6 +110,27 @@ def _run_pipedrive_sync():
         logger.warning(f"Scheduled Pipedrive sync failed: {e}")
 
 
+def _pipedrive_mrr_should_sync_today(now: datetime) -> str:
+    from services.pipedrive import get_mrr_frequency
+    freq = get_mrr_frequency()
+    if freq == "off":
+        return ""
+    if freq == "weekly" and now.weekday() != 0:
+        return ""
+    if freq == "monthly" and now.day != 1:
+        return ""
+    return freq
+
+
+def _run_pipedrive_mrr_sync():
+    from services.pipedrive import sync_mrr_from_corp
+    logger.info("Scheduled Pipedrive MRR sync started")
+    try:
+        logger.info(f"Scheduled Pipedrive MRR sync done: {sync_mrr_from_corp()}")
+    except Exception as e:
+        logger.warning(f"Scheduled Pipedrive MRR sync failed: {e}")
+
+
 def _reset_bq_limit():
     """Reset BQ byte limit back to safe daily default. Runs at midnight UTC."""
     try:
@@ -130,6 +152,12 @@ def _scheduler_loop():
             logger.info("Daily BQ limit reset triggered")
             _reset_bq_limit()
             # Sleep 55 minutes to avoid double-trigger within same hour
+            _stop_event.wait(timeout=55 * 60)
+        elif now.hour == _PIPEDRIVE_MRR_HOUR_UTC and now.minute < 5:
+            freq = _pipedrive_mrr_should_sync_today(now)
+            if freq:
+                logger.info(f"Pipedrive MRR sync triggered (frequency={freq})")
+                threading.Thread(target=_run_pipedrive_mrr_sync, daemon=True, name="pipedrive-mrr-sync").start()
             _stop_event.wait(timeout=55 * 60)
         elif now.hour == _PIPEDRIVE_SYNC_HOUR_UTC and now.minute < 5:
             freq = _pipedrive_should_sync_today(now)

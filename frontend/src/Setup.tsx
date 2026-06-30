@@ -1051,6 +1051,91 @@ function PipedriveSyncSection({ lang }: { lang: Lang }) {
   )
 }
 
+// ── Pipedrive MRR (corpBQ source) ─────────────────────────────────────────────
+
+function MrrSyncSection({ lang }: { lang: Lang }) {
+  const ua = lang === "ua"
+  const [freq, setFreq] = useState("off")
+  const [loading, setLoading] = useState(true)
+  const [toggling, setToggling] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [msg, setMsg] = useState("")
+  const [msgSync, setMsgSync] = useState("")
+
+  useEffect(() => {
+    apiFetch("/api/pipedrive/mrr_settings")
+      .then(r => { setFreq(r.frequency || "off"); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const setFrequency = async (f: string) => {
+    setToggling(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/pipedrive/mrr_settings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frequency: f }),
+      })
+      if (r.status === "error") { setMsg(t('setup_err', lang)(r.error)); return }
+      setFreq(f); setMsg(t('setup_saved', lang))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setToggling(false) }
+  }
+
+  const manualSync = async () => {
+    if (!window.confirm(ua ? "Підтягнути MRR з corpBQ зараз? (~700 МБ скан corp)" : "Pull MRR from corpBQ now? (~700 MB corp scan)")) return
+    setSyncing(true); setMsgSync("")
+    try {
+      const r = await apiFetch("/api/pipedrive/mrr_sync", { method: "POST" })
+      if (r.status === "error") setMsgSync(t('setup_err', lang)(r.error))
+      else setMsgSync(ua ? `Готово: ${r.domains} доменів, ${r.mb_billed_corp} МБ corp (${r.elapsed}с)`
+        : `Done: ${r.domains} domains, ${r.mb_billed_corp} MB corp (${r.elapsed}s)`)
+    } catch (e: any) { setMsgSync(t('setup_err', lang)(e.message)) }
+    finally { setSyncing(false) }
+  }
+
+  const OPTS: { f: string; label: string }[] = [
+    { f: "daily", label: ua ? "Щодня" : "Daily" },
+    { f: "weekly", label: ua ? "Щотижня" : "Weekly" },
+    { f: "monthly", label: ua ? "Щомісяця" : "Monthly" },
+    { f: "off", label: ua ? "Вимкнено" : "Off" },
+  ]
+
+  return (
+    <div className="card">
+      <div className="card-section-title">{ua ? "Синхронізація MRR (corpBQ)" : "MRR sync (corpBQ)"}</div>
+      <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, marginBottom: 12 }}>
+        {ua
+          ? "MRR береться з corpBQ (підвʼязаний до іншої CRM, точніші суми) — окремо від Pipedrive. Один скан corp ~700 МБ за синк, дашборд читає лише маленьку private-таблицю."
+          : "MRR is pulled from corpBQ (tied to another CRM, more accurate) — separate from Pipedrive. One ~700 MB corp scan per sync; the dashboard only reads the small private table."}
+      </p>
+      {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (<>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {OPTS.map(({ f, label }) => {
+            const active = freq === f, isOff = f === "off"
+            return (
+              <button key={f} onClick={() => setFrequency(f)} disabled={toggling || active}
+                style={{
+                  padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                  border: active ? "none" : "1px solid var(--border)",
+                  cursor: toggling ? "wait" : active ? "default" : "pointer",
+                  background: active ? (isOff ? "rgba(239,68,68,0.2)" : "rgba(52,211,153,0.2)") : "transparent",
+                  color: active ? (isOff ? "#f87171" : "#34d399") : "var(--text-2)",
+                }}>{label}</button>
+            )
+          })}
+        </div>
+        {msg && <div className="setup-msg" style={{ marginTop: 8 }}>{msg}</div>}
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+          <button className="btn-export" onClick={manualSync} disabled={syncing}>
+            {syncing ? (ua ? "Синхронізація…" : "Syncing…") : (ua ? "↻ Підтягнути MRR зараз" : "↻ Pull MRR now")}
+          </button>
+          {msgSync && <span style={{ fontSize: 12, color: "var(--text-2)" }}>{msgSync}</span>}
+        </div>
+      </>)}
+    </div>
+  )
+}
+
 // ── Main Setup Page ───────────────────────────────────────────────────────────
 
 export default function SetupPage({ lang }: { lang: Lang }) {
@@ -1069,6 +1154,8 @@ export default function SetupPage({ lang }: { lang: Lang }) {
       <CacheSection lang={lang} />
       <div style={{ height: 16 }} />
       <PipedriveSyncSection lang={lang} />
+      <div style={{ height: 16 }} />
+      <MrrSyncSection lang={lang} />
       <div style={{ height: 16 }} />
       <JobsSection lang={lang} />
       <div style={{ height: 16 }} />

@@ -9,6 +9,7 @@ from config.settings import PIPEDRIVE_COMPANY_DOMAIN
 from services.pipedrive import (
     sync_pipedrive, get_status_rows, get_timeseries,
     get_sync_frequency, set_sync_frequency, get_webhook_secret, apply_webhook_event,
+    get_mrr_frequency, set_mrr_frequency, sync_mrr_from_corp,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,32 @@ async def sync():
         return sync_pipedrive()
     except Exception as e:
         logger.exception("pipedrive sync failed")
+        return {"status": "error", "error": str(e)}
+
+
+# ── MRR (corpBQ source, separate schedule) ──────────────────────────────────
+
+@router.get("/mrr_settings", dependencies=[require_permission("admin")])
+async def mrr_settings():
+    return {"frequency": get_mrr_frequency()}
+
+
+@router.post("/mrr_settings", dependencies=[require_permission("admin")])
+async def set_mrr_settings(request: Request):
+    body = await request.json()
+    try:
+        return set_mrr_frequency(body.get("frequency", "off"))
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/mrr_sync", dependencies=[require_permission("admin")])
+async def mrr_sync():
+    """Pull domain→MRR from corpBQ now (admin). ~700 MB corp scan."""
+    try:
+        return sync_mrr_from_corp()
+    except Exception as e:
+        logger.exception("pipedrive MRR sync failed")
         return {"status": "error", "error": str(e)}
 
 

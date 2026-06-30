@@ -28,6 +28,8 @@ interface StatusRow {
   currency: string
   org_name: string
   manager: string
+  tariff: string
+  mrr: number | null
   deals_json: string
   computed_at: string
 }
@@ -63,6 +65,8 @@ const L = (lang: Lang) => ({
   thOrg: lang === "ua" ? "Організація" : "Organization",
   thManager: "MANAGER",
   thNum: "DEALS №",
+  thTariff: "TARIFF",
+  thMrr: "MRR",
   thPd: "DEALS Status",
   dealsStatus: "STATUS DEALS",
   thFact: lang === "ua" ? "ФАКТ" : "FACT",
@@ -272,9 +276,9 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
     sortCol === col ? setSortDir(d => (d === 1 ? -1 : 1)) : (setSortCol(col), setSortDir(1))
 
   const exportCSV = useCallback(() => {
-    const cols = ["domain", "org_name", "manager", "main_deal_id", "deals_status", "status_pipedrive", "status_fact", "risk",
+    const cols = ["domain", "org_name", "manager", "main_deal_id", "tariff", "deals_status", "status_pipedrive", "status_fact", "risk",
       "paid_m1", "paid_m2", "paid_m3", "last_contact_at", "last_paid_at", "won_deals", "open_deals",
-      "lost_deals", "total_deals", "total_paid_value", "currency", "computed_at"]
+      "lost_deals", "total_deals", "total_paid_value", "mrr", "currency", "computed_at"]
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`
     const csv = [cols.join(","), ...filtered.map(r => cols.map(c => esc((r as any)[c])).join(","))].join("\n")
     const a = document.createElement("a")
@@ -406,6 +410,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                   ["org_name", tx.thOrg, "left"],
                   ["manager", tx.thManager, "left"],
                   ["main_deal_id", tx.thNum, "left"],
+                  ["tariff", tx.thTariff, "left"],
                   ["deals_status", tx.thPd, "left"],
                   ["status_fact", tx.thFact, "left"],
                   ["risk", tx.thRisk, "left"],
@@ -413,6 +418,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                   ["last_contact_at", tx.thContact, "left"],
                   ["last_paid_at", tx.thLast, "left"],
                   ["total_paid_value", tx.thValue, "right"],
+                  ["mrr", tx.thMrr, "right"],
                 ] as [string, string, string][]).map(([col, label, align]) => (
                   <th key={col} onClick={() => toggleSort(col)}
                     title={col === "paid_m1" ? tx.months : undefined}
@@ -442,6 +448,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                         {dealNum(r.main_deal_id)}
                         {multi && <span style={{ color: "var(--text-3)", fontSize: 10, marginLeft: 4 }}>+{r.total_deals - 1}</span>}
                       </td>
+                      <td style={{ fontSize: 11, color: "var(--text-2)", maxWidth: 180, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={r.tariff}>{r.tariff || "—"}</td>
                       <td><Badge text={r.deals_status} color={FACT_COLORS[factOf(r.deals_status)] || "#6b7280"} /></td>
                       <td><Badge text={r.status_fact} color={FACT_COLORS[r.status_fact] || "#6b7280"} /></td>
                       <td>{r.risk ? <Badge text={r.risk} color={RISK_COLORS[r.risk] || "#6b7280"} /> : ""}</td>
@@ -451,10 +458,13 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                       <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>
                         {r.total_paid_value ? r.total_paid_value.toLocaleString() : "0"} {r.currency}
                       </td>
+                      <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap", color: r.mrr ? "#22c55e" : "var(--text-3)" }}>
+                        {r.mrr ? Math.round(r.mrr).toLocaleString() : "—"}
+                      </td>
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={11} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
+                        <td colSpan={13} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
                           <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>{tx.dealsHdr}</div>
                           {deals.map((d, j) => (
                             <div key={j} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, padding: "2px 0" }}>

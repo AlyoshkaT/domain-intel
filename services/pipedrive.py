@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 DEALS_RAW_TABLE = "pipedrive_deals_raw"
 STATUS_TABLE = "pipedrive_status"
+MRR_TABLE = "pipedrive_mrr"  # domain → MRR, pulled from corpBQ on its own schedule
 
 # Custom deal field keys (discovered from /dealFields).
 F_DOMEN = "008b81ed34c02301397301892241ef26029fbd62"
@@ -45,14 +46,54 @@ F_TARIFF = "73cec5f72f2013cfc8479d276920416ba66561da"
 
 _PAGE = 500  # Pipedrive max page size for /deals
 
+# code(str) → human label for the Tariff plan (set) field, loaded once per sync
+# from /dealFields (free, Pipedrive API — no BigQuery cost).
+_TARIFF_LABELS: dict[str, str] = {}
+
+
+def _load_tariff_labels() -> dict[str, str]:
+    """Fetch the Tariff-plan field options from Pipedrive once; cache in-process."""
+    global _TARIFF_LABELS
+    try:
+        with httpx.Client(timeout=30) as cli:
+            r = cli.get(f"{_base()}/dealFields", params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 500})
+        for f in (r.json().get("data") or []):
+            if f.get("key") == F_TARIFF:
+                _TARIFF_LABELS = {str(o["id"]): o["label"] for o in (f.get("options") or [])}
+                break
+    except Exception as e:
+        logger.warning(f"tariff labels load failed: {e}")
+    return _TARIFF_LABELS
+
+
+def _tariff_label(codes: str) -> str:
+    """Map a comma-separated option-id string ("198,204") → "Name1, Name2"."""
+    if not codes:
+        return ""
+    if not _TARIFF_LABELS:
+        _load_tariff_labels()
+    return ", ".join(_TARIFF_LABELS.get(c.strip(), c.strip()) for c in str(codes).split(",") if c.strip())
+
 
 def _base() -> str:
     c = (PIPEDRIVE_COMPANY_DOMAIN or "").strip()
     return f"https://{c}.pipedrive.com/api/v1" if c else "https://api.pipedrive.com/v1"
 
 
+# Free-mail / public domains that leak in via the org_name fallback — not real clients.
+_PUBLIC_DOMAINS = {
+    "gmail.com", "mail.ru", "yandex.ru", "ukr.net", "bk.ru", "i.ua", "list.ru", "ya.ru",
+    "yahoo.com", "inbox.ru", "icloud.com", "rambler.ru", "hotmail.com", "outlook.com",
+    "yandex.ua", "meta.ua", "protonmail.com", "mail.ua", "bigmir.net", "ua.fm",
+    "yandex.com", "inbox.lv", "tut.by", "yandex.by", "mail.com", "me.com", "aol.com",
+    "gmail.ru", "email.ua", "proton.me", "googlemail.com",
+}
+_DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$")
+
+
 def normalize_domain(raw: str | None) -> str:
-    """Lower-case bare domain: strip scheme, path, query, leading www, trailing dot."""
+    """Lower-case bare domain: strip scheme, path, query, leading www, trailing dot.
+    Returns "" for junk (free-mail, non-domain text like "немає"/"-", malformed)."""
     if not raw:
         return ""
     s = str(raw).strip().lower()
@@ -61,7 +102,11 @@ def normalize_domain(raw: str | None) -> str:
     s = s.split("@")[-1]                     # stray email-ish prefix
     if s.startswith("www."):
         s = s[4:]
-    return s.strip().strip(".")
+    s = s.strip().strip(".")
+    # Drop noise: free-mail providers and anything that isn't a valid hostname.
+    if s in _PUBLIC_DOMAINS or not _DOMAIN_RE.match(s):
+        return ""
+    return s
 
 
 # ── Fetch ───────────────────────────────────────────────────────────────────
@@ -118,6 +163,7 @@ def _deal_row(d: dict) -> dict:
         "add_time": (d.get("add_time") or "")[:10] or None,
         "last_contact": contact,
         "tariff": str(d.get(F_TARIFF) or ""),
+        "tariff_label": _tariff_label(d.get(F_TARIFF) or ""),
         "org_id": org_id,
         "org_name": org_name or "",
         "manager": manager or "",
@@ -142,7 +188,8 @@ def _prev_months(today: date, n: int) -> list[str]:
     return out
 
 
-def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
+def _compute_status(rows: list[dict], today: date | None = None,
+                    mrr_map: dict | None = None) -> list[dict]:
     today = today or date.today()
     # Window of 3 calendar months INCLUDING the current one:
     #   m1 = current month, m2 = previous, m3 = two months ago.
@@ -208,6 +255,9 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
         # Manager = owner of the main deal; fall back to any deal that has one.
         manager = main_deal.get("manager") or next(
             (d["manager"] for d in deals if d.get("manager")), "")
+        # Tariff label of the main deal (fallback to any deal that has one).
+        tariff = main_deal.get("tariff_label") or next(
+            (d.get("tariff_label") for d in deals if d.get("tariff_label")), "")
 
         risk = ""
         if (not p1) and (not p2) and p3:
@@ -247,6 +297,8 @@ def _compute_status(rows: list[dict], today: date | None = None) -> list[dict]:
             "currency": currency,
             "org_name": org_name,
             "manager": manager,
+            "tariff": tariff,
+            "mrr": round(mrr_map.get(domain), 2) if (mrr_map and mrr_map.get(domain)) else None,
             "deals_json": json.dumps(deals_detail, ensure_ascii=False),
             "computed_at": as_of_iso,
         })
@@ -268,6 +320,7 @@ _DEALS_SCHEMA = [
     bigquery.SchemaField("add_time", "DATE"),
     bigquery.SchemaField("last_contact", "DATE"),
     bigquery.SchemaField("tariff", "STRING"),
+    bigquery.SchemaField("tariff_label", "STRING"),
     bigquery.SchemaField("org_id", "INTEGER"),
     bigquery.SchemaField("org_name", "STRING"),
     bigquery.SchemaField("manager", "STRING"),
@@ -293,6 +346,8 @@ _STATUS_SCHEMA = [
     bigquery.SchemaField("currency", "STRING"),
     bigquery.SchemaField("org_name", "STRING"),
     bigquery.SchemaField("manager", "STRING"),
+    bigquery.SchemaField("tariff", "STRING"),
+    bigquery.SchemaField("mrr", "FLOAT"),
     bigquery.SchemaField("deals_json", "STRING"),
     bigquery.SchemaField("computed_at", "DATE"),
 ]
@@ -312,9 +367,10 @@ def _load(table: str, schema: list, rows: list[dict]) -> None:
 def sync_pipedrive() -> dict:
     """Full sync: fetch all deals → pipedrive_deals_raw, compute → pipedrive_status."""
     t0 = time.time()
+    _load_tariff_labels()  # resolve tariff codes → names once (free, Pipedrive API)
     deals = _fetch_all_deals()
     rows = [_deal_row(d) for d in deals]
-    status = _compute_status(rows)
+    status = _compute_status(rows, mrr_map=_get_mrr_map())
     _load(DEALS_RAW_TABLE, _DEALS_SCHEMA, rows)
     _load(STATUS_TABLE, _STATUS_SCHEMA, status)
     elapsed = round(time.time() - t0, 1)
@@ -329,7 +385,8 @@ def _read_raw_deals() -> list[dict]:
     """Read pipedrive_deals_raw back into the dict shape _compute_status expects."""
     bq = client()
     rows = bq.query(
-        f"""SELECT deal_id, domain, status, value, currency, title, tariff, org_name, manager,
+        f"""SELECT deal_id, domain, status, value, currency, title, tariff, tariff_label,
+                   org_name, manager,
                    CAST(won_time AS STRING)  AS won_time,
                    CAST(lost_time AS STRING) AS lost_time,
                    CAST(add_time AS STRING)  AS add_time,
@@ -353,7 +410,7 @@ def get_status_rows(as_of: str | None = None, date_from: str | None = None) -> l
         try:
             ad = date.fromisoformat(as_of) if as_of else date.today()
             raw = _read_raw_deals()
-            rows = _compute_status(raw, ad)
+            rows = _compute_status(raw, ad, mrr_map=_get_mrr_map())
             if date_from:
                 end = ad.isoformat()
                 # A domain is "active in the period" if any of its deals has an
@@ -416,6 +473,80 @@ def get_timeseries(date_from: str, date_to: str, manager: str | None = None) -> 
     except Exception:
         return []
     return [{"month": r["month"], "won": r["won"], "open": r["open"], "lost": r["lost"]} for r in rows]
+
+
+# ── MRR from corpBQ (separate source + schedule) ────────────────────────────
+# MRR is NOT in Pipedrive (the deal.mrr field is empty); the accurate figures live
+# in corpBQ, tied to another CRM. We pull domain→MRR there ONCE per scheduled MRR
+# sync (~700 MB corp scan) into a tiny private table; the dashboard only ever reads
+# the private table, so day-to-day BQ traffic does not grow.
+
+MRR_FREQ_KEY = "pipedrive_mrr_frequency"
+
+
+def get_mrr_frequency() -> str:
+    from core.bigquery import get_setting
+    try:
+        f = get_setting(MRR_FREQ_KEY, "off")
+        return f if f in {"off", "monthly", "weekly", "daily"} else "off"
+    except Exception:
+        return "off"
+
+
+def set_mrr_frequency(freq: str) -> dict:
+    from core.bigquery import set_setting
+    if freq not in {"off", "monthly", "weekly", "daily"}:
+        raise ValueError(f"bad mrr frequency: {freq}")
+    set_setting(MRR_FREQ_KEY, freq)
+    return {"status": "ok", "frequency": freq}
+
+
+def sync_mrr_from_corp() -> dict:
+    """Pull domain→MRR from corpBQ into the private `pipedrive_mrr` table, then fold
+    MRR into pipedrive_status. One corp scan (~700 MB) per call — schedule sparsely."""
+    import time as _t
+    from core.bigquery import corp_client, CORP_PROJECT_ID, CORP_DATASET
+    t0 = _t.time()
+    cds = f"{CORP_PROJECT_ID}.{CORP_DATASET}"
+    sql = f"""
+        WITH latest_mrr AS (
+          SELECT OrganisationID, MRR,
+                 ROW_NUMBER() OVER (PARTITION BY OrganisationID ORDER BY DateDistributedM DESC) rn
+          FROM `{cds}.mrr_by_month_from_mv`
+        )
+        SELECT LOWER(p.lookup_domain_actual) AS domain, MAX(m.MRR) AS mrr
+        FROM `{cds}.primary_domains_orgs_mrr` p
+        JOIN latest_mrr m
+          ON CAST(m.OrganisationID AS STRING) = CAST(p.best_org_id AS STRING) AND m.rn = 1
+        WHERE p.lookup_domain_actual IS NOT NULL AND m.MRR > 0
+        GROUP BY domain
+    """
+    job = corp_client().query(sql)
+    rows = [{"domain": normalize_domain(r["domain"]), "mrr": float(r["mrr"])}
+            for r in job.result() if normalize_domain(r["domain"])]
+    schema = [bigquery.SchemaField("domain", "STRING"), bigquery.SchemaField("mrr", "FLOAT")]
+    _load(MRR_TABLE, schema, rows)
+    # Fold the fresh MRR into the precomputed status table (cheap: reads private raw).
+    try:
+        _load(STATUS_TABLE, _STATUS_SCHEMA, _compute_status(_read_raw_deals(), mrr_map=_get_mrr_map(fresh=rows)))
+    except Exception:
+        logger.exception("MRR fold into status failed")
+    mb = round((job.total_bytes_billed or 0) / 1e6)
+    logger.info(f"sync_mrr_from_corp: {len(rows)} domains, {mb} MB corp, {round(_t.time()-t0,1)}s")
+    return {"status": "ok", "domains": len(rows), "mb_billed_corp": mb,
+            "elapsed": round(_t.time() - t0, 1)}
+
+
+def _get_mrr_map(fresh: list[dict] | None = None) -> dict:
+    """domain → MRR from the private pipedrive_mrr table (or a freshly-built list)."""
+    if fresh is not None:
+        return {r["domain"]: r["mrr"] for r in fresh if r.get("domain")}
+    bq = client()
+    try:
+        rows = bq.query(f"SELECT domain, mrr FROM `{table_ref(MRR_TABLE)}`").result()
+        return {r["domain"]: r["mrr"] for r in rows if r["domain"]}
+    except Exception:
+        return {}
 
 
 def get_status_for_domains(domains: list[str]) -> dict[str, dict]:
