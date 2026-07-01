@@ -1049,7 +1049,20 @@ def sync_parsed_from_corp(full_scan: bool = False) -> dict:
                     CURRENT_TIMESTAMP() AS fetched_at,
                     COALESCE(JSON_VALUE(response_json, '$.Results[0].Result.Vertical'), '') AS bw_vertical,
                     '' AS bw_cms_raw,
-                    '' AS bw_ecommerce,
+                    -- Ecommerce platform = most-recent tech tagged shop/shopping-cart/ecommerce
+                    -- (Shopify, Magento, WooCommerce…). Reuses response_json already read here.
+                    IFNULL((
+                        SELECT JSON_VALUE(tech, '$.Name')
+                        FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
+                             UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
+                        WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
+                          AND EXISTS (
+                            SELECT 1 FROM UNNEST(JSON_VALUE_ARRAY(tech, '$.Tag')) AS tg
+                            WHERE LOWER(tg) IN ('shop', 'shopping-cart', 'ecommerce')
+                          )
+                        ORDER BY SAFE_CAST(JSON_VALUE(tech, '$.LastDetected') AS INT64) DESC
+                        LIMIT 1
+                    ), '') AS bw_ecommerce,
                     '' AS bw_email_marketing,
                     '[]' AS bw_technologies,
                     IFNULL((

@@ -16,9 +16,12 @@ logger = logging.getLogger(__name__)
 from config.settings import BQ_BUILTWITH_CACHE
 BUILTWITH_CACHE_TABLE = BQ_BUILTWITH_CACHE
 
-# Technology tag mappings
-CMS_TAGS = ["cms", "blog-software", "ecommerce"]
-ECOMMERCE_TAGS = ["ecommerce", "shopping-cart"]
+# Technology tag mappings.
+# NB: BuiltWith's actual tag for ecommerce platforms in our data is "shop"
+# (Shopify, Magento, WooCommerce…), NOT "ecommerce"/"shopping-cart" — matching
+# only the latter left bw_ecommerce permanently empty.
+CMS_TAGS = ["cms", "blog-software", "shop", "ecommerce"]
+ECOMMERCE_TAGS = ["shop", "shopping-cart", "ecommerce"]
 EMAIL_TAGS = ["email"]
 SEARCH_TAGS = ["site-search", "search"]
 
