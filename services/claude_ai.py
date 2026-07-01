@@ -144,6 +144,59 @@ def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
         logger.error(f"Corp AI save exception ({domain}): {e}")
 
 
+AI_MODEL = "claude-haiku-4-5"
+AI_MAX_TOKENS = 300
+
+
+def build_classification_prompt(domain: str, sw_title: str = "", sw_description: str = "",
+                                sw_category: str = "", bw_cms: str = "", bw_ecommerce: str = "",
+                                homepage_text: str = "") -> str:
+    """Build the classification prompt — shared by the live and Batch-API paths."""
+    cats_str = ", ".join(CATEGORIES)
+    subs_str = ", ".join(SUBCATEGORIES)
+    context_parts = []
+    if sw_title:       context_parts.append(f"Title: {sw_title}")
+    if sw_description: context_parts.append(f"Description: {sw_description[:300]}")
+    if sw_category:    context_parts.append(f"SW category: {sw_category}")
+    if bw_cms:         context_parts.append(f"CMS: {bw_cms}")
+    if bw_ecommerce:   context_parts.append(f"E-commerce platform: {bw_ecommerce}")
+    if homepage_text:  context_parts.append(f"Homepage text:\n{homepage_text[:1000]}")
+    context = "\n".join(context_parts) or f"Domain: {domain}"
+    return f"""Classify this website. Domain: {domain}
+
+{context}
+
+Respond ONLY with JSON (no markdown):
+{{
+  "category": "<one of: {cats_str}>",
+  "subcategory": "<one of: {subs_str}>",
+  "is_ecommerce": true or false,
+  "category_reasoning": "<1 sentence>",
+  "ecommerce_reasoning": "<1 sentence>"
+}}"""
+
+
+def parse_classification_text(text: str) -> Optional[dict]:
+    """Parse a model JSON reply into our ai_* fields — shared by live + batch."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    try:
+        parsed = json.loads(text.strip())
+    except json.JSONDecodeError:
+        return None
+    is_ecom = parsed.get("is_ecommerce", False)
+    return {
+        "ai_category":            parsed.get("category", "other"),
+        "ai_is_ecommerce":        "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
+        "ai_industry":            parsed.get("subcategory", "other"),
+        "ai_category_reasoning":  parsed.get("category_reasoning", ""),
+        "ai_ecommerce_reasoning": parsed.get("ecommerce_reasoning", ""),
+    }
+
+
 async def classify_domain(
     domain: str,
     sw_title: str = "",
@@ -158,30 +211,8 @@ async def classify_domain(
         logger.warning("ANTHROPIC_API_KEY not set")
         return None
 
-    cats_str = ", ".join(CATEGORIES)
-    subs_str = ", ".join(SUBCATEGORIES)
-
-    context_parts = []
-    if sw_title:       context_parts.append(f"Title: {sw_title}")
-    if sw_description: context_parts.append(f"Description: {sw_description[:300]}")
-    if sw_category:    context_parts.append(f"SW category: {sw_category}")
-    if bw_cms:         context_parts.append(f"CMS: {bw_cms}")
-    if bw_ecommerce:   context_parts.append(f"E-commerce platform: {bw_ecommerce}")
-    if homepage_text:  context_parts.append(f"Homepage text:\n{homepage_text[:1000]}")
-    context = "\n".join(context_parts) or f"Domain: {domain}"
-
-    prompt = f"""Classify this website. Domain: {domain}
-
-{context}
-
-Respond ONLY with JSON (no markdown):
-{{
-  "category": "<one of: {cats_str}>",
-  "subcategory": "<one of: {subs_str}>",
-  "is_ecommerce": true or false,
-  "category_reasoning": "<1 sentence>",
-  "ecommerce_reasoning": "<1 sentence>"
-}}"""
+    prompt = build_classification_prompt(domain, sw_title, sw_description, sw_category,
+                                         bw_cms, bw_ecommerce, homepage_text)
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:

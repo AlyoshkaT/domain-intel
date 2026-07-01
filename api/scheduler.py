@@ -145,8 +145,22 @@ def _reset_bq_limit():
 def _scheduler_loop():
     """Check every 5 minutes if it's time to sync (daily at 00:00, 03:00 and 04:00 UTC)."""
     import time
+    _last_ai_poll = 0.0
     while not _stop_event.is_set():
         _flush_call_stats()   # flush counters every 5-min tick
+        # Apply any completed AI batches (Safe mode) — cheap: one query + retrieve
+        # per in-flight batch. Throttled to ~every 5 min.
+        if time.time() - _last_ai_poll > 290:
+            _last_ai_poll = time.time()
+            try:
+                from services.claude_batch import poll_pending_batches
+                res = poll_pending_batches()
+                if res.get("applied_now"):
+                    logger.info(f"AI batch poll: {res}")
+                    from api.explorer import invalidate_profiles_cache
+                    invalidate_profiles_cache()
+            except Exception as e:
+                logger.debug(f"AI batch poll: {e}")
         now = datetime.utcnow()
         if now.hour == _RESET_BQ_LIMIT_HOUR_UTC and now.minute < 5:
             logger.info("Daily BQ limit reset triggered")
