@@ -11,7 +11,7 @@ async function apiFetch(path: string, opts?: RequestInit) {
 interface DealDetail {
   deal_id: number
   title: string; status: string; value: number; currency: string
-  won_time: string | null; lost_time: string | null; tariff: string
+  won_time: string | null; lost_time: string | null; add_time: string | null; tariff: string
 }
 interface StatusRow {
   domain: string
@@ -474,8 +474,14 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                               <span style={{ minWidth: 64 }}>{dealNum(d.deal_id)}</span>
                               <Badge text={d.status} color={FACT_COLORS[factOf(d.status)]} />
                               <span style={{ flex: 1 }}>{d.title || "—"}</span>
-                              <span style={{ fontFamily: "var(--mono)", color: "var(--text-3)" }}>{d.won_time || d.lost_time || ""}</span>
-                              <span style={{ fontFamily: "var(--mono)" }}>{d.value ? d.value.toLocaleString() : ""} {d.currency}</span>
+                              <span style={{ fontFamily: "var(--mono)", color: "var(--text-3)" }}>
+                                {d.status === "won" ? `💰 ${d.won_time || ""}`
+                                  : d.status === "lost" ? `✕ ${d.lost_time || ""}`
+                                  : `↗ ${d.add_time || ""}`}
+                              </span>
+                              <span style={{ fontFamily: "var(--mono)", color: d.status === "won" ? "var(--text)" : "var(--text-3)" }}>
+                                {d.value ? d.value.toLocaleString() : "0"} {d.currency}
+                              </span>
                             </div>
                           ))}
                         </td>

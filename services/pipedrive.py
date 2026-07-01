@@ -288,7 +288,7 @@ def _compute_status(rows: list[dict], today: date | None = None,
         deals_detail = sorted(
             ({"deal_id": d["deal_id"], "title": d["title"], "status": d["status"],
               "value": d["value"], "currency": d["currency"], "won_time": d["won_time"],
-              "lost_time": d["lost_time"], "tariff": d["tariff"]} for d in deals),
+              "lost_time": d["lost_time"], "add_time": d["add_time"], "tariff": d["tariff"]} for d in deals),
             key=lambda x: (x["won_time"] or x["lost_time"] or "", x["title"]), reverse=True)
 
         result.append({
