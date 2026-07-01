@@ -63,6 +63,7 @@ async def process_domain(
     username: str = "",
     skip_redirect: bool = False,
     priority: bool = False,
+    ai_mode: str = "speed",
 ) -> dict:
     domain = _clean_domain(domain)
 
@@ -321,6 +322,19 @@ async def process_domain(
             result["ai_category"]     = ai_cached.get("ai_category")
             result["ai_is_ecommerce"] = ai_cached.get("ai_is_ecommerce")
             result["ai_industry"]     = ai_cached.get("ai_industry")
+        elif "ai" in services and ai_mode == "safe":
+            # Safe/thrifty mode: don't classify live. Emit a batch item so the job
+            # can submit all AI requests to the Batch API (−50%, async).
+            homepage_text = await fetch_homepage_text(working_domain)
+            result["_ai_batch_item"] = {
+                "domain": working_domain,
+                "sw_title": result.get("sw_title") or "",
+                "sw_description": result.get("sw_description") or "",
+                "sw_category": result.get("sw_category") or "",
+                "bw_cms": result.get("cms_list") or "",
+                "bw_ecommerce": result.get("bw_ecommerce") or "",
+                "homepage_text": homepage_text,
+            }
         elif "ai" in services:
             async with api_slot("ai", priority):
                 homepage_text = await fetch_homepage_text(working_domain)

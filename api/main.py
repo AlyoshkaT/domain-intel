@@ -298,6 +298,7 @@ async def create_job_endpoint(
     file: UploadFile = File(...),
     services: str = Form(...),
     force_refresh: str = Form(default="false"),
+    ai_mode: str = Form(default="safe"),
 ):
     content = await file.read()
     domains = _parse_domains_from_file(content, file.filename or "upload.csv")
@@ -311,8 +312,10 @@ async def create_job_endpoint(
         raise HTTPException(status_code=400, detail="No valid services selected")
 
     fr = force_refresh.lower() == "true"
+    aim = "safe" if str(ai_mode).lower() == "safe" else "speed"
     username = getattr(request.state, "username", "unknown")
-    job_id = start_job(domains, services_list, file.filename or "upload.csv", force_refresh=fr, username=username)
+    job_id = start_job(domains, services_list, file.filename or "upload.csv", force_refresh=fr,
+                       username=username, ai_mode=aim)
     try:
         from core.bigquery import log_activity
         log_activity(username, "job_created", {

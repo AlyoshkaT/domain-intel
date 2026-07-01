@@ -157,6 +157,7 @@ function JobStatusLine({ job, lang }: { job: Job; lang: Lang }) {
 // ─── Page: New Job ─────────────────────────────────────────────────────────────
 function NewJobPage({ onJobCreated, lang }: { onJobCreated: (id: string) => void; lang: Lang }) {
   const [services, setServices] = useState<string[]>(["similarweb"])
+  const [aiMode, setAiMode] = useState<"safe" | "speed">("safe")
   const [file, setFile] = useState<File | null>(null)
   const [manualDomains, setManualDomains] = useState("")
   const [dragging, setDragging] = useState(false)
@@ -204,6 +205,7 @@ function NewJobPage({ onJobCreated, lang }: { onJobCreated: (id: string) => void
       fd.append("file", sendFile)
       fd.append("services", JSON.stringify(services))
       fd.append("force_refresh", String(forceRefresh))
+      fd.append("ai_mode", aiMode)
       const res = await fetch("/api/jobs", { method: "POST", body: fd })
       if (!res.ok) { const e = await res.json().catch(() => ({ detail: "Error" })); throw new Error(e.detail) }
       const data = await res.json()
@@ -231,6 +233,22 @@ function NewJobPage({ onJobCreated, lang }: { onJobCreated: (id: string) => void
         <div className="services-grid">
           {serviceOptions.map(s => <ServiceToggle key={s.id} id={s.id} label={s.label} sublabel={s.sublabel} checked={services.includes(s.id)} onChange={() => toggle(s.id)} />)}
         </div>
+        {services.includes("ai") && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+            <span style={{ fontSize: 12, color: "var(--text-3)" }}>{lang === "ua" ? "Режим AI:" : "AI mode:"}</span>
+            <button className={`gran-btn${aiMode === "safe" ? " active" : ""}`} onClick={() => setAiMode("safe")}
+              title={lang === "ua" ? "Batch API −50%, результат асинхронно (нічний/ощадливий)" : "Batch API −50%, async results (night/thrifty)"}>
+              🌙 {lang === "ua" ? "Ощадливий" : "Safe"}
+            </button>
+            <button className={`gran-btn${aiMode === "speed" ? " active" : ""}`} onClick={() => setAiMode("speed")}
+              title={lang === "ua" ? "Живі виклики, миттєво, повна ціна" : "Live calls, immediate, full price"}>
+              ⚡ {lang === "ua" ? "Швидкий" : "Speed"}
+            </button>
+            <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+              {aiMode === "safe" ? (lang === "ua" ? "−50%, результат за ~годину" : "−50%, results in ~1h") : (lang === "ua" ? "миттєво, повна ціна" : "instant, full price")}
+            </span>
+          </div>
+        )}
       </div>
       <div className="card">
         <div className="card-section-title">{t('new_manual_title', lang)}</div>

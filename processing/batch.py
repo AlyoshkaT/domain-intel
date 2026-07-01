@@ -114,6 +114,7 @@ async def run_batch_job(
     job_id: str, domains: list[str], services: list[str],
     force_refresh: bool = False, username: str = "",
     processed_offset: int = 0, failed_offset: int = 0,
+    ai_mode: str = "speed",
 ):
     """
     Main batch processing coroutine. Runs in background.
@@ -186,6 +187,8 @@ async def run_batch_job(
     if is_priority:
         priority_job_started()
 
+    ai_batch_items: list[dict] = []  # Safe mode: collected for one Batch-API submit
+
     async def process_one(domain: str):
         nonlocal processed, failed
         async with semaphore:
@@ -195,7 +198,11 @@ async def run_batch_job(
                 username=username,
                 skip_redirect=force_refresh,
                 priority=is_priority,
+                ai_mode=ai_mode,
             )
+            item = result.pop("_ai_batch_item", None)  # keep it out of the BQ row
+            if item:
+                ai_batch_items.append(item)
             await asyncio.to_thread(save_result, result)
 
             if result["status"] == "error":
@@ -240,6 +247,17 @@ async def run_batch_job(
         logger.error(f"Job {job_id}: failed to persist final state to BQ: {e}")
 
     logger.info(f"Job {job_id} finished: {processed} ok, {failed} failed")
+
+    # Safe/thrifty AI mode: submit all collected classifications as one Batch
+    # (−50%, async). Results are applied later by the scheduler poller.
+    if ai_batch_items:
+        try:
+            from services.claude_batch import submit_classification_batch
+            out = await asyncio.to_thread(submit_classification_batch, ai_batch_items, job_id)
+            logger.info(f"Job {job_id}: AI Safe batch submitted — {out}")
+        except Exception as e:
+            logger.error(f"Job {job_id}: AI batch submit failed: {e}", exc_info=True)
+
     # Clear shared prefetch caches only when no OTHER job is still running —
     # clearing mid-flight would force parallel jobs onto per-domain corpBQ
     # slow-path queries (billed 10MB minimum each).
@@ -363,10 +381,12 @@ def resume_job(job_id: str, username: str = "") -> dict:
     return {"ok": True, "remaining": len(remaining), "already_done": already_done}
 
 
-def start_job(domains: list[str], services: list[str], filename: str, force_refresh: bool = False, username: str = "") -> str:
+def start_job(domains: list[str], services: list[str], filename: str, force_refresh: bool = False,
+              username: str = "", ai_mode: str = "speed") -> str:
     """
     Create a new job in BQ and launch background task.
-    Returns job_id.
+    ai_mode: "safe" routes AI classification through the Batch API (−50%, async);
+    "speed" classifies live at full price. Returns job_id.
     """
     job_id = str(uuid.uuid4())
     create_job(job_id, len(domains), services, filename, created_by=username)
@@ -378,7 +398,8 @@ def start_job(domains: list[str], services: list[str], filename: str, force_refr
         logger.warning(f"Could not save job domains for {job_id}: {e}")
 
     loop = asyncio.get_event_loop()
-    task = loop.create_task(run_batch_job(job_id, domains, services, force_refresh=force_refresh, username=username))
+    task = loop.create_task(run_batch_job(job_id, domains, services, force_refresh=force_refresh,
+                                          username=username, ai_mode=ai_mode))
     _active_jobs[job_id] = task
 
     # Cleanup on completion

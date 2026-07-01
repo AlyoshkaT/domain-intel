@@ -720,6 +720,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
   }
 
   const [refreshServices, setRefreshServices] = useState<string[]>([])
+  const [aiMode, setAiMode] = useState<"safe" | "speed">("safe")
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState("")
 
@@ -767,6 +768,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
       const file = new File([domains], "domains_refresh.txt", { type: "text/plain" })
       const fd = new FormData()
       fd.append("file", file); fd.append("services", JSON.stringify(refreshServices)); fd.append("force_refresh", "true")
+      fd.append("ai_mode", aiMode)
       const res = await fetch("/api/jobs", { method: "POST", body: fd })
       if (!res.ok) throw new Error("Failed")
       setRefreshMsg(t('expl_refresh_started', lang)(filteredProfiles.length.toLocaleString(), refreshServices.join(", ")))
@@ -818,6 +820,12 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
                       onClick={() => toggleRefreshService(s.id)}>{s.label}</button>
                   ))}
                 </div>
+                {refreshServices.includes("ai") && (
+                  <div className="gran-btns" title="AI Safe = Batch API −50%, async · Speed = live, full price">
+                    <button className={`gran-btn${aiMode === "safe" ? " active" : ""}`} onClick={() => setAiMode("safe")}>AI Safe</button>
+                    <button className={`gran-btn${aiMode === "speed" ? " active" : ""}`} onClick={() => setAiMode("speed")}>AI Speed</button>
+                  </div>
+                )}
                 <button className="btn-export" onClick={handleForceRefresh}
                   disabled={refreshing || refreshServices.length === 0}>
                   {refreshing ? "⏳" : "↻"} {filteredProfiles.length.toLocaleString()}
