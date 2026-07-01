@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useEffect } from "react"
 import { t, type Lang } from "./i18n"
 
 const API = ""
@@ -9,7 +9,7 @@ async function apiFetch(path: string, opts?: RequestInit) {
 }
 
 interface Series { name: string; data: number[]; total: number }
-interface TableRow { domain: string; name: string; description: string; link: string; tag: string; first_detected: string; last_detected: string }
+interface TableRow { domain: string; name: string; categories: string; description: string; link: string; tag: string; first_detected: string; last_detected: string }
 interface AggResult { periods: string[]; series: Series[]; table: TableRow[]; unknown_count: number; unknown_top: [string,number][]; total_domains: number; error?: string }
 
 const COLORS = ["#6366f1","#22c55e","#f59e0b","#ef4444","#3b82f6","#a855f7","#14b8a6","#f97316","#ec4899","#64748b","#84cc16","#06b6d4","#8b5cf6","#d97706","#059669"]
@@ -117,6 +117,140 @@ function MonthPicker({ value, onChange }: { value: string; onChange: (v: string)
   )
 }
 
+// Per-site filter: ALL / "selected together" / one site — as quick toggle chips, plus
+// a dropdown to edit the working set. Switching re-aggregates from the server cache.
+function SiteFilter({ domains, pinned, active, onAll, onPin, onViewAll, onViewSite, lang }: {
+  domains: string[]; pinned: string[]; active: string | null
+  onAll: () => void; onPin: (sub: string[]) => void; onViewAll: () => void; onViewSite: (s: string) => void; lang: Lang
+}) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState("")
+  const [sel, setSel] = useState<string[]>(pinned)
+  const [win, setWin] = useState(0)   // carousel window offset
+  const WIN = 4
+  const sorted = useMemo(() => [...domains].sort((a, b) => a.localeCompare(b)), [domains])
+  const matched = useMemo(() => {
+    const term = q.trim().toLowerCase()
+    return term ? sorted.filter(d => d.toLowerCase().includes(term)) : sorted
+  }, [sorted, q])
+  const LIST_CAP = 2000
+  const shown = matched.slice(0, LIST_CAP)
+  const toggle = (d: string) => setSel(s => s.includes(d) ? s.filter(x => x !== d) : [...s, d])
+
+  // keep window in range when the set changes / a site is focused
+  useEffect(() => {
+    const i = active ? pinned.indexOf(active) : -1
+    if (i >= 0 && (i < win || i >= win + WIN)) setWin(Math.max(0, Math.min(i, pinned.length - WIN)))
+    else if (win > Math.max(0, pinned.length - WIN)) setWin(0)
+  }, [active, pinned]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const trunc = (d: string) => d.length > 20 ? d.slice(0, 19) + "…" : d
+  const hasArrows = pinned.length > WIN
+  const winSites = pinned.slice(win, win + WIN)
+
+  return (
+    <div className="site-select">
+      <div className="gran-btns" style={{ flexWrap: "wrap", alignItems: "center" }}>
+        <button className={`gran-btn${pinned.length === 0 ? " active" : ""}`} onClick={onAll}>
+          {t('tech_sites_all', lang)(domains.length)}
+        </button>
+        {pinned.length > 0 && (
+          <>
+            <button className={`gran-btn${active === null ? " active" : ""}`} onClick={onViewAll}>
+              ⊞ {t('tech_sites_sel', lang)(pinned.length)}
+            </button>
+            {hasArrows && <button className="gran-btn" disabled={win <= 0} onClick={() => setWin(w => Math.max(0, w - WIN))} title={t('tech_sites_prev', lang)}>◀</button>}
+            {winSites.map(d => (
+              <button key={d} className={`gran-btn${active === d ? " active" : ""}`} onClick={() => onViewSite(d)} title={d}>{trunc(d)}</button>
+            ))}
+            {hasArrows && <button className="gran-btn" disabled={win + WIN >= pinned.length} onClick={() => setWin(w => Math.min(pinned.length - WIN, w + WIN))} title={t('tech_sites_next', lang)}>▶</button>}
+          </>
+        )}
+        <button className="gran-btn" onClick={() => { setSel(pinned); setQ(""); setOpen(o => !o) }}>▾</button>
+      </div>
+      {open && (
+        <div className="site-select-panel">
+          <input className="filter-input" placeholder={t('expl_ph_search', lang)} value={q}
+            onChange={e => setQ(e.target.value)} style={{ marginBottom: 4 }} />
+          <div className="site-select-list">
+            {shown.map(d => (
+              <label key={d} className="tech-search-row">
+                <input type="checkbox" checked={sel.includes(d)} onChange={() => toggle(d)} />
+                <span className="tech-search-name">{d}</span>
+              </label>
+            ))}
+          </div>
+          {matched.length > LIST_CAP && (
+            <div style={{ fontSize: 10, color: "var(--text-3)", padding: "4px 2px 0" }}>
+              {t('tech_sites_more', lang)(shown.length, matched.length)}
+            </div>
+          )}
+          <button className="btn-primary" style={{ width: "100%", marginTop: 6, padding: "5px 0", fontSize: 13 }}
+            onClick={() => { setOpen(false); onPin(sel) }}>
+            {t('tech_sites_apply', lang)(sel.length)}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Layer 2: co-occurrence / temporal-overlap of 2+ technologies across the domain set.
+function CoOccur({ domains, subset, techs, dateFrom, dateTo, onShowDomains, lang }: {
+  domains: string[]; subset: string[]; techs: string[]; dateFrom: string; dateTo: string
+  onShowDomains: (domains: string[]) => void; lang: Lang
+}) {
+  const [sel, setSel] = useState<string[]>([])
+  const [res, setRes] = useState<any>(null)
+  const [busy, setBusy] = useState(false)
+  const toggle = (tn: string) => { setRes(null); setSel(s => s.includes(tn) ? s.filter(x => x !== tn) : [...s, tn]) }
+  const analyze = async () => {
+    if (sel.length < 2) return
+    setBusy(true)
+    try {
+      const r = await apiFetch("/api/technologies/cooccurrence", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains: domains.slice(0, 10000), subset: subset.slice(0, 10000), techs: sel, date_from: dateFrom, date_to: dateTo }),
+      })
+      setRes(r)
+    } catch (e: any) { alert(e.message) } finally { setBusy(false) }
+  }
+  const pct = res && res.with_all ? Math.round(res.overlap / res.with_all * 100) : 0
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div className="card-section-title">{t('tech_cooc_title', lang)}</div>
+      <div className="tech-cooc-pick">
+        {[...techs].sort((a, b) => a.localeCompare(b)).map(tn => (
+          <button key={tn} className={`gran-btn${sel.includes(tn) ? " active" : ""}`} onClick={() => toggle(tn)}>{tn}</button>
+        ))}
+      </div>
+      <button className="btn-primary" style={{ marginTop: 8, padding: "6px 16px", fontSize: 13 }}
+        disabled={sel.length < 2 || busy} onClick={analyze}>
+        {busy ? "⏳" : t('tech_cooc_btn', lang)}{sel.length >= 2 ? ` (${sel.length})` : ""}
+      </button>
+      {res && res.error && <div style={{ color: "var(--danger)", marginTop: 8, fontSize: 12 }}>{res.error}</div>}
+      {res && !res.error && (
+        <table className="results-table" style={{ marginTop: 10, maxWidth: 460 }}><tbody>
+          {res.per_tech.map((p: any) => (
+            <tr key={p.tech}><td>{p.tech}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{p.domains.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_has', lang)}</td></tr>
+          ))}
+          <tr><td><b>{t('tech_cooc_all', lang)}</b></td>
+            <td className="cooc-clickable" style={{ textAlign: "right", fontFamily: "var(--mono)" }}
+              title={t('tech_cooc_show', lang)} onClick={() => res.with_all && onShowDomains(res.with_all_domains || [])}><b>{res.with_all.toLocaleString()}</b> ↴</td>
+            <td style={{ color: "var(--text-3)" }}>{t('tech_cooc_ever', lang)}</td></tr>
+          <tr><td><b>{t('tech_cooc_current', lang)}</b></td>
+            <td className="cooc-clickable" style={{ textAlign: "right", fontFamily: "var(--mono)", color: "var(--accent)" }}
+              title={t('tech_cooc_show', lang)} onClick={() => res.both_current && onShowDomains(res.both_current_domains || [])}><b>{(res.both_current ?? 0).toLocaleString()}</b> ↴</td>
+            <td style={{ color: "var(--text-3)" }}>{res.with_all ? Math.round((res.both_current ?? 0) / res.with_all * 100) : 0}%</td></tr>
+          <tr><td>{t('tech_cooc_overlap', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.overlap.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>{pct}%</td></tr>
+          <tr><td>{t('tech_cooc_avg', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.avg_overlap_months}</td><td style={{ color: "var(--text-3)" }}>{t('tech_cooc_months', lang)}</td></tr>
+          <tr><td>{t('tech_cooc_short', lang)}</td><td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{res.short_overlap.toLocaleString()}</td><td style={{ color: "var(--text-3)" }}>&lt;2 {t('tech_cooc_months', lang)}</td></tr>
+        </tbody></table>
+      )}
+    </div>
+  )
+}
+
 export default function TechnologiesPage({ domains = [], onBack, can, lang }: { domains?: string[]; onBack?: () => void; can?: (p: string) => boolean; lang: Lang }) {
   const now = new Date()
   const defaultTo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"00")}`
@@ -133,19 +267,39 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
   const [tableFilter, setTableFilter] = useState("")
   const [uniqueOnly, setUniqueOnly] = useState(false)
   const [hoveredSeries, setHoveredSeries] = useState<string|null>(null)
+  const [siteSubset, setSiteSubset] = useState<string[]>([])  // pinned working set ([] = ALL)
+  const [activeSite, setActiveSite] = useState<string|null>(null)  // single site in focus, or null = pinned together
 
-  const load = useCallback(async()=>{
+  const load = useCallback(async(subsetArg?:string[])=>{
+    const sub = subsetArg ?? (activeSite ? [activeSite] : siteSubset)
     setLoading(true)
     try {
       const data = await apiFetch("/api/technologies/aggregate",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({date_from:dateFrom,date_to:dateTo,granularity,show_unknown:showUnknown,domains:domains.slice(0,10000)})
+        body:JSON.stringify({date_from:dateFrom,date_to:dateTo,granularity,show_unknown:showUnknown,
+          domains:domains.slice(0,10000),subset:sub.slice(0,10000)})
       })
       setResult(data)
       setVisible(new Set(data.series?.slice(0,15).map((s:Series)=>s.name)||[]))
     } catch(e){console.error(e)}
     finally{setLoading(false)}
-  },[dateFrom,dateTo,granularity,showUnknown])
+  },[dateFrom,dateTo,granularity,showUnknown,siteSubset,activeSite,domains])
+
+  // Site chips → re-aggregate from server cache
+  const sitesAll     = useCallback(()=>{ setSiteSubset([]); setActiveSite(null); load([]) },[load])
+  const sitesPin     = useCallback((sub:string[])=>{ setSiteSubset(sub); setActiveSite(null); load(sub) },[load])
+  const sitesViewAll = useCallback(()=>{ setActiveSite(null); load(siteSubset) },[load,siteSubset])
+  // Focus a single site from the table: pin it (so it gets a chip) and view only it.
+  const focusSite = useCallback((d:string)=>{
+    setSiteSubset(prev => prev.includes(d) ? prev : [...prev, d])
+    setActiveSite(d); load([d])
+  },[load])
+  // Narrow the whole page to a co-occurrence domain list (chart + table + export).
+  const showCoocDomains = useCallback((ds:string[])=>{
+    if(!ds.length) return
+    setSiteSubset(ds); setActiveSite(null); load(ds)
+  },[load])
+  const sitesViewOne = useCallback((s:string)=>{ setActiveSite(s); load([s]) },[load])
 
   const toggleVisible=(name:string)=>setVisible(prev=>{const n=new Set(prev);n.has(name)?n.delete(name):n.add(name);return n})
   const filteredSeries=useMemo(()=>result?.series.filter(s=>visible.has(s.name))||[],[result,visible])
@@ -164,7 +318,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
   },[result,tableFilter,uniqueOnly])
 
   const exportCSV = useCallback(()=>{
-    const cols = ["domain","name","tag","first_detected","last_detected","description","link"]
+    const cols = ["domain","name","first_detected","last_detected","categories","description","link"]
     const rows = filteredTable.map(r => cols.map(h => `"${String((r as any)[h]||"").replace(/"/g,'""')}"`).join(","))
     const csv = [cols.join(","), ...rows].join("\n")
     const a = document.createElement("a")
@@ -175,7 +329,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
 
   const exportXLSX = useCallback(async()=>{
     try {
-      const cols = ["domain","name","tag","first_detected","last_detected","description","link"]
+      const cols = ["domain","name","first_detected","last_detected","categories","description","link"]
       const res = await fetch("/api/technologies/export/xlsx",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({rows:filteredTable,columns:cols})
@@ -221,7 +375,14 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
               <span className="service-toggle-label">{t('tech_show', lang)}</span>
             </button>
           </div>
-          <button className="btn-search" onClick={load} disabled={loading}>{loading?"⏳":"🔍"} {t('tech_apply', lang)}</button>
+          {domains.length > 0 && (
+            <div className="tech-filter-group">
+              <label className="tech-filter-label">{t('tech_sites', lang)}</label>
+              <SiteFilter domains={domains} pinned={siteSubset} active={activeSite}
+                onAll={sitesAll} onPin={sitesPin} onViewAll={sitesViewAll} onViewSite={sitesViewOne} lang={lang} />
+            </div>
+          )}
+          <button className="btn-search" onClick={()=>load()} disabled={loading}>{loading?"⏳":"🔍"} {t('tech_apply', lang)}</button>
           <div className="tech-filter-group">
             <label className="tech-filter-label">{t('tech_unique', lang)}</label>
             <button className={`service-toggle ${uniqueOnly?"active":""}`} style={{padding:"5px 12px"}} onClick={()=>setUniqueOnly(!uniqueOnly)}>
@@ -252,6 +413,9 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
               {t('tech_hint', lang)}
             </div>
           </div>
+          <CoOccur domains={domains} subset={activeSite ? [activeSite] : siteSubset}
+            techs={result.series.map(s=>s.name)} dateFrom={dateFrom} dateTo={dateTo}
+            onShowDomains={showCoocDomains} lang={lang} />
           <div className="filter-row" style={{marginBottom:8}}>
             <input className="filter-input" placeholder={t('tech_filter_ph', lang)} value={tableFilter} onChange={e=>setTableFilter(e.target.value)}/>
             <span className="filter-count">{t('tech_records', lang)(filteredTable.length.toLocaleString())}</span>
@@ -265,17 +429,23 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
           <div className="table-wrap table-fixed-height">
             <table className="results-table">
               <thead><tr>
-                <th>Domain</th><th>Technology</th><th>Tag</th>
-                <th>First Detected</th><th>Last Detected</th><th>Description</th><th>Link</th>
+                <th>Domain</th><th>Technology</th>
+                <th>First Detected</th><th>Last Detected</th><th>Categories</th><th>Description</th><th>Link</th>
               </tr></thead>
               <tbody>
                 {filteredTable.map((r,i)=>(
                   <tr key={`${r.domain}-${r.name}-${i}`}>
-                    <td className="td-domain"><a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a></td>
+                    <td className="td-domain">
+                      {domains.length > 0 && (
+                        <button className="site-focus-btn" title={t('tech_focus_site', lang)}
+                          onClick={()=>focusSite(r.domain)}>📊</button>
+                      )}
+                      <a href={`https://${r.domain}`} target="_blank" rel="noopener">{r.domain}</a>
+                    </td>
                     <td style={{fontWeight:500}}>{r.name}</td>
-                    <td><span className="service-tag">{r.tag}</span></td>
                     <td style={{fontFamily:"var(--mono)",fontSize:11}}>{r.first_detected}</td>
                     <td style={{fontFamily:"var(--mono)",fontSize:11}}>{r.last_detected}</td>
+                    <td className="td-desc" title={r.categories}>{r.categories||"—"}</td>
                     <td className="td-desc" title={r.description}>{r.description||"—"}</td>
                     <td>{r.link?<a href={r.link} target="_blank" rel="noopener" style={{fontSize:11}}>&#8599;</a>:"—"}</td>
                   </tr>

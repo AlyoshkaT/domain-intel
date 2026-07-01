@@ -15,6 +15,51 @@ from core.bigquery import client, table_ref, _bq_touch, _bq_op, track_bq_call, B
 router = APIRouter(prefix="/api/technologies")
 logger = logging.getLogger(__name__)
 
+# Cache of raw rows fetched for a given full domain set, so the per-site multi-filter
+# can re-aggregate any subset WITHOUT a new BQ query.
+import hashlib
+_tech_rows_cache: dict[str, tuple[float, list]] = {}
+_TECH_ROWS_TTL = 600  # 10 min
+
+
+def _norm_domain(d: str) -> str:
+    return re.sub(r'^www\.', '', (d or "").strip().lower())
+
+
+def _rows_key(domains: list[str]) -> str:
+    return hashlib.md5("|".join(sorted(_norm_domain(d) for d in domains)).encode()).hexdigest()
+
+
+def _fetch_full_rows(filter_domains: list[str]) -> list:
+    """Latest (domain, technologies_json) for the full set — cached by set hash."""
+    cache_key = _rows_key(filter_domains) if filter_domains else None
+    if cache_key:
+        cached = _tech_rows_cache.get(cache_key)
+        if cached and time.time() - cached[0] < _TECH_ROWS_TTL:
+            return cached[1]
+    _bq_touch("priv_r")
+    bq_client = client()
+    if filter_domains:
+        domain_list = ", ".join(f"'{d}'" for d in filter_domains[:10000])
+        domain_where = f"WHERE LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({domain_list})"
+    else:
+        domain_where = ""
+    with _bq_op("priv_r"):
+        qrows = list(bq_client.query(f"""
+            SELECT domain, technologies_json FROM (
+                SELECT domain, technologies_json,
+                       ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                FROM `{table_ref(BW_PARSED_TABLE)}`
+                {domain_where}
+            ) WHERE rn = 1
+            LIMIT 50000
+        """, job_config=_bq_qcfg()).result())
+    track_bq_call("priv_bw")
+    all_rows = [(r["domain"], r["technologies_json"]) for r in qrows]
+    if cache_key:
+        _tech_rows_cache[cache_key] = (time.time(), all_rows)
+    return all_rows
+
 
 def _strip_version(name: str) -> str:
     name = re.sub(r'\s+v?\d+[\d\.x]*$', '', name, flags=re.IGNORECASE)
@@ -36,46 +81,43 @@ def aggregate_technologies(body: dict):
     show_unknown = body.get("show_unknown", False)
     granularity = body.get("granularity", "month")
     filter_domains = body.get("domains", [])
-    logger.info(f"Technologies request: domains={len(filter_domains)}, from={date_from}, to={date_to}")
+    subset = body.get("subset", [])  # optional: aggregate only these (from cached rows)
+    logger.info(f"Technologies request: domains={len(filter_domains)}, subset={len(subset)}, from={date_from}, to={date_to}")
 
     try:
         from services.technology_catalog import get_catalog
         catalog = get_catalog()
+        # catalog entries are dicts {technology, group, class} (or legacy strings).
+        # Map every known tech name → its display name so catalog techs are recognised
+        # (and not dumped into "unknown"). Group is used as the canonical label when set
+        # so variants collapse onto one line (e.g. "Klaviyo for Shopify" → "Klaviyo").
         known: dict[str, str] = {}
-        for t in catalog.get("cms", []):
-            name = t if isinstance(t, str) else t.get("name", "")
-            if name: known[name.lower()] = name
-        for t in catalog.get("ems", []):
-            name = t if isinstance(t, str) else t.get("name", "")
-            if name: known[name.lower()] = name
-        for t in catalog.get("osearch", []):
-            name = t if isinstance(t, str) else t.get("name", "")
-            if name: known[name.lower()] = name
+        for sheet in ("cms", "ems", "osearch"):
+            for t in catalog.get(sheet, []):
+                if isinstance(t, str):
+                    tech, grp = t, ""
+                else:
+                    tech, grp = t.get("technology", ""), t.get("group", "")
+                if tech:
+                    known[tech.lower()] = grp or tech
 
-        _bq_touch("priv_r")
-        bq_client = client()
+        # Per-technology description + link (BuiltWith) — empty dict if not built yet.
+        try:
+            from services.tech_index import get_tech_descriptions
+            descriptions = get_tech_descriptions()
+        except Exception:
+            descriptions = {}
 
-        # Build domain filter
-        if filter_domains:
-            domain_list = ", ".join(f"'{d}'" for d in filter_domains[:10000])
-            domain_where = f"WHERE LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({domain_list})"
+        # Fetch raw rows for the FULL domain set (cached), then optionally aggregate
+        # only a `subset` of them — so switching sites costs zero extra BQ.
+        all_rows = _fetch_full_rows(filter_domains)
+
+        # Select rows to aggregate: a chosen subset, or the whole set
+        if subset:
+            sub = {_norm_domain(d) for d in subset}
+            rows = [x for x in all_rows if _norm_domain(x[0]) in sub]
         else:
-            domain_where = ""
-
-        # Read only domain + technologies_json from privateBQ bw_parsed.
-        # This is orders of magnitude cheaper than reading full JSON blobs from corpBQ.
-        with _bq_op("priv_r"):
-            rows = list(bq_client.query(f"""
-                SELECT domain, technologies_json
-                FROM (
-                    SELECT domain, technologies_json,
-                           ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
-                    FROM `{table_ref(BW_PARSED_TABLE)}`
-                    {domain_where}
-                ) WHERE rn = 1
-                LIMIT 50000
-            """, job_config=_bq_qcfg()).result())
-        track_bq_call("priv_bw")
+            rows = all_rows
 
         from_ts = 0
         to_ts = 9999999999999
@@ -95,12 +137,11 @@ def aggregate_technologies(body: dict):
         tech_timeline: dict[str, dict[str, set]] = {}
         tech_domains: dict[str, list] = {}
         unknown_techs: dict[str, int] = {}
+        known_canon: set[str] = set()   # canonicals that come from the catalog
 
-        for idx, row in enumerate(rows):
+        for idx, (domain, tj) in enumerate(rows):
             if idx % 2000 == 0:
                 time.sleep(0)  # yield GIL so event loop can serve bq_activity polls
-            domain = row["domain"]
-            tj = row["technologies_json"]
             if not tj:
                 continue
             try:
@@ -125,6 +166,8 @@ def aggregate_technologies(body: dict):
                         if not show_unknown:
                             continue
                         canonical = name_clean
+                    else:
+                        known_canon.add(canonical)
 
                     if canonical not in tech_timeline:
                         tech_timeline[canonical] = {}
@@ -158,10 +201,12 @@ def aggregate_technologies(body: dict):
                     if canonical not in tech_domains:
                         tech_domains[canonical] = []
                     if len(tech_domains[canonical]) < 100:
+                        meta = descriptions.get(name_clean.lower()) or descriptions.get(canonical.lower()) or {}
                         tech_domains[canonical].append({
                             "domain": domain, "name": canonical,
-                            "description": "",
-                            "link": "",
+                            "categories": meta.get("categories", ""),
+                            "description": meta.get("description", ""),
+                            "link": meta.get("link", ""),
                             "tag": tech.get("t", ""),
                             "first_detected": _ts_to_ym(first_ms) if first_ms else "",
                             "last_detected": _ts_to_ym(last_ms) if last_ms else "",
@@ -170,21 +215,27 @@ def aggregate_technologies(body: dict):
                 logger.warning(f"Parse error {domain}: {e}")
 
         all_periods = sorted(set(p for periods in tech_timeline.values() for p in periods))
+        # Catalog (known) techs first, then by reach — so the top-50 cap never drops a
+        # catalog technology in favour of a more frequent "unknown" one.
         series = sorted([{
             "name": name,
             "data": [len(periods.get(p, set())) for p in all_periods],
             "total": len(set(d for v in periods.values() for d in v)),
-        } for name, periods in tech_timeline.items()], key=lambda x: -x["total"])
+            "known": name in known_canon,
+        } for name, periods in tech_timeline.items()], key=lambda x: (not x["known"], -x["total"]))
 
         table_rows = []
         for rows_list in tech_domains.values():
             table_rows.extend(rows_list)
+        # Known (catalog) rows first, then by recency — so the row cap never drops a
+        # catalog technology that IS on the chart (was happening with a flat 1000 cap).
         table_rows.sort(key=lambda x: x.get("last_detected", ""), reverse=True)
+        table_rows.sort(key=lambda x: x["name"] not in known_canon)  # stable: known first
 
         return {
             "periods": all_periods,
             "series": series[:50],
-            "table": table_rows[:1000],
+            "table": table_rows[:10000],
             "unknown_count": len(unknown_techs),
             "unknown_top": sorted(unknown_techs.items(), key=lambda x: -x[1])[:20],
             "total_domains": len(rows),
@@ -192,6 +243,122 @@ def aggregate_technologies(body: dict):
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)
         return {"error": str(e), "periods": [], "series": [], "table": []}
+
+
+_MONTH_MS = 30.44 * 86400 * 1000
+
+
+@router.post("/cooccurrence")
+def cooccurrence(body: dict):
+    """Co-occurrence / temporal-overlap stats for 2+ selected technologies across the
+    (subset of the) domain set. Reuses the cached rows — no new BQ query."""
+    filter_domains = body.get("domains", [])
+    subset = body.get("subset", [])
+    sel = [s for s in body.get("techs", []) if s]
+    if len(sel) < 2:
+        return {"error": "select at least 2 technologies"}
+    # Honour the same date range as the chart/table so numbers are consistent.
+    from_ts, to_ts = 0, 9999999999999
+    df, dt = body.get("date_from", ""), body.get("date_to", "")
+    if df:
+        try: from_ts = int(datetime.strptime(df + "-01", "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+        except: pass
+    if dt:
+        try: to_ts = int(datetime.strptime(dt + "-01", "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+        except: pass
+    try:
+        from services.technology_catalog import get_catalog
+        catalog = get_catalog()
+        known: dict[str, str] = {}
+        for sheet in ("cms", "ems", "osearch"):
+            for t in catalog.get(sheet, []):
+                if isinstance(t, str):
+                    tech, grp = t, ""
+                else:
+                    tech, grp = t.get("technology", ""), t.get("group", "")
+                if tech:
+                    known[tech.lower()] = grp or tech
+
+        rows = _fetch_full_rows(filter_domains)
+        if subset:
+            sub = {_norm_domain(d) for d in subset}
+            rows = [x for x in rows if _norm_domain(x[0]) in sub]
+
+        sel_set = set(sel)
+        per_tech = {s: 0 for s in sel}
+        with_all = overlap = short = both_current = 0
+        with_all_domains: list[str] = []
+        both_current_domains: list[str] = []
+        total_months = 0.0
+        # "currently live" = last detected within ~6 months of now
+        current_threshold = int(time.time() * 1000) - int(183 * 86400 * 1000)
+
+        for domain, tj in rows:
+            if not tj:
+                continue
+            try:
+                techs = json.loads(tj) if isinstance(tj, str) else tj
+                if not isinstance(techs, list):
+                    continue
+            except Exception:
+                continue
+            spans: dict[str, list] = {}   # canonical → [min_first, max_last]
+            for tech in techs:
+                raw = tech.get("n", "")
+                if not raw:
+                    continue
+                nm = _strip_version(raw)
+                canon = known.get(nm.lower()) or nm
+                if canon not in sel_set:
+                    continue
+                f = tech.get("f") or 0
+                l = tech.get("l") or 0
+                # skip detections fully outside the selected date range
+                if l and l < from_ts: continue
+                if f and f > to_ts: continue
+                if canon not in spans:
+                    spans[canon] = [f, l]
+                else:
+                    if f and (spans[canon][0] == 0 or f < spans[canon][0]):
+                        spans[canon][0] = f
+                    if l and l > spans[canon][1]:
+                        spans[canon][1] = l
+            present = set(spans.keys())
+            for s in present:
+                per_tech[s] += 1
+            if sel_set <= present:
+                with_all += 1
+                with_all_domains.append(domain)
+                lows = [spans[s][0] for s in sel]
+                highs = [spans[s][1] for s in sel]
+                if all(lows) and all(highs):
+                    lo, hi = max(lows), min(highs)
+                    if hi >= lo:
+                        overlap += 1
+                        months = (hi - lo) / _MONTH_MS
+                        total_months += months
+                        if months < 2:
+                            short += 1
+                # both still live now (distinguishes real co-use from migration A→B)
+                if all(spans[s][1] >= current_threshold for s in sel):
+                    both_current += 1
+                    both_current_domains.append(domain)
+
+        return {
+            "techs": sel,
+            "per_tech": [{"tech": s, "domains": per_tech[s]} for s in sel],
+            "with_all": with_all,
+            "both_current": both_current,
+            "overlap": overlap,
+            "short_overlap": short,
+            "avg_overlap_months": round(total_months / overlap, 1) if overlap else 0,
+            "total_domains": len(rows),
+            "with_all_domains": with_all_domains[:5000],
+            "both_current_domains": both_current_domains[:5000],
+        }
+    except Exception as e:
+        logger.error(f"cooccurrence error: {e}", exc_info=True)
+        return {"error": str(e)}
 
 
 @router.post("/catalog/add")

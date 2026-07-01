@@ -121,13 +121,22 @@ def get_settings():
         "bq_max_bytes_gb": get_bq_max_bytes_gb(),
         "bq_max_bytes_gb_floor": BQ_MAX_BYTES_BILLED_GB,   # env-var minimum
         "auto_sync_enabled": get_setting("auto_sync_enabled", "true") != "false",
+        "auto_sync_frequency": _get_frequency(get_setting),
     }
+
+
+def _get_frequency(get_setting) -> str:
+    freq = get_setting("auto_sync_frequency", "")
+    if freq in ("daily", "weekly", "monthly", "off"):
+        return freq
+    return "daily" if get_setting("auto_sync_enabled", "true") != "false" else "off"
 
 
 class SettingsUpdate(BaseModel):
     cache_ttl_days: Optional[int] = None
     bq_max_bytes_gb: Optional[int] = None
     auto_sync_enabled: Optional[bool] = None
+    auto_sync_frequency: Optional[str] = None
 
 
 @router.post("/settings")
@@ -148,6 +157,13 @@ def update_settings(data: SettingsUpdate):
 
     if data.auto_sync_enabled is not None:
         set_setting("auto_sync_enabled", "true" if data.auto_sync_enabled else "false")
+
+    if data.auto_sync_frequency is not None:
+        if data.auto_sync_frequency not in ("daily", "weekly", "monthly", "off"):
+            raise HTTPException(status_code=400, detail="frequency must be: daily, weekly, monthly, off")
+        set_setting("auto_sync_frequency", data.auto_sync_frequency)
+        # Keep legacy flag consistent for older code paths
+        set_setting("auto_sync_enabled", "false" if data.auto_sync_frequency == "off" else "true")
 
     return {"ok": True}
 

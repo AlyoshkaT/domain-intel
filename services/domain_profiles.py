@@ -159,6 +159,94 @@ _SEP_TECH = "\x02"   # separator between tech entries in compact BW string
 _SEP_FIELD = "\x01"  # separator between name and lastDetected
 
 
+# "General newsletter / lightweight bulk-email / SMTP transport" platforms.
+# On a TRUE tie (same signal strength AND same date) a real ESP / marketing-automation
+# platform outranks these. Compared by group name, lower-cased.
+_LOW_PRIORITY_GROUPS = {
+    "mailchimp", "mailerlite", "constant contact", "moosend", "aweber", "benchmark",
+    "mad mimi", "emailoctopus", "flodesk", "beehiiv", "selzy", "freshmail", "boldem",
+    "mailganer", "campaign monitor", "convertkit", "mailjet", "elastic email",
+    "bronto", "feedgee", "emitrr",
+}
+
+
+# Functional class → tie-break priority (higher wins a true tie).
+# Sourced from column C of the EMS sheet. When a catalog entry has a class, this
+# drives the priority; when it's blank we fall back to the legacy _LOW_PRIORITY_GROUPS.
+_CLASS_PRIORITY = {
+    "marketing automation":       5,
+    "ecommerce marketing":        5,
+    "cdp":                        4,
+    "mobile / push engagement":   4,
+    "sms marketing":              4,
+    "esp / email marketing":      3,
+    "sales engagement":           2,
+    "personalization":            2,
+    "data / identity":            2,
+    "other":                      2,
+    "tag manager":                1,
+    "behavioral data":            1,
+    "email infrastructure":       1,
+}
+
+
+def _entry_priority(group: str, klass: str) -> int:
+    """Tie-break priority for a catalog entry.
+    If column C (functional class) is set → use the class rank.
+    If it's empty → legacy behaviour: demoted general-newsletter groups = 1, else 3.
+    """
+    k = (klass or "").strip().lower()
+    if k:
+        return _CLASS_PRIORITY.get(k, 2)   # filled but unknown class → neutral
+    return 1 if (group or "").strip().lower() in _LOW_PRIORITY_GROUPS else 3
+
+
+def _signal_strength(name: str) -> int:
+    """How strong is a BuiltWith detection as evidence the site *uses* a platform.
+    3 = on-page script / core integration (e.g. "Klaviyo", "MailChimp for Shopify")
+    2 = plugin / form / widget connector (often dormant, e.g. "MailChimp for WordPress")
+    1 = SPF / DNS / mail record only (weakest, e.g. "MailChimp SPF", "Pardot Mail")
+    """
+    n = name.lower()
+    if "spf" in n or "dkim" in n or "dmarc" in n or n.endswith(" mail") or " dns" in n:
+        return 1
+    if any(k in n for k in (" for wordpress", " for woocommerce", " for wix",
+                            "wordpress", "plugin", "widget", "form", "subscribe",
+                            "sign up", "opt-in", "opt in", "optin", " by ")):
+        return 2
+    return 3
+
+
+def _select_match(entries, bw_index):
+    """Pick the best catalog match for one dimension.
+    Order: signal strength → recency (lastDetected) → platform class (real ESP beats
+    general newsletter) → deterministic alphabetical fallback. So co-present ties never
+    depend on catalog row order.
+    Returns (matched_bw_name, group) or ("", "").
+    """
+    def sort_key(e):
+        if isinstance(e, dict):
+            return ((e.get("group") or e.get("technology") or "").lower(),
+                    (e.get("technology") or "").lower())
+        return (e.lower(), e.lower())
+
+    best_rank = None  # (strength, last, class/group priority)
+    best = ("", "")
+    for entry in sorted(entries, key=sort_key):
+        tech  = entry["technology"] if isinstance(entry, dict) else entry
+        grp   = entry.get("group", "") if isinstance(entry, dict) else ""
+        klass = entry.get("class", "") if isinstance(entry, dict) else ""
+        hit = bw_index.get(tech.lower())
+        if not hit:
+            continue
+        name, last = hit
+        rank = (_signal_strength(name), last, _entry_priority(grp, klass))
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best = (name, grp)
+    return best
+
+
 def _match_bw_compact(bw_vertical: str, techs_compact: str, catalog: dict) -> dict:
     """
     Match BW techs from compact SQL-extracted string instead of full JSON blob.
@@ -175,33 +263,13 @@ def _match_bw_compact(bw_vertical: str, techs_compact: str, catalog: dict) -> di
                 if key not in bw_index or last > bw_index[key][1]:
                     bw_index[key] = (name, last)
 
-    cms_match, cms_last = "", 0
-    for cms in catalog.get("cms", []):
-        tech = cms["technology"] if isinstance(cms, dict) else cms
-        grp  = cms.get("group", "") if isinstance(cms, dict) else ""
-        key  = tech.lower()
-        if key in bw_index and bw_index[key][1] >= cms_last:
-            cms_match = grp if grp else bw_index[key][0]
-            cms_last  = bw_index[key][1]
+    cms_name, cms_grp = _select_match(catalog.get("cms", []), bw_index)
+    cms_match = cms_grp if cms_grp else cms_name
 
-    osearch_match, osearch_group, osearch_last = "", "", 0
-    for entry in catalog.get("osearch", []):
-        key = entry["technology"].lower()
-        if key in bw_index and bw_index[key][1] >= osearch_last:
-            osearch_match = bw_index[key][0]
-            osearch_group = entry.get("group", "")
-            osearch_last = bw_index[key][1]
+    osearch_match, osearch_group = _select_match(catalog.get("osearch", []), bw_index)
 
-    ems_match, ems_last = "", 0
-    ems_group = ""
-    for ems in catalog.get("ems", []):
-        tech = ems["technology"] if isinstance(ems, dict) else ems
-        grp  = ems.get("group", "") if isinstance(ems, dict) else ""
-        key  = tech.lower()
-        if key in bw_index and bw_index[key][1] >= ems_last:
-            ems_match = grp if grp else bw_index[key][0]
-            ems_group = grp
-            ems_last  = bw_index[key][1]
+    ems_name, ems_grp = _select_match(catalog.get("ems", []), bw_index)
+    ems_match = ems_grp if ems_grp else ems_name
 
     return {
         "cms_list":      cms_match,
@@ -353,30 +421,52 @@ def sync_domain_profiles() -> dict:
         track_bq_call("priv_bw")
         logger.info(f"BW parsed: {len(bw_parsed)}")
 
-        # Phase 3 — AI (70 → 80%): extract 3 fields directly in SQL
-        _sync_status.update({"progress": "3/4 · AI запит…", "pct": 70})
+        # Phase 3 — AI (70 → 80%): read from privateBQ ai_parsed (cheap).
+        # Fallback to corpBQ full scan only if ai_parsed is empty (not yet backfilled).
+        _sync_status.update({"progress": "3/4 · AI запит (privateBQ)…", "pct": 70})
         ai_data: dict[str, dict] = {}
-        ai_job = corp.query(f"""
-            SELECT
-                domain,
-                COALESCE(JSON_VALUE(response_json, '$.category'), '')        AS ai_category,
-                LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
-                COALESCE(JSON_VALUE(response_json, '$.subcategory'), '')      AS ai_industry
-            FROM {corp_ai_table}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """, job_config=_bq_qcfg(max_bytes=False))
-        _sync_status.update({"progress": "3/4 · AI отримуємо…", "pct": 72})
-        with _bq_op("corp_r"):
-            for r in ai_job.result():
-                key = normalize_domain(r["domain"])
-                if key:
-                    ai_data[key] = {
-                        "ai_category":     r["ai_category"] or "",
-                        "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
-                        "ai_industry":     r["ai_industry"] or "",
-                    }
+        ai_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.ai_parsed`"
+        try:
+            ai_job = our.query(f"""
+                SELECT domain, ai_category, ai_is_ecommerce, ai_industry
+                FROM {ai_priv_table}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            """, job_config=_bq_qcfg(max_bytes=False))
+            with _bq_op("priv_r"):
+                for r in ai_job.result():
+                    key = normalize_domain(r["domain"])
+                    if key:
+                        ai_data[key] = {
+                            "ai_category":     r["ai_category"] or "",
+                            "ai_is_ecommerce": r["ai_is_ecommerce"] or "Ні",
+                            "ai_industry":     r["ai_industry"] or "",
+                        }
+        except Exception as e:
+            logger.warning(f"ai_parsed read failed ({e}) — falling back to corpBQ")
+
+        if not ai_data:
+            logger.info("ai_parsed empty — falling back to corpBQ claude_responses full scan")
+            _sync_status.update({"progress": "3/4 · AI запит (corpBQ fallback)…", "pct": 71})
+            ai_job = corp.query(f"""
+                SELECT
+                    domain,
+                    COALESCE(JSON_VALUE(response_json, '$.category'), '')        AS ai_category,
+                    LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
+                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '')      AS ai_industry
+                FROM {corp_ai_table}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            """, job_config=_bq_qcfg(max_bytes=False))
+            with _bq_op("corp_r"):
+                for r in ai_job.result():
+                    key = normalize_domain(r["domain"])
+                    if key:
+                        ai_data[key] = {
+                            "ai_category":     r["ai_category"] or "",
+                            "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
+                            "ai_industry":     r["ai_industry"] or "",
+                        }
+            track_bq_call("corp_ai")
         _sync_status.update({"progress": f"3/4 · AI: {len(ai_data):,} доменів ✓", "pct": 80})
-        track_bq_call("corp_ai")
         logger.info(f"AI data total: {len(ai_data)} domains")
 
         all_domains = {d for d in sw_parsed.keys() | bw_parsed.keys() | ai_data.keys() if d}
@@ -536,26 +626,48 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
             if key:
                 bw_parsed[key] = _match_bw_compact(r["bw_vertical"] or "", r["techs_compact"] or "", catalog)
 
-        _bq_touch("corp_r")
+        # AI: privateBQ ai_parsed first (free for corpBQ), corp fallback only for missing domains
         ai_data: dict[str, dict] = {}
-        ai_in = f"LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({dom_list_sql})"
-        for r in corp.query(f"""
-            SELECT
-                domain,
-                COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
-                LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
-                COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry
-            FROM {corp_ai_table}
-            WHERE {ai_in}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
-        """).result():
-            key = normalize_domain(r["domain"])
-            if key:
-                ai_data[key] = {
-                    "ai_category":     r["ai_category"] or "",
-                    "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
-                    "ai_industry":     r["ai_industry"] or "",
-                }
+        ai_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.ai_parsed`"
+        try:
+            for r in our.query(f"""
+                SELECT domain, ai_category, ai_is_ecommerce, ai_industry
+                FROM {ai_priv_table}
+                WHERE {in_clause}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            """).result():
+                key = normalize_domain(r["domain"])
+                if key:
+                    ai_data[key] = {
+                        "ai_category":     r["ai_category"] or "",
+                        "ai_is_ecommerce": r["ai_is_ecommerce"] or "Ні",
+                        "ai_industry":     r["ai_industry"] or "",
+                    }
+        except Exception as e:
+            logger.warning(f"incremental: ai_parsed read failed ({e}) — corp fallback for all domains")
+
+        missing_ai = [d for d in norm_domains if d not in ai_data]
+        if missing_ai:
+            _bq_touch("corp_r")
+            missing_sql = ", ".join(f"'{d}'" for d in missing_ai)
+            ai_in = f"LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({missing_sql})"
+            for r in corp.query(f"""
+                SELECT
+                    domain,
+                    COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
+                    LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
+                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry
+                FROM {corp_ai_table}
+                WHERE {ai_in}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            """).result():
+                key = normalize_domain(r["domain"])
+                if key:
+                    ai_data[key] = {
+                        "ai_category":     r["ai_category"] or "",
+                        "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
+                        "ai_industry":     r["ai_industry"] or "",
+                    }
 
         updated_at = datetime.now(timezone.utc).isoformat()
         tmp_file = None
@@ -737,6 +849,11 @@ def rematch_catalog() -> dict:
             domain = normalize_domain(r["domain"])
             if not domain:
                 continue
+            # Skip domains without BW techs — nothing to (re)match, and we must not
+            # touch them so their existing values are preserved (see MERGE below,
+            # which is now an authoritative overwrite for the domains it does touch).
+            if not (r["techs_compact"] or "").strip():
+                continue
             m = _match_bw_compact(r["bw_vertical"] or "", r["techs_compact"] or "", catalog)
             deduped[domain] = {
                 "domain":        domain,
@@ -768,17 +885,18 @@ def rematch_catalog() -> dict:
         )
         load_job.result()
 
-        # MERGE into domain_profiles
-        # Only overwrite when new value is non-empty — preserve existing data
-        # for domains whose techs_compact is empty (BW data not yet available).
+        # MERGE into domain_profiles — authoritative overwrite.
+        # Every domain in S comes from bw_parsed WITH non-empty techs_compact, so the
+        # recomputed match is definitive: overwrite directly (including with '') so that
+        # technologies removed from the catalog get cleared instead of lingering.
         merge_sql = f"""
             MERGE {profiles_table} T
             USING `{tmp_ref}` S ON T.domain = S.domain
             WHEN MATCHED THEN UPDATE SET
-                T.cms_list      = IF(S.cms_list      != '', S.cms_list,      T.cms_list),
-                T.osearch       = IF(S.osearch        != '', S.osearch,       T.osearch),
-                T.osearch_group = IF(S.osearch        != '', S.osearch_group, T.osearch_group),
-                T.ems_list      = IF(S.ems_list       != '', S.ems_list,      T.ems_list)
+                T.cms_list      = S.cms_list,
+                T.osearch       = S.osearch,
+                T.osearch_group = S.osearch_group,
+                T.ems_list      = S.ems_list
         """
         merge_job = our.query(merge_sql)
         merge_job.result()

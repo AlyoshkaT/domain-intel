@@ -3,6 +3,20 @@ import Dashboard, { TRAFFIC_GROUPS } from "./Dashboard"
 import { t, type Lang } from "./i18n"
 
 const API = ""
+
+// Sortable traffic-rank label — mirrors traffic_rank() in services/sheets_export.py
+function trafficRank(visits?: number): string {
+  const n = Number(visits) || 0
+  if (n <= 0)          return ""
+  if (n > 1_000_000)   return "a.1M+"
+  if (n > 200_000)     return "b.200k+"
+  if (n > 100_000)     return "c.100k+"
+  if (n > 50_000)      return "d.50k+"
+  if (n > 30_000)      return "e.30k+"
+  if (n > 10_000)      return "f.Small"
+  return "g.micro"
+}
+
 async function apiFetch(path: string, opts?: RequestInit) {
   const res = await fetch(API + path, opts)
   if (!res.ok) { const e = await res.json().catch(() => ({ detail: res.statusText })); throw new Error(e.detail) }
@@ -44,6 +58,7 @@ interface ExploreResult {
   ai_industry?: string; sw_category?: string; sw_subcategory?: string
   sw_description?: string; sw_title?: string; company_name?: string
   sw_primary_region?: string; sw_primary_region_pct?: number
+  sw_fetched?: string; bw_fetched?: string   // freshness dates, UI-only (not exported)
 }
 
 // ─── Module-level profile cache (survives component re-mounts / navigation) ──
@@ -51,11 +66,23 @@ let _cachedProfiles: ExploreResult[] | null = null
 let _cachedProfilesTs = 0
 const PROFILES_CACHE_TTL = 5 * 60 * 1000 // 5 min client-side cache
 
+// ─── Saved filter state (so "← Back to Explorer" returns to the same filter) ──
+// Persisted across unmounts. Restored ONLY when restore is requested (the back link),
+// not on a plain Explorer tab click — which keeps starting fresh.
+let _savedFilters: FilterState | null = null
+let _savedTechLabels: string[] = []
+let _savedTechDomains: Set<string> | null = null
+let _restoreOnMount = false
+export function requestExplorerRestore() { _restoreOnMount = true }
+
 // ─── In-memory filter (mirrors BQ WHERE logic) ────────────────────────────────
-function filterProfiles(f: FilterState, profiles: ExploreResult[]): ExploreResult[] {
+function filterProfiles(f: FilterState, profiles: ExploreResult[], techDomains?: Set<string> | null): ExploreResult[] {
   return profiles.filter(p => {
     // Domain
     const dom = p.domain || ""
+
+    // Raw-technology filter (server-derived domain set)
+    if (techDomains && !techDomains.has(dom.toLowerCase())) return false
     if (f.domain.type === "in" && f.domain.selected.length > 0) {
       if (!f.domain.selected.includes(dom)) return false
     } else if (f.domain.type === "contains" && f.domain.value) {
@@ -359,10 +386,73 @@ function SyncButton({ onSync }: { onSync: () => void }) {
   )
 }
 
+// ─── Raw technology search (BuiltWith) ────────────────────────────────────────
+function TechSearch({ activeLabels, onApply, onClear, lang }: {
+  activeLabels: string[]; onApply: (techs: string[]) => void; onClear: () => void; lang: Lang
+}) {
+  const [q, setQ] = useState("")
+  const [results, setResults] = useState<{ tech: string; domain_count: number }[]>([])
+  const [checked, setChecked] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+  const timer = useRef<any>(null)
+
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current)
+    const term = q.trim()
+    if (term.length < 2) { setResults([]); return }
+    timer.current = setTimeout(async () => {
+      try {
+        const r = await apiFetch(`/api/explore/tech_search?q=${encodeURIComponent(term)}`)
+        setResults(r.results || [])
+      } catch { setResults([]) }
+    }, 300)
+    return () => timer.current && clearTimeout(timer.current)
+  }, [q])
+
+  const toggle = (tech: string) =>
+    setChecked(c => c.includes(tech) ? c.filter(x => x !== tech) : [...c, tech])
+
+  const apply = async () => { if (!checked.length) return; setBusy(true); await onApply(checked); setBusy(false) }
+  const clear = () => { setChecked([]); setQ(""); setResults([]); onClear() }
+
+  return (
+    <div className="filter-section">
+      <div className="filter-section-label">{t('expl_tech_label', lang)}</div>
+      <input className="filter-input" placeholder={t('expl_tech_ph', lang)}
+        value={q} onChange={e => setQ(e.target.value)} />
+      {results.length > 0 && (
+        <div className="tech-search-results">
+          {results.map(r => (
+            <label key={r.tech} className="tech-search-row">
+              <input type="checkbox" checked={checked.includes(r.tech)} onChange={() => toggle(r.tech)} />
+              <span className="tech-search-name">{r.tech}</span>
+              <span className="tech-search-count">{r.domain_count.toLocaleString()}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {checked.length > 0 && (
+        <button className="btn-primary" style={{ width: "100%", marginTop: 6, padding: "6px 0", fontSize: 13 }}
+          onClick={apply} disabled={busy}>
+          {busy ? <span className="spinner" /> : `${t('expl_tech_apply', lang)} (${checked.length})`}
+        </button>
+      )}
+      {activeLabels.length > 0 && (
+        <div className="tech-search-active">
+          <span title={activeLabels.join(", ")}>🔎 {activeLabels.join(", ")}</span>
+          <button className="flt-reset-btn" onClick={clear}>✕</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Filter panel ─────────────────────────────────────────────────────────────
-function FilterPanel({ filters, fieldValues, onChange, onReset, onSearch, loading, activeCount, lang }: {
+function FilterPanel({ filters, fieldValues, onChange, onInstant, onReset, onSearch, loading, activeCount, lang,
+  techLabels, onApplyTech, onClearTech }: {
   filters: FilterState; fieldValues: Record<string, FilterValue[]>
-  onChange: (f: FilterState) => void; onReset: () => void; onSearch: () => void; loading: boolean; activeCount: number; lang: Lang
+  onChange: (f: FilterState) => void; onInstant: (f: FilterState) => void; onReset: () => void; onSearch: () => void; loading: boolean; activeCount: number; lang: Lang
+  techLabels: string[]; onApplyTech: (techs: string[]) => void; onClearTech: () => void
 }) {
   const upd = (key: keyof FilterState, val: any) => onChange({ ...filters, [key]: val })
   const sections = [
@@ -372,17 +462,49 @@ function FilterPanel({ filters, fieldValues, onChange, onReset, onSearch, loadin
     { key: "osearch",                label: "oSearch",     type: "multi"  },
     { key: "ems_list",               label: "EMS",         type: "multi"  },
     { key: "ai_category",            label: "AI Category", type: "multi"  },
-    { key: "ai_is_ecommerce",        label: "AI Ecomm",    type: "multi"  },
     { key: "sw_category",            label: "Category SW", type: "multi"  },
     { key: "sw_primary_region",      label: "Region",      type: "multi"  },
     { key: "sw_primary_region_pct",  label: "Region %",    type: "num"    },
   ] as const
+  // eCommerce toggle (AI), multi-select: Yes="Так" / No="Ні" / ?=empty("").
+  // "?" is the empty string in the selected[] — filterProfiles matches null/'' as "".
+  // All selected (or none) → "all" (no filter). Instant-applies (no Apply needed).
+  const ecom = filters.ai_is_ecommerce as MultiFilter
+  const ecomSel = ecom.type === "in" ? ecom.selected : []
+  const ecomHas = (v: string) => ecomSel.includes(v)
+  const toggleEcom = (v: string) => {
+    const cur = ecom.type === "in" ? [...ecom.selected] : []
+    const i = cur.indexOf(v)
+    if (i >= 0) cur.splice(i, 1); else cur.push(v)
+    // none or all-three selected → no filter (All)
+    const val = (cur.length === 0 || cur.length === 3)
+      ? { type: "all", selected: [], search: "" }
+      : { type: "in", selected: cur, search: "" }
+    onInstant({ ...filters, ai_is_ecommerce: val as any })
+  }
+  const setEcomAll = () => onInstant({ ...filters, ai_is_ecommerce: { type: "all", selected: [], search: "" } as any })
+  const ecomAllActive = ecom.type !== "in" || ecom.selected.length === 0
+
   return (
     <div className="filter-panel">
       <div className="filter-panel-header">
         <span className="filter-panel-title">{t('expl_filters_title', lang)}</span>
         <button className="flt-reset-btn" onClick={onReset}>{t('expl_reset', lang)}</button>
       </div>
+      <div className="filter-section">
+        <div className="filter-section-label">{t('expl_ecom_label', lang)}</div>
+        <div className="gran-btns">
+          <button className={`gran-btn${ecomAllActive ? " active" : ""}`} onClick={setEcomAll}>{t('expl_filter_all', lang)}</button>
+          {([["Так", t('expl_ecom_yes', lang)], ["Ні", t('expl_ecom_no', lang)], ["", "?"]] as const).map(([v, lbl]) => (
+            <button key={v || "q"}
+              className={`gran-btn${ecomHas(v) ? " active" : ""}`}
+              onClick={() => toggleEcom(v)}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+      </div>
+      <TechSearch activeLabels={techLabels} onApply={onApplyTech} onClear={onClearTech} lang={lang} />
       {sections.map(s => (
         <div key={s.key} className="filter-section">
           <div className="filter-section-label">{s.label}</div>
@@ -409,7 +531,10 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
   can?: (p: string) => boolean; lang: Lang
 }) {
   const canDo = can || (() => true)  // default: allow all
-  const [filters, setFilters] = useState<FilterState>(defaultFilters())
+  // Capture & consume the restore intent once on mount.
+  const [restoreIntent] = useState(() => { const r = _restoreOnMount; _restoreOnMount = false; return r })
+  const [filters, setFilters] = useState<FilterState>(() =>
+    (restoreIntent && _savedFilters) ? _savedFilters : defaultFilters())
   const [allProfiles, setAllProfiles] = useState<ExploreResult[]>(_cachedProfiles || [])
   const [filteredProfiles, setFilteredProfiles] = useState<ExploreResult[]>(_cachedProfiles || [])
   const [loading, setLoading] = useState(!_cachedProfiles)
@@ -472,19 +597,58 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
 
   useEffect(() => { loadProfiles() }, [loadProfiles])
 
+  // Raw-technology filter (server-derived domain set). Held in a ref so applyFilters
+  // always reads the latest set without being recreated.
+  const techDomainsRef = useRef<Set<string> | null>(restoreIntent ? _savedTechDomains : null)
+  const [techLabels, setTechLabels] = useState<string[]>(restoreIntent ? _savedTechLabels : [])
+
+  // Persist filter state so the back link can restore it later.
+  useEffect(() => { _savedFilters = filters }, [filters])
+
   // ── Apply filters in-memory (instant, no BQ) ─────────────────────────────
   const applyFilters = useCallback((f: FilterState, profiles: ExploreResult[]) => {
-    const result = filterProfiles(f, profiles)
+    const result = filterProfiles(f, profiles, techDomainsRef.current)
     setFilteredProfiles(result)
     setOffset(0)
     // Notify App of current filtered domains (for Technologies nav button)
     onFilteredDomainsChange?.(result.map(r => r.domain))
   }, [onFilteredDomainsChange])
 
+  // Re-apply current filters whenever the profile set becomes available — this also
+  // re-applies a restored filter on mount (closure captures the initial filters).
+  useEffect(() => {
+    if (allProfiles.length) applyFilters(filters, allProfiles)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allProfiles])
+
+  // Apply / clear the raw-technology filter
+  const applyTechFilter = useCallback(async (techs: string[]) => {
+    if (!techs.length) {
+      techDomainsRef.current = null; setTechLabels([]); _savedTechDomains = null; _savedTechLabels = []
+      applyFilters(filters, allProfiles); return
+    }
+    try {
+      const r = await apiFetch("/api/explore/tech_domains", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ techs }),
+      })
+      techDomainsRef.current = new Set((r.domains || []).map((d: string) => d.toLowerCase()))
+      setTechLabels(techs)
+      _savedTechDomains = techDomainsRef.current; _savedTechLabels = techs
+      applyFilters(filters, allProfiles)
+    } catch (e: any) { alert(e.message) }
+  }, [filters, allProfiles, applyFilters])
+
+  const clearTechFilter = useCallback(() => {
+    techDomainsRef.current = null; setTechLabels([]); _savedTechDomains = null; _savedTechLabels = []
+    applyFilters(filters, allProfiles)
+  }, [filters, allProfiles, applyFilters])
+
   const handleSearch = () => applyFilters(filters, allProfiles)
   const handleReset = useCallback(() => {
     const def = defaultFilters()
     setFilters(def)
+    techDomainsRef.current = null; setTechLabels([]); _savedTechDomains = null; _savedTechLabels = []
     applyFilters(def, allProfiles)
   }, [allProfiles, applyFilters])
 
@@ -500,9 +664,10 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
 
   // ── Export ─────────────────────────────────────────────────────────────────
   const exportCSV = () => {
-    const cols = ["domain","sw_visits","cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name"]
+    const cols = ["domain","sw_visits","traffic_rank","cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name"]
     const rows = filteredProfiles.map(r => cols.map(h => {
-      const v = (r as any)[h]; return v != null ? `"${String(v).replace(/"/g, '""')}"` : ""
+      const v = h === "traffic_rank" ? trafficRank((r as any).sw_visits) : (r as any)[h]
+      return v != null && v !== "" ? `"${String(v).replace(/"/g, '""')}"` : ""
     }).join(","))
     const csv = [cols.join(","), ...rows].join("\n")
     const a = document.createElement("a")
@@ -555,6 +720,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
   }
 
   const [refreshServices, setRefreshServices] = useState<string[]>([])
+  const [aiMode, setAiMode] = useState<"safe" | "speed">("safe")
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState("")
 
@@ -570,12 +736,21 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
       if (!group) return
       const idx = TRAFFIC_GROUPS.indexOf(group)
       const nextGroup = TRAFFIC_GROUPS[idx - 1]
-      if (label === "Nano <10k") next.sw_visits = { type: "lt", value: "10000", min: "", max: "" }
-      else if (!nextGroup) next.sw_visits = { type: "gt", value: String(group.min), min: "", max: "" }
-      else next.sw_visits = { type: "between", value: "", min: String(group.min), max: String(nextGroup.min) }
+      const target = label === "Nano <10k"
+        ? { type: "lt" as const, value: "10000", min: "", max: "" }
+        : !nextGroup
+          ? { type: "gt" as const, value: String(group.min), min: "", max: "" }
+          : { type: "between" as const, value: "", min: String(group.min), max: String(nextGroup.min) }
+      // Toggle: clicking the already-selected traffic group clears it back to "all"
+      const curV = next.sw_visits
+      const same = curV.type === target.type && curV.value === target.value && curV.min === target.min && curV.max === target.max
+      next.sw_visits = same ? defaultNum() : target
     } else if (label === t('expl_empty_val', lang)) {
+      // Toggle the "empty" filter: second click on (empty) clears it (like named segments)
       const cur = next[field as keyof FilterState] as MultiFilter
-      next[field as keyof FilterState] = { ...cur, type: "empty", selected: [] } as any
+      next[field as keyof FilterState] = cur.type === "empty"
+        ? { ...cur, type: "all", selected: [] } as any
+        : { ...cur, type: "empty", selected: [] } as any
     } else {
       const cur = next[field as keyof FilterState] as MultiFilter
       const sel = cur.selected.includes(label) ? cur.selected.filter(s => s !== label) : [...cur.selected, label]
@@ -593,6 +768,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
       const file = new File([domains], "domains_refresh.txt", { type: "text/plain" })
       const fd = new FormData()
       fd.append("file", file); fd.append("services", JSON.stringify(refreshServices)); fd.append("force_refresh", "true")
+      fd.append("ai_mode", aiMode)
       const res = await fetch("/api/jobs", { method: "POST", body: fd })
       if (!res.ok) throw new Error("Failed")
       setRefreshMsg(t('expl_refresh_started', lang)(filteredProfiles.length.toLocaleString(), refreshServices.join(", ")))
@@ -611,7 +787,9 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
     <div className="explorer-layout">
       <aside className="explorer-sidebar">
         <FilterPanel filters={filters} fieldValues={fieldValues} onChange={setFilters}
-          onReset={handleReset} onSearch={handleSearch} loading={loading} activeCount={activeCount} lang={lang} />
+          onInstant={(next) => { setFilters(next); applyFilters(next, allProfiles) }}
+          onReset={handleReset} onSearch={handleSearch} loading={loading} activeCount={activeCount} lang={lang}
+          techLabels={techLabels} onApplyTech={applyTechFilter} onClearTech={clearTechFilter} />
       </aside>
 
       <main className="explorer-main">
@@ -642,6 +820,12 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
                       onClick={() => toggleRefreshService(s.id)}>{s.label}</button>
                   ))}
                 </div>
+                {refreshServices.includes("ai") && (
+                  <div className="gran-btns" title="AI Safe = Batch API −50%, async · Speed = live, full price">
+                    <button className={`gran-btn${aiMode === "safe" ? " active" : ""}`} onClick={() => setAiMode("safe")}>AI Safe</button>
+                    <button className={`gran-btn${aiMode === "speed" ? " active" : ""}`} onClick={() => setAiMode("speed")}>AI Speed</button>
+                  </div>
+                )}
                 <button className="btn-export" onClick={handleForceRefresh}
                   disabled={refreshing || refreshServices.length === 0}>
                   {refreshing ? "⏳" : "↻"} {filteredProfiles.length.toLocaleString()}
@@ -713,6 +897,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
                   <th>oSearch</th><th>EMS</th><th>AI Category</th><th>AI Ecomm</th>
                   <th>AI Industry</th><th>Category SW</th><th>Subcategory</th>
                   <th>Description</th><th>Region</th><th>Region %</th>
+                  <th title="SW data fetched">SW 📅</th><th title="BW data fetched">BW 📅</th>
                 </tr>
               </thead>
               <tbody>
@@ -732,6 +917,8 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
                     >{r.sw_description !== undefined ? cell(r.sw_description) : "—"}</td>
                     <td>{cell(r.sw_primary_region)}</td>
                     <td>{r.sw_primary_region_pct != null ? `${r.sw_primary_region_pct}%` : "—"}</td>
+                    <td className="td-date">{r.sw_fetched || "—"}</td>
+                    <td className="td-date">{r.bw_fetched || "—"}</td>
                   </tr>
                 ))}
               </tbody>

@@ -121,14 +121,22 @@ def get_all_profiles():
         return _profiles_cache
     try:
         bq_client = client()
-        cols_sql = ", ".join(PROFILE_COLUMNS)
+        cols_sql = ", ".join(f"t.{c}" for c in PROFILE_COLUMNS)
+        # sw_fetched / bw_fetched — freshness dates from parsed tables (UI-only, not exported)
+        all_columns = PROFILE_COLUMNS + ["sw_fetched", "bw_fetched"]
         # _bq_op keeps the LED lit for the entire duration of this block (can be 5+ min)
         with _bq_op("priv_r"):
             # Use large page_size to reduce HTTP round-trips (default ~10K → 50K per request)
             job = bq_client.query(f"""
-                SELECT {cols_sql}
-                FROM `{table_ref(PROFILES_TABLE)}`
-                ORDER BY sw_visits DESC NULLS LAST
+                SELECT {cols_sql},
+                       FORMAT_TIMESTAMP('%Y-%m-%d', sw.fa) AS sw_fetched,
+                       FORMAT_TIMESTAMP('%Y-%m-%d', bw.fa) AS bw_fetched
+                FROM `{table_ref(PROFILES_TABLE)}` t
+                LEFT JOIN (SELECT domain, MAX(fetched_at) AS fa FROM `{table_ref("sw_parsed")}` GROUP BY domain) sw
+                  ON sw.domain = t.domain
+                LEFT JOIN (SELECT domain, MAX(fetched_at) AS fa FROM `{table_ref("bw_parsed")}` GROUP BY domain) bw
+                  ON bw.domain = t.domain
+                ORDER BY t.sw_visits DESC NULLS LAST
             """, job_config=_bq_qcfg())
             result_iter = job.result(page_size=50000)
 
@@ -138,7 +146,7 @@ def get_all_profiles():
             rows = []
             for i, r in enumerate(result_iter):
                 row = []
-                for col in PROFILE_COLUMNS:
+                for col in all_columns:
                     v = r[col]
                     if v is None:
                         row.append(None)
@@ -150,7 +158,7 @@ def get_all_profiles():
                 if i % 1000 == 0:
                     time.sleep(0)  # yield GIL → event loop can respond to bq_activity polls
 
-        _profiles_cache = {"columns": PROFILE_COLUMNS, "rows": rows, "total": len(rows)}
+        _profiles_cache = {"columns": all_columns, "rows": rows, "total": len(rows)}
         _profiles_cache_ts = now
         return _profiles_cache
     except Exception as e:
@@ -300,6 +308,45 @@ def sync_status():
     return get_sync_status()
 
 
+# ─── Raw technology search (BuiltWith) ────────────────────────────────────────
+@router.get("/tech_search")
+def tech_search(q: str, limit: int = 50):
+    """Autocomplete over the tech dictionary: full tech names containing `q` + counts."""
+    from services.tech_index import search_tech
+    with _bq_op("priv_r"):
+        return {"results": search_tech(q, limit)}
+
+
+@router.post("/tech_domains")
+def tech_domains(body: dict):
+    """Return domains that have ANY of the selected exact tech names."""
+    from services.tech_index import domains_for_techs
+    techs = body.get("techs", []) if isinstance(body, dict) else []
+    with _bq_op("priv_r"):
+        domains = domains_for_techs(techs)
+    return {"domains": domains, "count": len(domains)}
+
+
+@router.post("/tech_rebuild", dependencies=[require_permission("admin")])
+async def tech_rebuild():
+    """Full rebuild of the technology index from bw_parsed (admin / manual)."""
+    import asyncio
+    from services.tech_index import rebuild_tech_index
+    with _bq_op("priv_w"):
+        result = await asyncio.to_thread(rebuild_tech_index)
+    return result
+
+
+@router.post("/tech_descriptions/refresh", dependencies=[require_permission("admin")])
+async def tech_descriptions_refresh():
+    """Rebuild the per-technology description+link dictionary from corp (admin / manual)."""
+    import asyncio
+    from services.tech_index import refresh_tech_descriptions
+    with _bq_op("corp_r"):
+        result = await asyncio.to_thread(refresh_tech_descriptions)
+    return result
+
+
 # ─── Sheets/XLSX export ───────────────────────────────────────────────────────
 _explore_sheet_url: str | None = None
 _explore_sheet_error: str | None = None
@@ -320,6 +367,13 @@ async def explore_export_xlsx(request: Request, body: dict):
     except Exception:
         pass
     df = pd.DataFrame(results)
+    # Insert Traffic_Rank right after the Traffic (sw_visits) column
+    from services.sheets_export import traffic_rank
+    ranks = [traffic_rank(r.get("sw_visits")) for r in results]
+    if "sw_visits" in df.columns:
+        df.insert(df.columns.get_loc("sw_visits") + 1, "traffic_rank", ranks)
+    else:
+        df["traffic_rank"] = ranks
     stream = io.BytesIO()
     with pd.ExcelWriter(stream, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Explorer")

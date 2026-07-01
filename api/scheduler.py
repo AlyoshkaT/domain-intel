@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 _scheduler_thread: threading.Thread | None = None
 _stop_event = threading.Event()
 _SYNC_HOUR_UTC = 4         # 04:00 UTC = 06:00 Kyiv (UTC+2 winter)
+_PIPEDRIVE_SYNC_HOUR_UTC = 2  # 02:00 UTC — Pipedrive relationship-status sync
+_PIPEDRIVE_MRR_HOUR_UTC = 1   # 01:00 UTC — Pipedrive MRR pull from corpBQ
 _PARSED_SYNC_HOUR_UTC = 3  # 03:00 UTC — sync corpBQ raw → privateBQ parsed, 1 hour before profiles sync
 _RESET_BQ_LIMIT_HOUR_UTC = 0  # 00:00 UTC — daily reset of BQ byte limit back to safe default
 
@@ -56,13 +58,77 @@ def _flush_call_stats():
 _BQ_LIMIT_DAILY_RESET_GB = 25   # reset target — enough for a normal day, safe margin
 
 
-def _is_auto_sync_enabled() -> bool:
-    """Read auto_sync_enabled from BQ app_settings. Defaults to True if not set."""
+def _get_sync_frequency() -> str:
+    """
+    Read auto_sync_frequency from BQ app_settings: daily | weekly | monthly | off.
+    Backward compat: falls back to auto_sync_enabled (true→daily, false→off).
+    """
     try:
         from core.bigquery import get_setting
-        return get_setting("auto_sync_enabled", "true") != "false"
+        freq = get_setting("auto_sync_frequency", "")
+        if freq in ("daily", "weekly", "monthly", "off"):
+            return freq
+        return "daily" if get_setting("auto_sync_enabled", "true") != "false" else "off"
     except Exception:
-        return True  # fail-safe: sync if we can't read the setting
+        return "daily"  # fail-safe
+
+
+def _should_sync_today(now: datetime) -> bool:
+    """Check if sync should run today based on the configured frequency."""
+    freq = _get_sync_frequency()
+    if freq == "off":
+        return False
+    if freq == "weekly":
+        return now.weekday() == 0      # Monday
+    if freq == "monthly":
+        return now.day == 1            # 1st of each month
+    return True                        # daily
+
+
+def _pipedrive_should_sync_today(now: datetime) -> str:
+    """Pipedrive frequency: off|monthly|weekly|daily|online. Returns the freq if a
+    scheduled run is due today, else ''. 'online' is event-driven (webhooks), so it
+    is never run by the timer."""
+    from services.pipedrive import get_sync_frequency
+    freq = get_sync_frequency()
+    if freq in ("off", "online"):
+        return ""
+    if freq == "weekly" and now.weekday() != 0:
+        return ""
+    if freq == "monthly" and now.day != 1:
+        return ""
+    return freq
+
+
+def _run_pipedrive_sync():
+    from services.pipedrive import sync_pipedrive
+    logger.info("Scheduled Pipedrive sync started")
+    try:
+        result = sync_pipedrive()
+        logger.info(f"Scheduled Pipedrive sync done: {result}")
+    except Exception as e:
+        logger.warning(f"Scheduled Pipedrive sync failed: {e}")
+
+
+def _pipedrive_mrr_should_sync_today(now: datetime) -> str:
+    from services.pipedrive import get_mrr_frequency
+    freq = get_mrr_frequency()
+    if freq == "off":
+        return ""
+    if freq == "weekly" and now.weekday() != 0:
+        return ""
+    if freq == "monthly" and now.day != 1:
+        return ""
+    return freq
+
+
+def _run_pipedrive_mrr_sync():
+    from services.pipedrive import sync_mrr_from_corp
+    logger.info("Scheduled Pipedrive MRR sync started")
+    try:
+        logger.info(f"Scheduled Pipedrive MRR sync done: {sync_mrr_from_corp()}")
+    except Exception as e:
+        logger.warning(f"Scheduled Pipedrive MRR sync failed: {e}")
 
 
 def _reset_bq_limit():
@@ -79,30 +145,56 @@ def _reset_bq_limit():
 def _scheduler_loop():
     """Check every 5 minutes if it's time to sync (daily at 00:00, 03:00 and 04:00 UTC)."""
     import time
+    _last_ai_poll = 0.0
     while not _stop_event.is_set():
         _flush_call_stats()   # flush counters every 5-min tick
+        # Apply any completed AI batches (Safe mode) — cheap: one query + retrieve
+        # per in-flight batch. Throttled to ~every 5 min.
+        if time.time() - _last_ai_poll > 290:
+            _last_ai_poll = time.time()
+            try:
+                from services.claude_batch import poll_pending_batches
+                res = poll_pending_batches()
+                if res.get("applied_now"):
+                    logger.info(f"AI batch poll: {res}")
+                    from api.explorer import invalidate_profiles_cache
+                    invalidate_profiles_cache()
+            except Exception as e:
+                logger.debug(f"AI batch poll: {e}")
         now = datetime.utcnow()
         if now.hour == _RESET_BQ_LIMIT_HOUR_UTC and now.minute < 5:
             logger.info("Daily BQ limit reset triggered")
             _reset_bq_limit()
             # Sleep 55 minutes to avoid double-trigger within same hour
             _stop_event.wait(timeout=55 * 60)
+        elif now.hour == _PIPEDRIVE_MRR_HOUR_UTC and now.minute < 5:
+            freq = _pipedrive_mrr_should_sync_today(now)
+            if freq:
+                logger.info(f"Pipedrive MRR sync triggered (frequency={freq})")
+                threading.Thread(target=_run_pipedrive_mrr_sync, daemon=True, name="pipedrive-mrr-sync").start()
+            _stop_event.wait(timeout=55 * 60)
+        elif now.hour == _PIPEDRIVE_SYNC_HOUR_UTC and now.minute < 5:
+            freq = _pipedrive_should_sync_today(now)
+            if freq:
+                logger.info(f"Pipedrive sync triggered (frequency={freq})")
+                threading.Thread(target=_run_pipedrive_sync, daemon=True, name="pipedrive-sync").start()
+            _stop_event.wait(timeout=55 * 60)
         elif now.hour == _PARSED_SYNC_HOUR_UTC and now.minute < 5:
-            if _is_auto_sync_enabled():
+            if _should_sync_today(now):
                 logger.info("Parsed sync triggered (corpBQ raw → privateBQ parsed)")
                 thread = threading.Thread(target=_run_parsed_sync, daemon=True, name="parsed-sync")
                 thread.start()
             else:
-                logger.info("Parsed sync skipped — auto_sync_enabled=false")
+                logger.info(f"Parsed sync skipped — frequency={_get_sync_frequency()}")
             # Sleep 55 minutes to avoid double-trigger but still wake for profile sync at 04:00
             _stop_event.wait(timeout=55 * 60)
         elif now.hour == _SYNC_HOUR_UTC and now.minute < 5:
-            if _is_auto_sync_enabled():
-                logger.info("Daily profiles sync triggered")
+            if _should_sync_today(now):
+                logger.info("Scheduled profiles sync triggered")
                 thread = threading.Thread(target=_run_sync, daemon=True, name="daily-sync")
                 thread.start()
             else:
-                logger.info("Daily profiles sync skipped — auto_sync_enabled=false")
+                logger.info(f"Profiles sync skipped — frequency={_get_sync_frequency()}")
             # Sleep 6 hours to avoid double-trigger within same hour
             _stop_event.wait(timeout=6 * 3600)
         else:

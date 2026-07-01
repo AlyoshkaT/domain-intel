@@ -354,7 +354,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .flt-option-selected{background:var(--accent-bg)!important}
 
 /* ── Fixed height table with vertical scroll ─────────────────────────────────── */
-.table-fixed-height{max-height:calc(15 * 37px + 40px);overflow-y:auto}
+.table-fixed-height{max-height:calc(100vh - 240px);min-height:360px;overflow-y:auto}
 .table-fixed-height thead th{position:sticky;top:0;z-index:2;background:var(--bg-2)}
 
 /* ── Row number cell ─────────────────────────────────────────────────────────── */
@@ -396,6 +396,12 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .dash-row-clickable:hover .dash-legend-label{color:var(--accent)}
 .dash-country-row.dash-row-clickable:hover{background:var(--accent-bg);border-radius:4px}
 .dash-country-row.dash-row-clickable:hover .dash-country-code{color:var(--accent)}
+/* Expanded "Others" breakdown list */
+.dash-others-list{margin-top:8px;max-height:180px;overflow-y:auto;border-top:1px solid var(--border);padding-top:6px}
+.dash-others-row{display:flex;justify-content:space-between;align-items:center;padding:3px 8px;border-radius:4px;font-size:11px;color:var(--text-2)}
+.dash-others-row .dash-others-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px}
+.dash-others-row .dash-others-count{font-family:var(--mono);font-size:10px;color:var(--text-3)}
+.dash-others-row.dash-row-clickable:hover .dash-others-label{color:var(--accent)}
 .dash-filter-hint{font-size:9px;color:var(--accent);font-weight:400;text-transform:none;letter-spacing:0;margin-left:4px;opacity:0.7}
 
 /* ── Dashboard world map row ─────────────────────────────────────────────────── */
@@ -459,3 +465,41 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .tech-filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
 .tech-filter-group{display:flex;flex-direction:column;gap:4px}
 .tech-filter-label{font-size:10px;color:var(--text-3);font-weight:500;text-transform:uppercase;letter-spacing:0.04em}
+
+/* Raw technology search (Explorer filter panel) */
+.tech-search-results {
+  margin-top: 6px; max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-1);
+}
+.tech-search-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; font-size: 12px; cursor: pointer;
+}
+.tech-search-row:hover { background: var(--bg-2); }
+.tech-search-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tech-search-count { color: var(--text-3); font-family: var(--mono); font-size: 11px; }
+.tech-search-active {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin-top: 6px; padding: 4px 8px; font-size: 11px;
+  background: var(--bg-2); border-radius: 6px;
+}
+.tech-search-active span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Per-site selector on Technologies page */
+.site-select { position: relative; }
+.site-select-panel {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0;
+  width: 280px; padding: 8px; background: var(--bg-1);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+}
+.site-select-list { max-height: 260px; overflow-y: auto; }
+
+/* Co-occurrence tech picker */
+.tech-cooc-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.site-focus-btn { background: none; border: none; cursor: pointer; padding: 0 4px 0 0; font-size: 12px; opacity: 0.6; }
+.site-focus-btn:hover { opacity: 1; }
+
+.cooc-clickable { cursor: pointer; }
+.cooc-clickable:hover { text-decoration: underline; background: var(--bg-2); }

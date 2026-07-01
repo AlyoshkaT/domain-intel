@@ -59,7 +59,7 @@ def get_auth_users() -> dict[str, str]:
     return {**bq_users, **env_users}
 
 
-_ALL_PERMS = {"explorer", "jobs", "download", "sheets", "admin"}
+_ALL_PERMS = {"explorer", "jobs", "download", "sheets", "pipedrive", "admin"}
 
 def get_user_permissions(username: str) -> set[str]:
     """Return set of permissions for the given username.
@@ -131,6 +131,7 @@ async def auth_middleware(request: Request, call_next):
     # Static assets and health — always public (no auth dialog for JS/CSS/favicon)
     if (path.startswith("/assets/") or
             path.endswith(".json") and not path.startswith("/api/") or
+            path.startswith("/api/pipedrive/webhook") or  # Pipedrive can't send Basic Auth; guarded by URL secret
             path in ("/api/health", "/favicon.ico", "/favicon.png", "/robots.txt")):
         return await call_next(request)
 

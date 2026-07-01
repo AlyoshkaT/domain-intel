@@ -62,6 +62,13 @@ def _bq_qcfg(
 
 SW_PARSED_TABLE = "sw_parsed"
 BW_PARSED_TABLE = "bw_parsed"
+AI_PARSED_TABLE = "ai_parsed"
+
+# Hard cap on any single BQ network operation. The client default is 600s (10 min);
+# during a network blip a stuck insert/query holds a thread that long and can
+# exhaust the thread pool → the whole server stops responding. 60s fails fast
+# into the existing error handlers instead.
+BQ_OP_TIMEOUT = 60.0
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +169,14 @@ _BW_PARSED_SCHEMA = [
     bigquery.SchemaField("bw_technologies",      "STRING"),   # JSON list of known tech names
     bigquery.SchemaField("techs_compact",        "STRING"),   # compact format for catalog matching
     bigquery.SchemaField("technologies_json",    "STRING"),   # ALL techs: [{n,t,v,l}] incl. unknown
+]
+
+_AI_PARSED_SCHEMA = [
+    bigquery.SchemaField("domain",          "STRING"),
+    bigquery.SchemaField("fetched_at",      "TIMESTAMP"),
+    bigquery.SchemaField("ai_category",     "STRING"),
+    bigquery.SchemaField("ai_is_ecommerce", "STRING"),   # "Так" / "Ні"
+    bigquery.SchemaField("ai_industry",     "STRING"),
 ]
 
 
@@ -321,6 +336,7 @@ def ensure_tables_exist():
     # (Previously "technologies_json" was sentinel, so tables created before techs_compact
     #  was added would be missing that column and the BW MERGE INSERT would fail.)
     _ensure_or_migrate_table(bq, BW_PARSED_TABLE, _BW_PARSED_SCHEMA, "techs_compact")
+    _ensure_or_migrate_table(bq, AI_PARSED_TABLE, _AI_PARSED_SCHEMA, "ai_industry")
     bq_corp = corp_client()
     for table_name in [BQ_BUILTWITH_CACHE, BQ_SIMILARWEB_CACHE]:
         try:
@@ -352,6 +368,14 @@ def ensure_tables_exist():
 _prefetch_cache: dict[str, dict[str, Optional[dict]]] = {}
 _PREFETCH_SENTINEL = object()  # distinct from None for "not prefetched"
 
+# BQ caps query parameters at 10000. Chunk IN-lists below that with a safe margin.
+_PREFETCH_CHUNK = 5000
+
+
+def _chunked(seq: list, size: int):
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]
+
 
 def prefetch_corp_cache(domains: list[str], tables: list[str]) -> None:
     """
@@ -365,37 +389,34 @@ def prefetch_corp_cache(domains: list[str], tables: list[str]) -> None:
     bq = corp_client()
     t_start = time.time()
 
-    # Deduplicate + limit (BQ IN clause can handle thousands of values fine)
+    # Deduplicate. Large jobs are chunked below BQ's 10000-parameter limit.
     unique_domains = list(dict.fromkeys(domains))
-    # Build parameterised IN list
-    ph = ", ".join(f"@d{i}" for i in range(len(unique_domains)))
-    params = [bigquery.ScalarQueryParameter(f"d{i}", "STRING", d) for i, d in enumerate(unique_domains)]
 
     for table in tables:
         _prefetch_cache.setdefault(table, {})
         try:
-            query = f"""
-                SELECT domain, response_json
-                FROM (
-                    SELECT domain, response_json,
-                           ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
-                    FROM `{corp_table_ref(table)}`
-                    WHERE domain IN ({ph})
-                )
-                WHERE rn = 1
-            """
-            rows = list(bq.query(
-                query,
-                job_config=_bq_qcfg(params=params)
-            ).result())
             hit_count = 0
-            for row in rows:
-                d = row["domain"]
-                data = row["response_json"]
-                if not isinstance(data, dict):
-                    data = json.loads(data)
-                _prefetch_cache[table][d] = data
-                hit_count += 1
+            for chunk in _chunked(unique_domains, _PREFETCH_CHUNK):
+                ph = ", ".join(f"@d{i}" for i in range(len(chunk)))
+                params = [bigquery.ScalarQueryParameter(f"d{i}", "STRING", d) for i, d in enumerate(chunk)]
+                query = f"""
+                    SELECT domain, response_json
+                    FROM (
+                        SELECT domain, response_json,
+                               ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                        FROM `{corp_table_ref(table)}`
+                        WHERE domain IN ({ph})
+                    )
+                    WHERE rn = 1
+                """
+                rows = list(bq.query(query, job_config=_bq_qcfg(params=params), timeout=BQ_OP_TIMEOUT).result())
+                for row in rows:
+                    d = row["domain"]
+                    data = row["response_json"]
+                    if not isinstance(data, dict):
+                        data = json.loads(data)
+                    _prefetch_cache[table][d] = data
+                    hit_count += 1
             # Mark explicit misses so get_cached() won't fall through to BQ
             for d in unique_domains:
                 if d not in _prefetch_cache[table]:
@@ -422,6 +443,13 @@ def clear_prefetch_cache() -> None:
 _parsed_sw_cache: dict[str, Optional[dict]] = {}
 _parsed_bw_cache: dict[str, Optional[dict]] = {}
 
+# True while a batch job's prefetch is loaded. When set, a cache MISS in
+# get_sw_parsed/get_bw_parsed is treated as a genuine miss (return None) WITHOUT
+# an individual BQ query. This stops redirected domains (whose post-redirect name
+# was never in the prefetch) from each triggering a full scan of the unclustered
+# parsed tables (bw_parsed ≈ 822 MB) — a silent per-domain cost during big jobs.
+_prefetch_active = False
+
 
 def save_sw_parsed(domain: str, parsed: dict) -> None:
     """Stream-insert one parsed SW row into privateBQ sw_parsed."""
@@ -446,7 +474,7 @@ def save_sw_parsed(domain: str, parsed: dict) -> None:
         "sw_engagement": parsed.get("sw_engagement", "{}"),
     }
     try:
-        errors = bq.insert_rows_json(table_ref(SW_PARSED_TABLE), [row])
+        errors = bq.insert_rows_json(table_ref(SW_PARSED_TABLE), [row], timeout=BQ_OP_TIMEOUT)
         if errors:
             logger.error(f"save_sw_parsed error ({domain}): {errors}")
         else:
@@ -473,7 +501,7 @@ def save_bw_parsed(domain: str, bw_dict: dict) -> None:
         "technologies_json": bw_dict.get("technologies_json", "[]"),
     }
     try:
-        errors = bq.insert_rows_json(table_ref(BW_PARSED_TABLE), [row])
+        errors = bq.insert_rows_json(table_ref(BW_PARSED_TABLE), [row], timeout=BQ_OP_TIMEOUT)
         if errors:
             logger.error(f"save_bw_parsed error ({domain}): {errors}")
         else:
@@ -481,6 +509,28 @@ def save_bw_parsed(domain: str, bw_dict: dict) -> None:
             logger.debug(f"save_bw_parsed OK: {domain}")
     except Exception as e:
         logger.error(f"save_bw_parsed exception ({domain}): {e}")
+
+
+def save_ai_parsed(domain: str, parsed: dict) -> None:
+    """Stream-insert one parsed AI row into privateBQ ai_parsed."""
+    _bq_touch("priv_w")
+    # no track_bq_call here — per-domain streaming insert, counted in prefetch batch
+    bq = client()
+    row = {
+        "domain": domain,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "ai_category": parsed.get("ai_category", ""),
+        "ai_is_ecommerce": parsed.get("ai_is_ecommerce", ""),
+        "ai_industry": parsed.get("ai_industry", ""),
+    }
+    try:
+        errors = bq.insert_rows_json(table_ref(AI_PARSED_TABLE), [row], timeout=BQ_OP_TIMEOUT)
+        if errors:
+            logger.error(f"save_ai_parsed error ({domain}): {errors}")
+        else:
+            logger.debug(f"save_ai_parsed OK: {domain}")
+    except Exception as e:
+        logger.error(f"save_ai_parsed exception ({domain}): {e}")
 
 
 def prefetch_parsed(domains: list[str]) -> None:
@@ -494,42 +544,43 @@ def prefetch_parsed(domains: list[str]) -> None:
     bq = client()
     t_start = time.time()
     unique_domains = list(dict.fromkeys(domains))
-    ph = ", ".join(f"@d{i}" for i in range(len(unique_domains)))
-    params = [bigquery.ScalarQueryParameter(f"d{i}", "STRING", d) for i, d in enumerate(unique_domains)]
 
-    # SW
+    # SW — chunked below BQ's 10000-parameter limit
     try:
-        rows = list(bq.query(
-            f"""
-            SELECT domain, sw_visits, sw_category, sw_subcategory, sw_description,
-                   sw_title, sw_primary_region, sw_primary_region_pct, company_name,
-                   sw_top_countries, sw_monthly_visits, sw_global_rank, sw_engagement
-            FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
-                FROM `{table_ref(SW_PARSED_TABLE)}`
-                WHERE domain IN ({ph})
-            ) WHERE rn = 1
-            """,
-            job_config=bigquery.QueryJobConfig(query_parameters=params)
-        ).result())
         sw_hits = 0
-        for row in rows:
-            d = row["domain"]
-            _parsed_sw_cache[d] = {
-                "sw_visits": row["sw_visits"],
-                "sw_category": row["sw_category"] or "",
-                "sw_subcategory": row["sw_subcategory"] or "",
-                "sw_description": row["sw_description"] or "",
-                "sw_title": row["sw_title"] or "",
-                "sw_primary_region": row["sw_primary_region"] or "",
-                "sw_primary_region_pct": row["sw_primary_region_pct"],
-                "company_name": row["company_name"] or "",
-                "sw_top_countries": row["sw_top_countries"] or "[]",
-                "sw_monthly_visits": row["sw_monthly_visits"] or "{}",
-                "sw_global_rank": row["sw_global_rank"],
-                "sw_engagement": row["sw_engagement"] or "{}",
-            }
-            sw_hits += 1
+        for chunk in _chunked(unique_domains, _PREFETCH_CHUNK):
+            ph = ", ".join(f"@d{i}" for i in range(len(chunk)))
+            params = [bigquery.ScalarQueryParameter(f"d{i}", "STRING", d) for i, d in enumerate(chunk)]
+            rows = list(bq.query(
+                f"""
+                SELECT domain, sw_visits, sw_category, sw_subcategory, sw_description,
+                       sw_title, sw_primary_region, sw_primary_region_pct, company_name,
+                       sw_top_countries, sw_monthly_visits, sw_global_rank, sw_engagement
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                    FROM `{table_ref(SW_PARSED_TABLE)}`
+                    WHERE domain IN ({ph})
+                ) WHERE rn = 1
+                """,
+                job_config=_bq_qcfg(params=params), timeout=BQ_OP_TIMEOUT
+            ).result())
+            for row in rows:
+                d = row["domain"]
+                _parsed_sw_cache[d] = {
+                    "sw_visits": row["sw_visits"],
+                    "sw_category": row["sw_category"] or "",
+                    "sw_subcategory": row["sw_subcategory"] or "",
+                    "sw_description": row["sw_description"] or "",
+                    "sw_title": row["sw_title"] or "",
+                    "sw_primary_region": row["sw_primary_region"] or "",
+                    "sw_primary_region_pct": row["sw_primary_region_pct"],
+                    "company_name": row["company_name"] or "",
+                    "sw_top_countries": row["sw_top_countries"] or "[]",
+                    "sw_monthly_visits": row["sw_monthly_visits"] or "{}",
+                    "sw_global_rank": row["sw_global_rank"],
+                    "sw_engagement": row["sw_engagement"] or "{}",
+                }
+                sw_hits += 1
         for d in unique_domains:
             if d not in _parsed_sw_cache:
                 _parsed_sw_cache[d] = None
@@ -538,34 +589,37 @@ def prefetch_parsed(domains: list[str]) -> None:
     except Exception as e:
         logger.error(f"prefetch_parsed SW error: {e}")
 
-    # BW
+    # BW — chunked below BQ's 10000-parameter limit
     t_bw = time.time()
     try:
-        rows = list(bq.query(
-            f"""
-            SELECT domain, bw_vertical, bw_cms_raw, bw_ecommerce, bw_email_marketing,
-                   bw_technologies, techs_compact, technologies_json
-            FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
-                FROM `{table_ref(BW_PARSED_TABLE)}`
-                WHERE domain IN ({ph})
-            ) WHERE rn = 1
-            """,
-            job_config=bigquery.QueryJobConfig(query_parameters=params)
-        ).result())
         bw_hits = 0
-        for row in rows:
-            d = row["domain"]
-            _parsed_bw_cache[d] = {
-                "bw_vertical": row["bw_vertical"] or "",
-                "bw_cms_raw": row["bw_cms_raw"] or "",
-                "bw_ecommerce": row["bw_ecommerce"] or "",
-                "bw_email_marketing": row["bw_email_marketing"] or "",
-                "bw_technologies": row["bw_technologies"] or "[]",
-                "techs_compact": row["techs_compact"] or "",
-                "technologies_json": row["technologies_json"] or "[]",
-            }
-            bw_hits += 1
+        for chunk in _chunked(unique_domains, _PREFETCH_CHUNK):
+            ph = ", ".join(f"@d{i}" for i in range(len(chunk)))
+            params = [bigquery.ScalarQueryParameter(f"d{i}", "STRING", d) for i, d in enumerate(chunk)]
+            rows = list(bq.query(
+                f"""
+                SELECT domain, bw_vertical, bw_cms_raw, bw_ecommerce, bw_email_marketing,
+                       bw_technologies, techs_compact, technologies_json
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) AS rn
+                    FROM `{table_ref(BW_PARSED_TABLE)}`
+                    WHERE domain IN ({ph})
+                ) WHERE rn = 1
+                """,
+                job_config=_bq_qcfg(params=params), timeout=BQ_OP_TIMEOUT
+            ).result())
+            for row in rows:
+                d = row["domain"]
+                _parsed_bw_cache[d] = {
+                    "bw_vertical": row["bw_vertical"] or "",
+                    "bw_cms_raw": row["bw_cms_raw"] or "",
+                    "bw_ecommerce": row["bw_ecommerce"] or "",
+                    "bw_email_marketing": row["bw_email_marketing"] or "",
+                    "bw_technologies": row["bw_technologies"] or "[]",
+                    "techs_compact": row["techs_compact"] or "",
+                    "technologies_json": row["technologies_json"] or "[]",
+                }
+                bw_hits += 1
         for d in unique_domains:
             if d not in _parsed_bw_cache:
                 _parsed_bw_cache[d] = None
@@ -574,11 +628,23 @@ def prefetch_parsed(domains: list[str]) -> None:
     except Exception as e:
         logger.error(f"prefetch_parsed BW error: {e}")
 
+    # Mark prefetch active so per-domain misses (e.g. redirected domains not in the
+    # batch) skip the expensive full-table fallback query until the job clears it.
+    global _prefetch_active
+    _prefetch_active = True
+
 
 def get_sw_parsed(domain: str) -> Optional[dict]:
     """Return parsed SW data from in-memory cache or fallback BQ query."""
     if domain in _parsed_sw_cache:
         return _parsed_sw_cache[domain]
+    # During a batch job, a miss means this (likely redirected) domain wasn't in
+    # the prefetch — record a None sentinel and skip the full-table scan. Caching
+    # None also makes was_parsed_prefetched() return True, so the corpBQ fallback
+    # in the pipeline is skipped too (no cost shifted to corp).
+    if _prefetch_active:
+        _parsed_sw_cache[domain] = None
+        return None
     # Slow path: individual BQ query — no track_bq_call (per-domain, noise)
     _bq_touch("priv_r")
     bq = client()
@@ -625,6 +691,13 @@ def get_bw_parsed(domain: str) -> Optional[dict]:
     """Return parsed BW data from in-memory cache or fallback BQ query."""
     if domain in _parsed_bw_cache:
         return _parsed_bw_cache[domain]
+    # During a batch job, a miss means this (likely redirected) domain wasn't in
+    # the prefetch — record a None sentinel and skip the full-table scan. Caching
+    # None also makes was_parsed_prefetched() return True, so the corpBQ fallback
+    # in the pipeline is skipped too (no cost shifted to corp).
+    if _prefetch_active:
+        _parsed_bw_cache[domain] = None
+        return None
     # Slow path: individual BQ query — no track_bq_call (per-domain, noise)
     _bq_touch("priv_r")
     bq = client()
@@ -672,8 +745,10 @@ def was_parsed_prefetched(domain: str) -> bool:
 
 def clear_parsed_cache() -> None:
     """Clear the in-memory parsed cache after a job finishes."""
+    global _prefetch_active
     _parsed_sw_cache.clear()
     _parsed_bw_cache.clear()
+    _prefetch_active = False
 
 
 def flush_bq_call_stats() -> None:
@@ -974,7 +1049,20 @@ def sync_parsed_from_corp(full_scan: bool = False) -> dict:
                     CURRENT_TIMESTAMP() AS fetched_at,
                     COALESCE(JSON_VALUE(response_json, '$.Results[0].Result.Vertical'), '') AS bw_vertical,
                     '' AS bw_cms_raw,
-                    '' AS bw_ecommerce,
+                    -- Ecommerce platform = most-recent tech tagged shop/shopping-cart/ecommerce
+                    -- (Shopify, Magento, WooCommerce…). Reuses response_json already read here.
+                    IFNULL((
+                        SELECT JSON_VALUE(tech, '$.Name')
+                        FROM UNNEST(JSON_QUERY_ARRAY(response_json, '$.Results[0].Result.Paths')) AS path,
+                             UNNEST(JSON_QUERY_ARRAY(path, '$.Technologies')) AS tech
+                        WHERE JSON_VALUE(tech, '$.Name') IS NOT NULL
+                          AND EXISTS (
+                            SELECT 1 FROM UNNEST(JSON_VALUE_ARRAY(tech, '$.Tag')) AS tg
+                            WHERE LOWER(tg) IN ('shop', 'shopping-cart', 'ecommerce')
+                          )
+                        ORDER BY SAFE_CAST(JSON_VALUE(tech, '$.LastDetected') AS INT64) DESC
+                        LIMIT 1
+                    ), '') AS bw_ecommerce,
                     '' AS bw_email_marketing,
                     '[]' AS bw_technologies,
                     IFNULL((
@@ -1033,6 +1121,64 @@ def sync_parsed_from_corp(full_scan: bool = False) -> dict:
         logger.error(f"sync_parsed_from_corp BW error: {e}", exc_info=True)
         return {"error": str(e)}
 
+    # ── AI MERGE ─────────────────────────────────────────────────────────────
+    # If ai_parsed is empty (first run after the table was introduced),
+    # force a full scan regardless of the date filter — backfill all history.
+    logger.info("sync_parsed_from_corp: starting AI merge")
+    t_ai = time.time()
+    ai_rows_affected = 0
+    try:
+        ai_tbl  = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
+        our_ai  = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{AI_PARSED_TABLE}`"
+
+        ai_date_filter = date_filter
+        try:
+            cnt = list(client().query(
+                f"SELECT COUNT(*) AS c FROM {our_ai}",
+                job_config=_bq_qcfg(max_bytes=False)
+            ).result())[0]["c"]
+            if cnt == 0:
+                ai_date_filter = ""
+                logger.info("sync: ai_parsed is empty — AI merge will FULL-scan corp claude_responses (backfill)")
+        except Exception:
+            pass
+
+        ai_merge = f"""
+            MERGE {our_ai} T
+            USING (
+                SELECT
+                    domain,
+                    CURRENT_TIMESTAMP() AS fetched_at,
+                    COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
+                    IF(LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false'))
+                       IN ('true', '1', 'yes'), 'Так', 'Ні') AS ai_is_ecommerce,
+                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry
+                FROM {ai_tbl}
+                {ai_date_filter}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+            ) S
+            ON T.domain = S.domain
+            WHEN MATCHED AND S.fetched_at > T.fetched_at THEN UPDATE SET
+                T.fetched_at      = S.fetched_at,
+                T.ai_category     = S.ai_category,
+                T.ai_is_ecommerce = S.ai_is_ecommerce,
+                T.ai_industry     = S.ai_industry
+            WHEN NOT MATCHED THEN INSERT (
+                domain, fetched_at, ai_category, ai_is_ecommerce, ai_industry
+            ) VALUES (
+                S.domain, S.fetched_at, S.ai_category, S.ai_is_ecommerce, S.ai_industry
+            )
+        """
+        ai_job = bq.query(ai_merge, job_config=_bq_qcfg(max_bytes=False))
+        ai_job.result()
+        ai_rows_affected = ai_job.num_dml_affected_rows or 0
+        track_bq_call("corp_ai")
+        logger.info(f"sync_parsed_from_corp: AI merge done in {time.time() - t_ai:.1f}s, "
+                    f"rows_affected={ai_rows_affected}")
+    except Exception as e:
+        # AI merge failure is non-fatal: SW/BW already synced, profiles sync has corp fallback
+        logger.error(f"sync_parsed_from_corp AI error: {e}", exc_info=True)
+
     # Save successful sync timestamp so next run knows where to start from
     sync_ts = datetime.now(timezone.utc).isoformat()
     try:
@@ -1046,6 +1192,7 @@ def sync_parsed_from_corp(full_scan: bool = False) -> dict:
         "status": "ok",
         "sw_rows": sw_job.num_dml_affected_rows,
         "bw_rows": bw_job.num_dml_affected_rows,
+        "ai_rows": ai_rows_affected,
         "elapsed": round(total_elapsed, 1),
         "scan_mode": scan_mode,
         "synced_at": sync_ts,
@@ -1169,7 +1316,7 @@ def save_cache(table: str, domain: str, data: dict):
     bq = corp_client()
     row = {"domain": domain, "fetched_at": datetime.now(timezone.utc).isoformat(), "response_json": json.dumps(data)}
     try:
-        errors = bq.insert_rows_json(corp_table_ref(table), [row])
+        errors = bq.insert_rows_json(corp_table_ref(table), [row], timeout=BQ_OP_TIMEOUT)
         if errors:
             logger.error(f"Cache write error ({table}, {domain}): {errors}")
         else:
@@ -1222,7 +1369,7 @@ def save_job_domains(job_id: str, domains: list[str]) -> None:
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        errors = bq.insert_rows_json(table_ref(BQ_JOB_DOMAINS_TABLE), [row])
+        errors = bq.insert_rows_json(table_ref(BQ_JOB_DOMAINS_TABLE), [row], timeout=BQ_OP_TIMEOUT)
         if errors:
             logger.error(f"save_job_domains error: {errors}")
     except Exception as e:
@@ -1330,7 +1477,7 @@ def save_result(result: dict):
     # Normalise: BQ insert_rows_json needs JSON-serialisable values only
     row = {k: (None if v is None else v) for k, v in result.items()}
     try:
-        errors = bq.insert_rows_json(table_ref(BQ_RESULTS_TABLE), [row])
+        errors = bq.insert_rows_json(table_ref(BQ_RESULTS_TABLE), [row], timeout=BQ_OP_TIMEOUT)
         if errors:
             logger.error(f"Result write error: {errors}")
         else:
@@ -1547,7 +1694,7 @@ def add_user(username: str, password: str, permissions: str,
         row["first_name"] = first_name
     if last_name is not None:
         row["last_name"] = last_name
-    errors = bq.insert_rows_json(table_ref("app_users"), [row])
+    errors = bq.insert_rows_json(table_ref("app_users"), [row], timeout=BQ_OP_TIMEOUT)
     if errors:
         logger.error(f"add_user errors: {errors}")
         raise RuntimeError(f"BQ insert error: {errors[0].get('errors', errors[0])}")
@@ -1601,7 +1748,7 @@ def log_activity(username: str, action: str, details: dict = None):
         }
         if details is not None:
             row["details"] = json.dumps(details)
-        errors = bq.insert_rows_json(table_ref("activity_logs"), [row])
+        errors = bq.insert_rows_json(table_ref("activity_logs"), [row], timeout=BQ_OP_TIMEOUT)
         if errors:
             logger.error(f"log_activity insert errors: {errors}")
         else:

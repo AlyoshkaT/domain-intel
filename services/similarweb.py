@@ -30,6 +30,26 @@ def _get_sw_semaphore() -> asyncio.Semaphore:
 # Sentinel returned when SW API is rate-limited (429) — distinguishable from genuine 0 traffic.
 SW_RATE_LIMITED = {"_sw_rate_limited": True}
 
+# Global cooldown: when ANY call hits 429, every SW call waits until this moment
+# before firing — so one rate-limit signal throttles the whole queue, instead of
+# every domain independently hammering the API and getting its own 429.
+_sw_cooldown_until: float = 0.0
+
+
+async def _respect_cooldown():
+    import time as _t
+    wait = _sw_cooldown_until - _t.monotonic()
+    if wait > 0:
+        await asyncio.sleep(min(wait, 30))
+
+
+def _set_cooldown(seconds: float):
+    import time as _t
+    global _sw_cooldown_until
+    target = _t.monotonic() + seconds
+    if target > _sw_cooldown_until:
+        _sw_cooldown_until = target
+
 
 async def fetch_similarweb(domain: str, _retries: int = 5) -> Optional[dict]:
     """
@@ -51,12 +71,18 @@ async def fetch_similarweb(domain: str, _retries: int = 5) -> Optional[dict]:
     async with _get_sw_semaphore():
         for attempt in range(_retries):
             try:
+                # Respect a global cooldown set by a recent 429 from any domain
+                await _respect_cooldown()
                 async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
                     resp = await client.post(SIMILARWEB_URL, json=payload, headers=headers)
 
                     if resp.status_code == 429:
-                        # Exponential backoff: 15s, 30s, 60s, 120s, 240s
+                        # Per-domain exponential backoff: 10s, 20s, 40s, 80s, 160s
                         wait = RATE_LIMIT_WAIT * (2 ** attempt)
+                        # Global cooldown is a SHORT shared nudge so concurrent calls
+                        # don't all retry at once — capped so one domain's deep backoff
+                        # never freezes the whole SW lane (that throttled us to ~17/h).
+                        _set_cooldown(min(wait, RATE_LIMIT_WAIT))
                         logger.warning(
                             f"SW 429 for {domain} — backoff {wait}s "
                             f"(attempt {attempt+1}/{_retries})"

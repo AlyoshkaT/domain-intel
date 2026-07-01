@@ -162,6 +162,8 @@ function CatalogSection({ lang }: { lang: Lang }) {
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [rematching, setRematching] = useState(false)
+  const [rebuildingTech, setRebuildingTech] = useState(false)
+  const [refreshingDesc, setRefreshingDesc] = useState(false)
   const [addVal, setAddVal] = useState("")
   const [addGroup, setAddGroup] = useState("")
   const [msg, setMsg] = useState("")
@@ -193,6 +195,26 @@ function CatalogSection({ lang }: { lang: Lang }) {
       setMsg(t('setup_rematch_done', lang)(r.updated, r.elapsed))
     } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
     finally { setRematching(false) }
+  }
+
+  const rebuildTech = async () => {
+    if (!window.confirm(t('setup_tech_rebuild_confirm', lang))) return
+    setRebuildingTech(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/explore/tech_rebuild", { method: "POST" })
+      setMsg(t('setup_tech_rebuild_done', lang)(r.techs, r.pairs, r.elapsed))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setRebuildingTech(false) }
+  }
+
+  const refreshDesc = async () => {
+    if (!window.confirm(t('setup_tech_desc_confirm', lang))) return
+    setRefreshingDesc(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/explore/tech_descriptions/refresh", { method: "POST" })
+      setMsg(t('setup_tech_desc_done', lang)(r.techs, r.mb_billed_corp, r.elapsed))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setRefreshingDesc(false) }
   }
 
   const add = async () => {
@@ -232,6 +254,12 @@ function CatalogSection({ lang }: { lang: Lang }) {
         </button>
         <button className="btn-export" onClick={rematch} disabled={rematching} style={{marginLeft: 8}}>
           {rematching ? t('setup_rematching', lang) : t('setup_rematch_btn', lang)}
+        </button>
+        <button className="btn-export" onClick={rebuildTech} disabled={rebuildingTech} style={{marginLeft: 8}}>
+          {rebuildingTech ? t('setup_tech_rebuilding', lang) : t('setup_tech_rebuild_btn', lang)}
+        </button>
+        <button className="btn-export" onClick={refreshDesc} disabled={refreshingDesc} style={{marginLeft: 8}}>
+          {refreshingDesc ? t('setup_tech_desc_refreshing', lang) : t('setup_tech_desc_btn', lang)}
         </button>
       </div>
       <div className="setup-tabs">
@@ -290,13 +318,14 @@ const ALL_PERMISSIONS = [
   { key: "jobs",     label: "Jobs",      descKey: "setup_perm_jobs" as const },
   { key: "download", label: "Download",  descKey: "setup_perm_download" as const },
   { key: "sheets",   label: "Sheets",    descKey: "setup_perm_sheets" as const },
+  { key: "pipedrive", label: "Pipedrive", descKey: "setup_perm_pipedrive" as const },
   { key: "admin",    label: "Admin",     descKey: "setup_perm_admin" as const },
 ]
 
 const PRESETS = [
   { label: "Viewer",  perms: ["explorer"] },
-  { label: "Manager", perms: ["explorer","jobs","download","sheets"] },
-  { label: "Admin",   perms: ["explorer","jobs","download","sheets","admin"] },
+  { label: "Manager", perms: ["explorer","jobs","download","sheets","pipedrive"] },
+  { label: "Admin",   perms: ["explorer","jobs","download","sheets","pipedrive","admin"] },
 ]
 
 const PERM_ORDER = ALL_PERMISSIONS.map(p => p.key)
@@ -308,7 +337,7 @@ function parsePerms(s?: string): string[] {
     read:     ["explorer"],
     add:      ["explorer","jobs"],
     download: ["explorer","download"],
-    admin:    ["explorer","jobs","download","sheets","admin"],
+    admin:    ["explorer","jobs","download","sheets","pipedrive","admin"],
   }
   const parts = s.split(",").map(p => p.trim()).filter(Boolean)
   // if single legacy value — map it
@@ -697,12 +726,15 @@ function CacheSection({ lang }: { lang: Lang }) {
   const [bqMaxBytes, setBqMaxBytes] = useState(50)
   const [bqFloor, setBqFloor] = useState(1)
   const [autoSync, setAutoSync] = useState(true)
+  const [syncFreq, setSyncFreq] = useState("daily")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savingBq, setSavingBq] = useState(false)
   const [togglingSync, setTogglingSync] = useState(false)
+  const [manualSyncing, setManualSyncing] = useState(false)
   const [msg, setMsg] = useState("")
   const [msgBq, setMsgBq] = useState("")
+  const [msgSync, setMsgSync] = useState("")
   const [showBqWarning, setShowBqWarning] = useState(false)
 
   useEffect(() => {
@@ -712,6 +744,7 @@ function CacheSection({ lang }: { lang: Lang }) {
         setBqMaxBytes(r.bq_max_bytes_gb ?? 50)
         setBqFloor(r.bq_max_bytes_gb_floor ?? 1)
         setAutoSync(r.auto_sync_enabled !== false)
+        setSyncFreq(r.auto_sync_frequency || "daily")
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -730,16 +763,28 @@ function CacheSection({ lang }: { lang: Lang }) {
     finally { setSaving(false) }
   }
 
-  const toggleAutoSync = async (enabled: boolean) => {
+  const setFrequency = async (freq: string) => {
     setTogglingSync(true)
     try {
       await apiFetch("/api/setup/settings", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ auto_sync_enabled: enabled })
+        body: JSON.stringify({ auto_sync_frequency: freq })
       })
-      setAutoSync(enabled)
+      setSyncFreq(freq)
+      setAutoSync(freq !== "off")
     } catch (e: any) { setMsgBq(t('setup_err', lang)(e.message)) }
     finally { setTogglingSync(false) }
+  }
+
+  const manualSync = async () => {
+    if (!window.confirm(t('manual_sync_confirm', lang))) return
+    setManualSyncing(true); setMsgSync("")
+    try {
+      const r = await apiFetch("/api/admin/sync_parsed_from_corp", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      if (r.error) setMsgSync(t('setup_err', lang)(r.error))
+      else setMsgSync(t('manual_sync_done', lang)(r.sw_rows ?? 0, r.bw_rows ?? 0, r.ai_rows ?? 0, r.elapsed ?? 0))
+    } catch (e: any) { setMsgSync(t('setup_err', lang)(e.message)) }
+    finally { setManualSyncing(false) }
   }
 
   const saveBqLimit = async () => {
@@ -817,32 +862,41 @@ function CacheSection({ lang }: { lang: Lang }) {
           <p style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 10 }}>
             {t('auto_sync_desc', lang)}
           </p>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button
-              onClick={() => toggleAutoSync(!autoSync)}
-              disabled={togglingSync}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
-                border: "none", cursor: togglingSync ? "wait" : "pointer",
-                background: autoSync ? "rgba(52,211,153,0.2)" : "rgba(239,68,68,0.15)",
-                color: autoSync ? "#34d399" : "#f87171",
-                transition: "all 0.2s",
-              }}
-            >
-              <span style={{
-                width: 10, height: 10, borderRadius: "50%",
-                background: autoSync ? "#34d399" : "#f87171",
-                boxShadow: autoSync ? "0 0 6px #34d399" : "none",
-                display: "inline-block", flexShrink: 0,
-              }} />
-              {togglingSync ? t('auto_sync_saving', lang) : autoSync ? t('auto_sync_on', lang) : t('auto_sync_off', lang)}
-            </button>
-            {!autoSync && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {(["daily", "weekly", "monthly", "off"] as const).map(f => {
+              const active = syncFreq === f
+              const isOff = f === "off"
+              return (
+                <button
+                  key={f}
+                  onClick={() => setFrequency(f)}
+                  disabled={togglingSync || active}
+                  style={{
+                    padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                    border: active ? "none" : "1px solid var(--border)",
+                    cursor: togglingSync ? "wait" : active ? "default" : "pointer",
+                    background: active
+                      ? (isOff ? "rgba(239,68,68,0.2)" : "rgba(52,211,153,0.2)")
+                      : "transparent",
+                    color: active ? (isOff ? "#f87171" : "#34d399") : "var(--text-2)",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  {t(`sync_freq_${f}` as any, lang)}
+                </button>
+              )
+            })}
+            {syncFreq === "off" && (
               <span style={{ fontSize: 12, color: "#f87171" }}>
                 {t('auto_sync_paused', lang)}
               </span>
             )}
+          </div>
+          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+            <button className="btn-export" onClick={manualSync} disabled={manualSyncing}>
+              {manualSyncing ? t('manual_sync_running', lang) : t('manual_sync_btn', lang)}
+            </button>
+            {msgSync && <span style={{ fontSize: 12, color: "var(--text-2)" }}>{msgSync}</span>}
           </div>
         </div>
       </>)}
@@ -895,6 +949,193 @@ function JobsSection({ lang }: { lang: Lang }) {
   )
 }
 
+// ── Pipedrive Sync ────────────────────────────────────────────────────────────
+
+function PipedriveSyncSection({ lang }: { lang: Lang }) {
+  const ua = lang === "ua"
+  const [freq, setFreq] = useState("off")
+  const [loading, setLoading] = useState(true)
+  const [toggling, setToggling] = useState(false)
+  const [manualSyncing, setManualSyncing] = useState(false)
+  const [msg, setMsg] = useState("")
+  const [msgSync, setMsgSync] = useState("")
+
+  useEffect(() => {
+    apiFetch("/api/pipedrive/sync_settings")
+      .then(r => { setFreq(r.frequency || "off"); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const setFrequency = async (f: string) => {
+    setToggling(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/pipedrive/sync_settings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frequency: f, base_url: window.location.origin }),
+      })
+      if (r.status === "error") { setMsg(t('setup_err', lang)(r.error)); return }
+      setFreq(f)
+      if (f === "online") {
+        const w = r.webhook
+        if (w?.status === "ok") setMsg(ua ? `Online увімкнено — webhook #${w.id} зареєстровано` : `Online enabled — webhook #${w.id} registered`)
+        else if (w?.status === "no_base_url") setMsg(ua ? "Не вдалося визначити публічний URL" : "Could not determine public URL")
+        else setMsg(ua ? `Webhook: ${w?.detail || w?.status || "?"}` : `Webhook: ${w?.detail || w?.status || "?"}`)
+      } else setMsg(t('setup_saved', lang))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setToggling(false) }
+  }
+
+  const manualSync = async () => {
+    if (!window.confirm(ua ? "Запустити повну синхронізацію з Pipedrive зараз?" : "Run a full Pipedrive sync now?")) return
+    setManualSyncing(true); setMsgSync("")
+    try {
+      const r = await apiFetch("/api/pipedrive/sync", { method: "POST" })
+      if (r.status === "error") setMsgSync(t('setup_err', lang)(r.error))
+      else setMsgSync(ua
+        ? `Готово: ${r.deals} угод → ${r.domains} доменів (${r.elapsed}с)`
+        : `Done: ${r.deals} deals → ${r.domains} domains (${r.elapsed}s)`)
+    } catch (e: any) { setMsgSync(t('setup_err', lang)(e.message)) }
+    finally { setManualSyncing(false) }
+  }
+
+  const OPTS: { f: string; label: string }[] = [
+    { f: "online", label: "Online" },
+    { f: "daily", label: ua ? "Щодня" : "Daily" },
+    { f: "weekly", label: ua ? "Щотижня" : "Weekly" },
+    { f: "monthly", label: ua ? "Щомісяця" : "Monthly" },
+    { f: "off", label: ua ? "Вимкнено" : "Off" },
+  ]
+
+  return (
+    <div className="card">
+      <div className="card-section-title">{ua ? "Синхронізація Pipedrive" : "Pipedrive sync"}</div>
+      <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, marginBottom: 12 }}>
+        {ua
+          ? "Як часто оновлювати статуси відносин із Pipedrive. «Online» реєструє webhook — Pipedrive надсилає зміни угод у реальному часі."
+          : "How often to refresh relationship statuses from Pipedrive. “Online” registers a webhook — Pipedrive pushes deal changes in real time."}
+      </p>
+      {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (<>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {OPTS.map(({ f, label }) => {
+            const active = freq === f
+            const isOff = f === "off"
+            const isOnline = f === "online"
+            const activeBg = isOff ? "rgba(239,68,68,0.2)" : isOnline ? "rgba(59,130,246,0.2)" : "rgba(52,211,153,0.2)"
+            const activeColor = isOff ? "#f87171" : isOnline ? "#60a5fa" : "#34d399"
+            return (
+              <button key={f} onClick={() => setFrequency(f)} disabled={toggling || active}
+                style={{
+                  padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                  border: active ? "none" : "1px solid var(--border)",
+                  cursor: toggling ? "wait" : active ? "default" : "pointer",
+                  background: active ? activeBg : "transparent",
+                  color: active ? activeColor : "var(--text-2)", transition: "all 0.2s",
+                }}>
+                {isOnline && "⚡ "}{label}
+              </button>
+            )
+          })}
+          {freq === "online" && <span style={{ fontSize: 12, color: "#60a5fa" }}>{ua ? "реальний час (webhook)" : "real-time (webhook)"}</span>}
+          {freq === "off" && <span style={{ fontSize: 12, color: "#f87171" }}>{ua ? "автосинхронізацію вимкнено" : "auto-sync paused"}</span>}
+        </div>
+        {msg && <div className="setup-msg" style={{ marginTop: 8 }}>{msg}</div>}
+
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+          <button className="btn-export" onClick={manualSync} disabled={manualSyncing}>
+            {manualSyncing ? (ua ? "Синхронізація…" : "Syncing…") : (ua ? "↻ Синхронізувати зараз" : "↻ Sync now")}
+          </button>
+          {msgSync && <span style={{ fontSize: 12, color: "var(--text-2)" }}>{msgSync}</span>}
+        </div>
+      </>)}
+    </div>
+  )
+}
+
+// ── Pipedrive MRR (corpBQ source) ─────────────────────────────────────────────
+
+function MrrSyncSection({ lang }: { lang: Lang }) {
+  const ua = lang === "ua"
+  const [freq, setFreq] = useState("off")
+  const [loading, setLoading] = useState(true)
+  const [toggling, setToggling] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [msg, setMsg] = useState("")
+  const [msgSync, setMsgSync] = useState("")
+
+  useEffect(() => {
+    apiFetch("/api/pipedrive/mrr_settings")
+      .then(r => { setFreq(r.frequency || "off"); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const setFrequency = async (f: string) => {
+    setToggling(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/pipedrive/mrr_settings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frequency: f }),
+      })
+      if (r.status === "error") { setMsg(t('setup_err', lang)(r.error)); return }
+      setFreq(f); setMsg(t('setup_saved', lang))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setToggling(false) }
+  }
+
+  const manualSync = async () => {
+    if (!window.confirm(ua ? "Підтягнути MRR з corpBQ зараз? (~700 МБ скан corp)" : "Pull MRR from corpBQ now? (~700 MB corp scan)")) return
+    setSyncing(true); setMsgSync("")
+    try {
+      const r = await apiFetch("/api/pipedrive/mrr_sync", { method: "POST" })
+      if (r.status === "error") setMsgSync(t('setup_err', lang)(r.error))
+      else setMsgSync(ua ? `Готово: ${r.domains} доменів, ${r.mb_billed_corp} МБ corp (${r.elapsed}с)`
+        : `Done: ${r.domains} domains, ${r.mb_billed_corp} MB corp (${r.elapsed}s)`)
+    } catch (e: any) { setMsgSync(t('setup_err', lang)(e.message)) }
+    finally { setSyncing(false) }
+  }
+
+  const OPTS: { f: string; label: string }[] = [
+    { f: "daily", label: ua ? "Щодня" : "Daily" },
+    { f: "weekly", label: ua ? "Щотижня" : "Weekly" },
+    { f: "monthly", label: ua ? "Щомісяця" : "Monthly" },
+    { f: "off", label: ua ? "Вимкнено" : "Off" },
+  ]
+
+  return (
+    <div className="card">
+      <div className="card-section-title">{ua ? "Синхронізація MRR (corpBQ)" : "MRR sync (corpBQ)"}</div>
+      <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, marginBottom: 12 }}>
+        {ua
+          ? "MRR береться з corpBQ (підвʼязаний до іншої CRM, точніші суми) — окремо від Pipedrive. Один скан corp ~700 МБ за синк, дашборд читає лише маленьку private-таблицю."
+          : "MRR is pulled from corpBQ (tied to another CRM, more accurate) — separate from Pipedrive. One ~700 MB corp scan per sync; the dashboard only reads the small private table."}
+      </p>
+      {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (<>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {OPTS.map(({ f, label }) => {
+            const active = freq === f, isOff = f === "off"
+            return (
+              <button key={f} onClick={() => setFrequency(f)} disabled={toggling || active}
+                style={{
+                  padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                  border: active ? "none" : "1px solid var(--border)",
+                  cursor: toggling ? "wait" : active ? "default" : "pointer",
+                  background: active ? (isOff ? "rgba(239,68,68,0.2)" : "rgba(52,211,153,0.2)") : "transparent",
+                  color: active ? (isOff ? "#f87171" : "#34d399") : "var(--text-2)",
+                }}>{label}</button>
+            )
+          })}
+        </div>
+        {msg && <div className="setup-msg" style={{ marginTop: 8 }}>{msg}</div>}
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+          <button className="btn-export" onClick={manualSync} disabled={syncing}>
+            {syncing ? (ua ? "Синхронізація…" : "Syncing…") : (ua ? "↻ Підтягнути MRR зараз" : "↻ Pull MRR now")}
+          </button>
+          {msgSync && <span style={{ fontSize: 12, color: "var(--text-2)" }}>{msgSync}</span>}
+        </div>
+      </>)}
+    </div>
+  )
+}
+
 // ── Main Setup Page ───────────────────────────────────────────────────────────
 
 export default function SetupPage({ lang }: { lang: Lang }) {
@@ -911,6 +1152,10 @@ export default function SetupPage({ lang }: { lang: Lang }) {
       <UsersSection lang={lang} />
       <div style={{ height: 16 }} />
       <CacheSection lang={lang} />
+      <div style={{ height: 16 }} />
+      <PipedriveSyncSection lang={lang} />
+      <div style={{ height: 16 }} />
+      <MrrSyncSection lang={lang} />
       <div style={{ height: 16 }} />
       <JobsSection lang={lang} />
       <div style={{ height: 16 }} />

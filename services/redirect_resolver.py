@@ -39,8 +39,76 @@ def ensure_redirects_table():
         logger.info(f"Created table {REDIRECTS_TABLE}")
 
 
+# In-memory redirect cache, populated once per job by prefetch_redirects().
+# Replaces 1 BQ query per domain (each billed the 10MB minimum → ~$0.89/15K job)
+# with a single batched query.
+_redirect_cache: dict[str, Optional[str]] = {}
+_redirect_prefetch_active = False
+_REDIRECT_CHUNK = 5000
+
+
+def _clean_resolved(resolved: Optional[str]) -> Optional[str]:
+    """Reject stored redirects with a port (legacy bug → 'site.com:443')."""
+    if resolved and ":" in resolved:
+        return None
+    return resolved or None
+
+
+def prefetch_redirects(domains: list[str]) -> None:
+    """
+    Batch-load known redirects for the whole job in one (chunked) query.
+    After this, get_known_redirect() serves from memory — no per-domain BQ query.
+    """
+    global _redirect_prefetch_active
+    if not domains:
+        return
+    bq = client()
+    uniq = list(dict.fromkeys(domains))
+    hits = 0
+    try:
+        for i in range(0, len(uniq), _REDIRECT_CHUNK):
+            chunk = uniq[i:i + _REDIRECT_CHUNK]
+            ph = ", ".join(f"@d{j}" for j in range(len(chunk)))
+            params = [bigquery.ScalarQueryParameter(f"d{j}", "STRING", d) for j, d in enumerate(chunk)]
+            rows = list(bq.query(
+                f"""
+                SELECT original, resolved FROM (
+                    SELECT original, resolved,
+                           ROW_NUMBER() OVER (PARTITION BY original ORDER BY detected_at DESC) rn
+                    FROM `{table_ref(REDIRECTS_TABLE)}`
+                    WHERE original IN ({ph})
+                ) WHERE rn = 1
+                """,
+                job_config=bigquery.QueryJobConfig(query_parameters=params)
+            ).result())
+            for r in rows:
+                _redirect_cache[r["original"]] = _clean_resolved(r["resolved"])
+                hits += 1
+        # Mark misses so get_known_redirect won't fall through to BQ
+        for d in uniq:
+            if d not in _redirect_cache:
+                _redirect_cache[d] = None
+        _redirect_prefetch_active = True
+        logger.info(f"prefetch_redirects: {hits} known redirects for {len(uniq)} domains (1 query)")
+    except Exception as e:
+        logger.error(f"prefetch_redirects error: {e}")
+
+
+def clear_redirect_cache() -> None:
+    """Clear redirect cache after a job finishes."""
+    global _redirect_prefetch_active
+    _redirect_cache.clear()
+    _redirect_prefetch_active = False
+
+
 def get_known_redirect(domain: str) -> Optional[str]:
     """Check if we already know where this domain redirects to."""
+    # Fast path: from the batch prefetch cache (no BQ query)
+    if domain in _redirect_cache:
+        return _redirect_cache[domain]
+    # During a job, a miss means it wasn't in the prefetch → skip the per-domain query
+    if _redirect_prefetch_active:
+        return None
     bq = client()
     try:
         rows = list(bq.query(f"""
@@ -50,15 +118,7 @@ def get_known_redirect(domain: str) -> Optional[str]:
             LIMIT 1
         """).result())
         if rows:
-            resolved = rows[0]["resolved"]
-            # Sanity-check: reject any stored redirect that contains a port number.
-            # Such records were created by a bug (netloc instead of hostname) and
-            # would corrupt subsequent runs with domains like "site.com:443".
-            if resolved and ":" in resolved:
-                logger.warning(
-                    f"Ignoring bad stored redirect {domain} → {resolved} (contains port)")
-                return None
-            return resolved
+            return _clean_resolved(rows[0]["resolved"])
         return None
     except Exception as e:
         logger.error(f"Redirect lookup error for {domain}: {e}")
@@ -80,6 +140,7 @@ def save_redirect(original: str, resolved: str, redirect_type: str, job_id: str)
     """
     try:
         bq.query(sql).result()
+        _redirect_cache[original] = _clean_resolved(resolved)  # keep in-job cache consistent
         logger.info(f"Redirect saved: {original} → {resolved} ({redirect_type})")
     except Exception as e:
         logger.error(f"Redirect save error: {e}")

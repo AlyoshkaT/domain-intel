@@ -41,9 +41,13 @@ with open(env_path) as f:
 line = f"GOOGLE_OAUTH_TOKEN_JSON={token_json}"
 
 if "GOOGLE_OAUTH_TOKEN_JSON" in content:
-    content = re.sub(r"#?\s*GOOGLE_OAUTH_TOKEN_JSON=.*", line, content)
+    # Anchor to line start; use [ \t]* (not \s*) so we never consume the
+    # preceding newline and glue the var onto the previous line.
+    content = re.sub(r"(?m)^[ \t]*#?[ \t]*GOOGLE_OAUTH_TOKEN_JSON=.*$", line, content)
 else:
-    content += f"\n{line}\n"
+    if content and not content.endswith("\n"):
+        content += "\n"
+    content += f"{line}\n"
 
 with open(env_path, "w") as f:
     f.write(content)

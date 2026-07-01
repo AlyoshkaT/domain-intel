@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import ExplorerPage from "./Explorer"
+import ExplorerPage, { requestExplorerRestore } from "./Explorer"
 import TechnologiesPage from "./Technologies"
 import RedirectsPage from "./Redirects"
+import PipedrivePage from "./Pipedrive"
 import SetupPage from "./Setup"
 import { t, type Lang } from "./i18n"
 import "./index.css"
@@ -155,7 +156,8 @@ function JobStatusLine({ job, lang }: { job: Job; lang: Lang }) {
 
 // ─── Page: New Job ─────────────────────────────────────────────────────────────
 function NewJobPage({ onJobCreated, lang }: { onJobCreated: (id: string) => void; lang: Lang }) {
-  const [services, setServices] = useState<string[]>(["similarweb", "builtwith"])
+  const [services, setServices] = useState<string[]>(["similarweb"])
+  const [aiMode, setAiMode] = useState<"safe" | "speed">("safe")
   const [file, setFile] = useState<File | null>(null)
   const [manualDomains, setManualDomains] = useState("")
   const [dragging, setDragging] = useState(false)
@@ -203,6 +205,7 @@ function NewJobPage({ onJobCreated, lang }: { onJobCreated: (id: string) => void
       fd.append("file", sendFile)
       fd.append("services", JSON.stringify(services))
       fd.append("force_refresh", String(forceRefresh))
+      fd.append("ai_mode", aiMode)
       const res = await fetch("/api/jobs", { method: "POST", body: fd })
       if (!res.ok) { const e = await res.json().catch(() => ({ detail: "Error" })); throw new Error(e.detail) }
       const data = await res.json()
@@ -230,6 +233,22 @@ function NewJobPage({ onJobCreated, lang }: { onJobCreated: (id: string) => void
         <div className="services-grid">
           {serviceOptions.map(s => <ServiceToggle key={s.id} id={s.id} label={s.label} sublabel={s.sublabel} checked={services.includes(s.id)} onChange={() => toggle(s.id)} />)}
         </div>
+        {services.includes("ai") && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+            <span style={{ fontSize: 12, color: "var(--text-3)" }}>{lang === "ua" ? "Режим AI:" : "AI mode:"}</span>
+            <button className={`gran-btn${aiMode === "safe" ? " active" : ""}`} onClick={() => setAiMode("safe")}
+              title={lang === "ua" ? "Batch API −50%, результат асинхронно (нічний/ощадливий)" : "Batch API −50%, async results (night/thrifty)"}>
+              🌙 {lang === "ua" ? "Ощадливий" : "Safe"}
+            </button>
+            <button className={`gran-btn${aiMode === "speed" ? " active" : ""}`} onClick={() => setAiMode("speed")}
+              title={lang === "ua" ? "Живі виклики, миттєво, повна ціна" : "Live calls, immediate, full price"}>
+              ⚡ {lang === "ua" ? "Швидкий" : "Speed"}
+            </button>
+            <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+              {aiMode === "safe" ? (lang === "ua" ? "−50%, результат за ~годину" : "−50%, results in ~1h") : (lang === "ua" ? "миттєво, повна ціна" : "instant, full price")}
+            </span>
+          </div>
+        )}
       </div>
       <div className="card">
         <div className="card-section-title">{t('new_manual_title', lang)}</div>
@@ -455,6 +474,20 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
     finally { setActing(false) }
   }, [jobId, lang, pollSheetUrl])
 
+  // Download via fetch→blob (no extra browser tab, like Explorer) instead of window.open
+  const downloadFile = useCallback(async (kind: "csv" | "xlsx") => {
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/export/${kind}`, { credentials: "same-origin" })
+      if (!res.ok) throw new Error("export failed")
+      const blob = await res.blob()
+      const a = document.createElement("a")
+      a.href = URL.createObjectURL(blob)
+      a.download = `${(job?.filename || "results").replace(/\.[^.]+$/, "")}.${kind}`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch { alert(`${kind.toUpperCase()} export error`) }
+  }, [jobId, job])
+
   const filtered = results.filter(r =>
     !filter || r.domain.includes(filter.toLowerCase()) ||
     (r.sw_category || "").toLowerCase().includes(filter.toLowerCase()) ||
@@ -535,8 +568,8 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
               {acting ? "…" : t('jobs_retry', lang)(job.failed_domains || 0)}
             </button>
           )}
-          {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/csv`, "_blank")}>CSV</button>}
-          {can("download") && <button className="btn-export" onClick={() => window.open(`/api/jobs/${jobId}/export/xlsx`, "_blank")}>XLSX</button>}
+          {can("download") && <button className="btn-export" onClick={() => downloadFile("csv")}>CSV</button>}
+          {can("download") && <button className="btn-export" onClick={() => downloadFile("xlsx")}>XLSX</button>}
           {can("sheets") && (
             <button className="btn-export" disabled={acting} onClick={() => handleSheetsExport(false)}>
               {acting ? "…" : t('jobs_sheets', lang)}
@@ -584,7 +617,7 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
           value={filter} onChange={e => setFilter(e.target.value)} />
         <span className="filter-count">{t('results_count', lang)(filtered.length)}</span>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap table-fixed-height">
         <table className="results-table">
           <thead><tr>{COLUMNS.map(c => <th key={c.key} style={{ minWidth: c.w }}>{c.label}</th>)}</tr></thead>
           <tbody>
@@ -643,7 +676,7 @@ function BqIndicator() {
   )
 }
 
-type View = "new" | "jobs" | "results" | "explorer" | "technologies" | "redirects" | "setup"
+type View = "new" | "jobs" | "results" | "explorer" | "technologies" | "redirects" | "pipedrive" | "setup"
 
 export default function App() {
   const [view, setView] = useState<View>("new")
@@ -698,6 +731,7 @@ export default function App() {
           {can("explorer") && <button className={`nav-link ${view === "explorer" ? "active" : ""}`} onClick={() => setView("explorer")}>{t('nav_explorer', lang)}</button>}
           {can("explorer") && <button className={`nav-link ${view === "technologies" ? "active" : ""}`} onClick={() => { setTechDomains(explorerFilteredDomains); setView("technologies") }}>{t('nav_technologies', lang)}</button>}
           {can("explorer") && <button className={`nav-link ${view === "redirects" ? "active" : ""}`} onClick={() => setView("redirects")}>{t('nav_redirects', lang)}</button>}
+          {can("pipedrive") && <button className={`nav-link ${view === "pipedrive" ? "active" : ""}`} onClick={() => setView("pipedrive")}>Pipedrive</button>}
           {can("admin") && <button className={`nav-link ${view === "setup" ? "active" : ""}`} onClick={() => setView("setup")}>{t('nav_setup', lang)}</button>}
         </div>
         <div className="nav-right">
@@ -709,8 +743,9 @@ export default function App() {
         </div>
       </nav>
       <main className="main">
-        {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => setView("explorer")} can={can} lang={lang} />}
+        {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => { requestExplorerRestore(); setView("explorer") }} can={can} lang={lang} />}
         {view === "redirects" && <RedirectsPage lang={lang} />}
+        {view === "pipedrive" && <PipedrivePage lang={lang} can={can} />}
         {view === "setup" && <SetupPage lang={lang} />}
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} lang={lang} />}
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} can={can} lang={lang} />}
