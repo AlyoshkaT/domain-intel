@@ -49,3 +49,5 @@ frontend/dist/
 oauth_client.json
 *.env*
 123.env*
+# documented template WITHOUT secrets — safe to commit
+!.env.example

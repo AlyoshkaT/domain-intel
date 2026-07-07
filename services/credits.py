@@ -25,11 +25,11 @@ def _save_setting(key: str, value: str):
 
 async def fetch_builtwith_credits() -> Optional[int]:
     """Fetch remaining BuiltWith credits from whoami endpoint."""
-    from config.settings import BUILTWITH_API_KEY
+    from config.settings import BUILTWITH_API_KEY, BUILTWITH_WHOAMI_TIMEOUT
     if not BUILTWITH_API_KEY:
         return None
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with httpx.AsyncClient(timeout=BUILTWITH_WHOAMI_TIMEOUT) as c:
             resp = await c.get(
                 "https://api.builtwith.com/whoamiv1/api.json",
                 params={"KEY": BUILTWITH_API_KEY}

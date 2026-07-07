@@ -7,7 +7,7 @@ import httpx
 import json
 import logging
 from typing import Optional
-from config.settings import SIMILARWEB_RAPIDAPI_KEY, REQUEST_TIMEOUT, RATE_LIMIT_WAIT, SW_CONCURRENCY
+from config.settings import SIMILARWEB_RAPIDAPI_KEY, REQUEST_TIMEOUT, RATE_LIMIT_WAIT, SW_CONCURRENCY, SW_MAX_RETRIES
 from core.bigquery import get_cached, save_cache
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def _set_cooldown(seconds: float):
         _sw_cooldown_until = target
 
 
-async def fetch_similarweb(domain: str, _retries: int = 5) -> Optional[dict]:
+async def fetch_similarweb(domain: str, _retries: int = SW_MAX_RETRIES) -> Optional[dict]:
     """
     Fetch SimilarWeb data via RapidAPI with rate-limit retry + concurrency cap.
     Returns SW_RATE_LIMITED sentinel (not None) on persistent 429 so callers can

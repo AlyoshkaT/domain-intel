@@ -31,7 +31,7 @@ from datetime import date, datetime
 import httpx
 from google.cloud import bigquery
 
-from config.settings import PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN, REQUEST_TIMEOUT
+from config.settings import PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN, REQUEST_TIMEOUT, PIPEDRIVE_TIMEOUT
 from core.bigquery import client, table_ref
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ def _load_tariff_labels() -> dict[str, str]:
     """Fetch the Tariff-plan field options from Pipedrive once; cache in-process."""
     global _TARIFF_LABELS
     try:
-        with httpx.Client(timeout=30) as cli:
+        with httpx.Client(timeout=PIPEDRIVE_TIMEOUT) as cli:
             r = cli.get(f"{_base()}/dealFields", params={"api_token": PIPEDRIVE_API_TOKEN, "limit": 500})
         for f in (r.json().get("data") or []):
             if f.get("key") == F_TARIFF:
@@ -639,7 +639,7 @@ def register_webhook(base_url: str) -> dict:
     from core.bigquery import get_setting, set_setting
     unregister_webhook()  # avoid duplicates
     url = base_url.rstrip("/") + "/api/pipedrive/webhook?token=" + get_webhook_secret()
-    with httpx.Client(timeout=30) as cli:
+    with httpx.Client(timeout=PIPEDRIVE_TIMEOUT) as cli:
         r = cli.post(f"{_base()}/webhooks", params={"api_token": PIPEDRIVE_API_TOKEN}, json={
             "subscription_url": url,
             "event_action": "*",
@@ -661,7 +661,7 @@ def unregister_webhook() -> dict:
     if not wid:
         return {"status": "none"}
     try:
-        with httpx.Client(timeout=30) as cli:
+        with httpx.Client(timeout=PIPEDRIVE_TIMEOUT) as cli:
             cli.delete(f"{_base()}/webhooks/{wid}", params={"api_token": PIPEDRIVE_API_TOKEN})
     except Exception as e:
         logger.debug(f"webhook delete: {e}")
@@ -670,7 +670,7 @@ def unregister_webhook() -> dict:
 
 
 def fetch_deal(deal_id: int) -> dict | None:
-    with httpx.Client(timeout=30) as cli:
+    with httpx.Client(timeout=PIPEDRIVE_TIMEOUT) as cli:
         r = cli.get(f"{_base()}/deals/{deal_id}", params={"api_token": PIPEDRIVE_API_TOKEN})
     if r.status_code >= 300:
         return None
