@@ -559,8 +559,8 @@ def export_xlsx(request: Request, job_id: str):
     except Exception:
         pass
     import pandas as pd
-    from services.sheets_export import results_to_dataframe
-    df = results_to_dataframe(results)
+    from services.sheets_export import results_to_dataframe, sanitize_for_xlsx
+    df = sanitize_for_xlsx(results_to_dataframe(results))
     stream = io.BytesIO()
     with pd.ExcelWriter(stream, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Results")

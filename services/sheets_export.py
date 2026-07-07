@@ -311,6 +311,21 @@ def results_to_dataframe(results: list[dict], cols: list[tuple] | None = None):
     return pd.DataFrame(data, columns=headers)
 
 
+# openpyxl rejects ASCII control chars (except \t \n \r) and values >32767 chars.
+import re as _re
+_XLSX_ILLEGAL_RE = _re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+def sanitize_for_xlsx(df):
+    """Strip illegal control chars and truncate long cells so openpyxl won't reject them."""
+    def _clean(v):
+        if isinstance(v, str):
+            v = _XLSX_ILLEGAL_RE.sub("", v)
+            if len(v) > 32767:
+                v = v[:32764] + "..."
+        return v
+    return (df.map if hasattr(df, "map") else df.applymap)(_clean)
+
+
 def _write_data_tab(sh, sheet_id: str, tab_id: int, tab_title: str, rows: list[list]):
     """Write data rows and apply standard header formatting to one tab."""
     n_cols = len(rows[0]) if rows else 1
