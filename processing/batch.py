@@ -81,6 +81,19 @@ def _trigger_profiles_sync(job_id: str, domains: list[str]):
 _active_jobs: dict[str, asyncio.Task] = {}
 _job_progress: dict[str, dict] = {}
 
+# Sequential-run gate: only ONE big (non-priority) job's API phase runs at a time;
+# the rest wait their turn (status 'queued'). Small priority jobs (≤ PRIORITY_MAX_
+# DOMAINS) bypass it. Lazily created inside the running loop (asyncio primitives
+# must be created there, not at import time).
+_job_run_gate: Optional[asyncio.Semaphore] = None
+
+
+def _run_gate() -> asyncio.Semaphore:
+    global _job_run_gate
+    if _job_run_gate is None:
+        _job_run_gate = asyncio.Semaphore(1)
+    return _job_run_gate
+
 
 def get_live_progress(job_id: str) -> Optional[dict]:
     """Return live in-memory progress for a running job, or None if not active."""
@@ -128,11 +141,34 @@ async def run_batch_job(
     total = len(domains)
     processed = processed_offset
     failed    = failed_offset
+    total_all = total + processed_offset + failed_offset
 
-    # Initialise in-memory snapshot
+    # Priority: small urgent jobs (≤ PRIORITY_MAX_DOMAINS) pause big jobs' new API calls
+    from processing.limits import PRIORITY_MAX_DOMAINS, priority_job_started, priority_job_finished
+    is_priority = total_all <= PRIORITY_MAX_DOMAINS
+
+    # ── Sequential queue ─────────────────────────────────────────────────────
+    # Only ONE big (non-priority) job runs at a time — the next starts only after
+    # the current one's processing finishes. Small priority jobs skip the gate and
+    # start immediately, pausing the big job's new API calls (the "≤10 can jump the
+    # queue" exception). A big job waiting its turn shows status 'queued'.
+    gate_acquired = False
+    if not is_priority:
+        gate = _run_gate()
+        if gate.locked():
+            _set_progress(job_id,
+                status="queued", total_domains=total_all,
+                processed_domains=processed, failed_domains=failed,
+                services=services,
+                started_at=datetime.now(timezone.utc).isoformat())
+            logger.info(f"Job {job_id} queued — waiting for the running job to finish")
+        await gate.acquire()
+        gate_acquired = True
+
+    # Initialise in-memory snapshot (job is now actually starting)
     _set_progress(job_id,
         status="running",
-        total_domains=total + processed_offset + failed_offset,
+        total_domains=total_all,
         processed_domains=processed,
         failed_domains=failed,
         services=services,
@@ -177,13 +213,9 @@ async def run_batch_job(
     # Per-job domain cap (limits in-flight redirects/BQ writes per job).
     # Actual API load is capped globally by per-service queues in processing/limits.py.
     semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
-    total_all  = total + processed_offset + failed_offset
     checkpoint = _bq_checkpoint_interval(total_all)
     logger.info(f"Job {job_id}: BQ checkpoint every {checkpoint} domains (total={total_all})")
 
-    # Priority: small urgent jobs (≤ PRIORITY_MAX_DOMAINS) pause big jobs' new API calls
-    from processing.limits import PRIORITY_MAX_DOMAINS, priority_job_started, priority_job_finished
-    is_priority = total_all <= PRIORITY_MAX_DOMAINS
     if is_priority:
         priority_job_started()
 
@@ -257,7 +289,9 @@ async def run_batch_job(
         tasks = [process_one(d) for d in domains]
         await asyncio.gather(*tasks, return_exceptions=True)
     finally:
-        # Stop the heartbeat and always release the priority gate
+        # Stop the heartbeat and always release the priority + sequential gates.
+        # Released here (right after processing) so the next queued job can start
+        # while this job's post-processing (Sheets/profiles sync) runs in the bg.
         hb_task.cancel()
         try:
             await hb_task
@@ -265,6 +299,9 @@ async def run_batch_job(
             pass
         if is_priority:
             priority_job_finished()
+        if gate_acquired:
+            _run_gate().release()
+            gate_acquired = False
 
     if stopped["flag"]:
         # Another process (Cancel / Force complete) already set the terminal status.
