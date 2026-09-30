@@ -5,6 +5,7 @@ import RedirectsPage from "./Redirects"
 import PipedrivePage from "./Pipedrive"
 import SetupPage from "./Setup"
 import { t, type Lang } from "./i18n"
+import { HelpProvider, HelpToggle, useSort, SortHeader } from "./ui"
 import "./index.css"
 
 const API = ""
@@ -171,7 +172,13 @@ function NewJobPage({ onJobCreated, lang }: { onJobCreated: (id: string) => void
   const loadCredits = useCallback(async () => {
     try { setCredits(await apiFetch("/api/credits")) } catch {}
   }, [])
-  useEffect(() => { loadCredits() }, [loadCredits])
+  // Poll the cached /api/credits every 60s so the counter stays live after jobs
+  // (cheap read — no external BuiltWith/SimilarWeb call; the ↻ button forces a real refresh).
+  useEffect(() => {
+    loadCredits()
+    const id = setInterval(loadCredits, 60000)
+    return () => clearInterval(id)
+  }, [loadCredits])
 
   const toggle = (id: string) => setServices(p => p.includes(id) ? p.filter(s => s !== id) : [...p, id])
 
@@ -494,6 +501,7 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
     (r.ai_industry || "").toLowerCase().includes(filter.toLowerCase()) ||
     (r.cms_list || "").toLowerCase().includes(filter.toLowerCase())
   )
+  const { sorted, sort, onSort } = useSort(filtered, (r, key) => (r as any)[key])
 
   const renderCell = (r: Result, key: string): string => {
     if (key === "sw_visits") return r.sw_visits ? r.sw_visits.toLocaleString("en-US") : "—"
@@ -619,9 +627,9 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
       </div>
       <div className="table-wrap table-fixed-height">
         <table className="results-table">
-          <thead><tr>{COLUMNS.map(c => <th key={c.key} style={{ minWidth: c.w }}>{c.label}</th>)}</tr></thead>
+          <thead><tr>{COLUMNS.map(c => <SortHeader key={c.key} col={c.key} sort={sort} onSort={onSort} style={{ minWidth: c.w }}>{c.label}</SortHeader>)}</tr></thead>
           <tbody>
-            {filtered.map(r => (
+            {sorted.map(r => (
               <tr key={r.domain} className={r.status === "error" ? "row-error" : ""}>
                 {COLUMNS.map(c => (
                   <td key={c.key}
@@ -719,6 +727,7 @@ export default function App() {
   const handleSelectJob = (id: string) => { setSelectedJobId(id); setView("results") }
 
   return (
+    <HelpProvider>
     <div className="app">
       <nav className="nav">
         <div className="nav-brand">
@@ -736,6 +745,7 @@ export default function App() {
         </div>
         <div className="nav-right">
           <BqIndicator />
+          <HelpToggle title={t('nav_hints', lang)} />
           <button className="theme-toggle" onClick={() => setLang(l => l === 'en' ? 'ua' : 'en')} title="Language">
             {lang === 'en' ? 'UA' : 'EN'}
           </button>
@@ -756,5 +766,6 @@ export default function App() {
           can={can} lang={lang} />}
       </main>
     </div>
+    </HelpProvider>
   )
 }

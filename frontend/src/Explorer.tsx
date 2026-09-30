@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import Dashboard, { TRAFFIC_GROUPS } from "./Dashboard"
 import { t, type Lang } from "./i18n"
+import { useSort, SortHeader, regionLabel } from "./ui"
 
 const API = ""
 
@@ -231,7 +232,15 @@ function MultiSelect({ field, filter, allValues, onChange, lang }: {
     const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
     document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h)
   }, [])
-  const filtered = allValues.filter(v => !filter.search || v.value.toLowerCase().includes(filter.search.toLowerCase()))
+  // Region field: show human country names ("UA" → "Ukraine (UA)") while the
+  // stored/filtered value stays the raw code. Search matches code OR name.
+  const isRegion = field === "sw_primary_region"
+  const disp = (v: string) => isRegion ? regionLabel(v, lang) : v
+  const filtered = allValues.filter(v => {
+    if (!filter.search) return true
+    const s = filter.search.toLowerCase()
+    return v.value.toLowerCase().includes(s) || (isRegion && disp(v.value).toLowerCase().includes(s))
+  })
   const toggle = (v: string) => {
     const sel = filter.selected.includes(v) ? filter.selected.filter(s => s !== v) : [...filter.selected, v]
     const newType = sel.length > 0 ? filter.type : "all"
@@ -267,7 +276,7 @@ function MultiSelect({ field, filter, allValues, onChange, lang }: {
                 {filtered.map(v => (
                   <label key={v.value} className="flt-option">
                     <input type="checkbox" checked={filter.selected.includes(v.value)} onChange={() => toggle(v.value)} />
-                    <span className="flt-option-text">{v.value}</span>
+                    <span className="flt-option-text">{disp(v.value)}</span>
                     <span className="flt-option-count">{v.count}</span>
                   </label>
                 ))}
@@ -278,7 +287,7 @@ function MultiSelect({ field, filter, allValues, onChange, lang }: {
       )}
       {filter.selected.length > 0 && (
         <div className="flt-selected-tags">
-          {filter.selected.slice(0, 2).map(v => <span key={v} className="flt-tag" onClick={() => toggle(v)}>{v} ✕</span>)}
+          {filter.selected.slice(0, 2).map(v => <span key={v} className="flt-tag" onClick={() => toggle(v)}>{disp(v)} ✕</span>)}
           {filter.selected.length > 2 && <span className="flt-tag flt-tag-more">+{filter.selected.length - 2}</span>}
         </div>
       )}
@@ -652,9 +661,16 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
     applyFilters(def, allProfiles)
   }, [allProfiles, applyFilters])
 
+  // ── Sorting (client-side, applied before pagination) ──────────────────────
+  const sortAccessor = useCallback((r: ExploreResult, key: string) => {
+    if (key === "sw_primary_region") return regionLabel(r.sw_primary_region, lang)  // sort by shown name
+    return (r as any)[key]
+  }, [lang])
+  const { sorted: sortedProfiles, sort, onSort } = useSort(filteredProfiles, sortAccessor)
+
   // ── Pagination — pure in-memory slice ─────────────────────────────────────
   const total = filteredProfiles.length
-  const pageResults = useMemo(() => filteredProfiles.slice(offset, offset + PAGE), [filteredProfiles, offset])
+  const pageResults = useMemo(() => sortedProfiles.slice(offset, offset + PAGE), [sortedProfiles, offset])
   const handlePrev = () => setOffset(o => Math.max(0, o - PAGE))
   const handleNext = () => setOffset(o => o + PAGE)
   const handleJump = () => {
@@ -893,11 +909,21 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
               <thead>
                 <tr>
                   <th style={{ width: 40 }}>#</th>
-                  <th>Domain</th><th>Traffic</th><th>CMS</th>
-                  <th>oSearch</th><th>EMS</th><th>AI Category</th><th>AI Ecomm</th>
-                  <th>AI Industry</th><th>Category SW</th><th>Subcategory</th>
-                  <th>Description</th><th>Region</th><th>Region %</th>
-                  <th title="SW data fetched">SW 📅</th><th title="BW data fetched">BW 📅</th>
+                  <SortHeader col="domain" sort={sort} onSort={onSort} hint="Домен сайту. Клік по значенню — відкрити у новій вкладці.">Domain</SortHeader>
+                  <SortHeader col="sw_visits" sort={sort} onSort={onSort} hint="Візити за місяць за SimilarWeb (sw_visits).">Traffic</SortHeader>
+                  <SortHeader col="cms_list" sort={sort} onSort={onSort} hint="CMS сайту за BuiltWith (cms_list).">CMS</SortHeader>
+                  <SortHeader col="osearch" sort={sort} onSort={onSort} hint="Рушій site-search за BuiltWith (osearch).">oSearch</SortHeader>
+                  <SortHeader col="ems_list" sort={sort} onSort={onSort} hint="Email/маркетинг-платформа за BuiltWith (ems_list).">EMS</SortHeader>
+                  <SortHeader col="ai_category" sort={sort} onSort={onSort} hint="Категорія, визначена Claude AI (ai_category).">AI Category</SortHeader>
+                  <SortHeader col="ai_is_ecommerce" sort={sort} onSort={onSort} hint="Чи це e-commerce, за Claude AI (ai_is_ecommerce).">AI Ecomm</SortHeader>
+                  <SortHeader col="ai_industry" sort={sort} onSort={onSort} hint="Галузь, за Claude AI (ai_industry).">AI Industry</SortHeader>
+                  <SortHeader col="sw_category" sort={sort} onSort={onSort} hint="Категорія за SimilarWeb (sw_category).">Category SW</SortHeader>
+                  <SortHeader col="sw_subcategory" sort={sort} onSort={onSort} hint="Підкатегорія за SimilarWeb (sw_subcategory).">Subcategory</SortHeader>
+                  <SortHeader col="sw_description" sort={sort} onSort={onSort} hint="Опис сайту за SimilarWeb (sw_description).">Description</SortHeader>
+                  <SortHeader col="sw_primary_region" sort={sort} onSort={onSort} hint="Основний регіон трафіку за SimilarWeb (sw_primary_region).">Region</SortHeader>
+                  <SortHeader col="sw_primary_region_pct" sort={sort} onSort={onSort} hint="Частка трафіку з основного регіону (sw_primary_region_pct).">Region %</SortHeader>
+                  <SortHeader col="sw_fetched" sort={sort} onSort={onSort} hint="Дата отримання даних SimilarWeb (sw_fetched).">SW 📅</SortHeader>
+                  <SortHeader col="bw_fetched" sort={sort} onSort={onSort} hint="Дата отримання даних BuiltWith (bw_fetched).">BW 📅</SortHeader>
                 </tr>
               </thead>
               <tbody>
@@ -915,7 +941,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
                       title={r.sw_description || ""}
                       style={{ cursor: r.sw_description === undefined ? "help" : undefined }}
                     >{r.sw_description !== undefined ? cell(r.sw_description) : "—"}</td>
-                    <td>{cell(r.sw_primary_region)}</td>
+                    <td title={r.sw_primary_region || ""}>{regionLabel(r.sw_primary_region, lang)}</td>
                     <td>{r.sw_primary_region_pct != null ? `${r.sw_primary_region_pct}%` : "—"}</td>
                     <td className="td-date">{r.sw_fetched || "—"}</td>
                     <td className="td-date">{r.bw_fetched || "—"}</td>

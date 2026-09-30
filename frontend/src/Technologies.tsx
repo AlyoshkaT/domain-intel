@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react"
 import { t, type Lang } from "./i18n"
+import { useSort, SortHeader } from "./ui"
 
 const API = ""
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -316,6 +317,7 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
     }
     return rows
   },[result,tableFilter,uniqueOnly])
+  const { sorted: sortedTable, sort, onSort } = useSort(filteredTable, (r, key) => (r as any)[key])
 
   const exportCSV = useCallback(()=>{
     const cols = ["domain","name","first_detected","last_detected","categories","description","link"]
@@ -429,11 +431,16 @@ export default function TechnologiesPage({ domains = [], onBack, can, lang }: { 
           <div className="table-wrap table-fixed-height">
             <table className="results-table">
               <thead><tr>
-                <th>Domain</th><th>Technology</th>
-                <th>First Detected</th><th>Last Detected</th><th>Categories</th><th>Description</th><th>Link</th>
+                <SortHeader col="domain" sort={sort} onSort={onSort} hint="Домен сайту.">Domain</SortHeader>
+                <SortHeader col="name" sort={sort} onSort={onSort} hint="Назва технології (BuiltWith).">Technology</SortHeader>
+                <SortHeader col="first_detected" sort={sort} onSort={onSort} hint="Коли технологію вперше зафіксовано.">First Detected</SortHeader>
+                <SortHeader col="last_detected" sort={sort} onSort={onSort} hint="Коли технологію востаннє бачили.">Last Detected</SortHeader>
+                <SortHeader col="categories" sort={sort} onSort={onSort} hint="Категорії технології.">Categories</SortHeader>
+                <SortHeader col="description" sort={sort} onSort={onSort} hint="Опис технології.">Description</SortHeader>
+                <SortHeader col="link" sort={sort} onSort={onSort} hint="Посилання на технологію.">Link</SortHeader>
               </tr></thead>
               <tbody>
-                {filteredTable.map((r,i)=>(
+                {sortedTable.map((r,i)=>(
                   <tr key={`${r.domain}-${r.name}-${i}`}>
                     <td className="td-domain">
                       {domains.length > 0 && (
