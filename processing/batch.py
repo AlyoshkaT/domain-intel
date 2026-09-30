@@ -8,10 +8,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from config.settings import BATCH_CONCURRENCY, DELAY_BETWEEN_DOMAINS
+from config.settings import BATCH_CONCURRENCY, DELAY_BETWEEN_DOMAINS, JOB_HEARTBEAT_SECONDS
 from processing.pipeline import process_domain
 from core.bigquery import (
-    create_job, update_job, get_job, save_result,
+    create_job, update_job, get_job, get_job_status, save_result,
     prefetch_corp_cache, clear_prefetch_cache,
     prefetch_parsed, clear_parsed_cache,
     save_job_domains, get_job_domains, get_processed_domains_for_job,
@@ -189,9 +189,36 @@ async def run_batch_job(
 
     ai_batch_items: list[dict] = []  # Safe mode: collected for one Batch-API submit
 
+    # Cross-process lease + stop signal. The heartbeat (below) sets stopped["flag"]
+    # when another process terminates this job (Cancel / Force complete), and every
+    # in-flight task checks it so no NEW domain is processed after that.
+    stopped = {"flag": False}
+
+    async def _heartbeat():
+        """Every JOB_HEARTBEAT_SECONDS: (1) check if another process stopped this job,
+        (2) refresh the BQ lease — updated_at + live counts — so other processes see
+        this job is owned and read a fresh number. Cheap: 1 tiny SELECT + 1 UPDATE
+        on the small analysis_jobs table per interval."""
+        while True:
+            try:
+                await asyncio.sleep(JOB_HEARTBEAT_SECONDS)
+                st = await asyncio.to_thread(get_job_status, job_id)
+                if st is not None and st not in ("running", "pending"):
+                    logger.info(f"Job {job_id}: external status '{st}' detected — stopping this worker")
+                    stopped["flag"] = True
+                    return
+                await asyncio.to_thread(update_job, job_id,
+                    processed_domains=processed, failed_domains=failed)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug(f"Job {job_id} heartbeat: {e}")
+
     async def process_one(domain: str):
         nonlocal processed, failed
         async with semaphore:
+            if stopped["flag"]:
+                return  # job was stopped from another process — don't start new work
             result = await process_domain(
                 domain, job_id, services,
                 force_refresh=force_refresh,
@@ -225,38 +252,53 @@ async def run_batch_job(
             if DELAY_BETWEEN_DOMAINS > 0:
                 await asyncio.sleep(DELAY_BETWEEN_DOMAINS)
 
+    hb_task = asyncio.create_task(_heartbeat())
     try:
         tasks = [process_one(d) for d in domains]
         await asyncio.gather(*tasks, return_exceptions=True)
     finally:
-        # Always release the priority gate — even if the job was cancelled
+        # Stop the heartbeat and always release the priority gate
+        hb_task.cancel()
+        try:
+            await hb_task
+        except (asyncio.CancelledError, Exception):
+            pass
         if is_priority:
             priority_job_finished()
 
-    final_status = "completed" if failed == 0 else "completed_with_errors"
-    _set_progress(job_id, status=final_status, processed_domains=processed, failed_domains=failed)
+    if stopped["flag"]:
+        # Another process (Cancel / Force complete) already set the terminal status.
+        # Do NOT overwrite it — writing 'completed' here is exactly what made Force
+        # complete "flip back". That terminating request also runs the profiles/
+        # Sheets sync, so we skip the heavy post-processing below too.
+        _set_progress(job_id, processed_domains=processed, failed_domains=failed)
+        logger.info(f"Job {job_id} stopped externally: {processed} ok, {failed} failed "
+                    f"(status + sync handled by the terminating request)")
+    else:
+        final_status = "completed" if failed == 0 else "completed_with_errors"
+        _set_progress(job_id, status=final_status, processed_domains=processed, failed_domains=failed)
 
-    # BQ write #2: persist final state (end)
-    try:
-        await asyncio.to_thread(update_job, job_id,
-            status=final_status,
-            processed_domains=processed,
-            failed_domains=failed,
-        )
-    except Exception as e:
-        logger.error(f"Job {job_id}: failed to persist final state to BQ: {e}")
-
-    logger.info(f"Job {job_id} finished: {processed} ok, {failed} failed")
-
-    # Safe/thrifty AI mode: submit all collected classifications as one Batch
-    # (−50%, async). Results are applied later by the scheduler poller.
-    if ai_batch_items:
+        # BQ write #2: persist final state (end)
         try:
-            from services.claude_batch import submit_classification_batch
-            out = await asyncio.to_thread(submit_classification_batch, ai_batch_items, job_id)
-            logger.info(f"Job {job_id}: AI Safe batch submitted — {out}")
+            await asyncio.to_thread(update_job, job_id,
+                status=final_status,
+                processed_domains=processed,
+                failed_domains=failed,
+            )
         except Exception as e:
-            logger.error(f"Job {job_id}: AI batch submit failed: {e}", exc_info=True)
+            logger.error(f"Job {job_id}: failed to persist final state to BQ: {e}")
+
+        logger.info(f"Job {job_id} finished: {processed} ok, {failed} failed")
+
+        # Safe/thrifty AI mode: submit all collected classifications as one Batch
+        # (−50%, async). Results are applied later by the scheduler poller.
+        if ai_batch_items:
+            try:
+                from services.claude_batch import submit_classification_batch
+                out = await asyncio.to_thread(submit_classification_batch, ai_batch_items, job_id)
+                logger.info(f"Job {job_id}: AI Safe batch submitted — {out}")
+            except Exception as e:
+                logger.error(f"Job {job_id}: AI batch submit failed: {e}", exc_info=True)
 
     # Clear shared prefetch caches only when no OTHER job is still running —
     # clearing mid-flight would force parallel jobs onto per-domain corpBQ
@@ -294,43 +336,47 @@ async def run_batch_job(
         except Exception as e:
             logger.warning(f"BuiltWith credits refresh after job {job_id}: {e}")
 
-    # Auto-export to Sheets
-    try:
-        from core.bigquery import get_results, get_job, get_users
-        from services.sheets_export import export_job_to_sheets
-        job = get_job(job_id)
-        results = get_results(job_id)
-        if results:
-            creator = job.get("created_by", "") or username or ""
-            folder_id = ""
-            if creator:
+    # Heavy per-job outputs — skip when stopped externally: the terminating request
+    # (Cancel / Force complete) runs the profiles + Sheets sync itself, so doing it
+    # here too would double the work.
+    if not stopped["flag"]:
+        # Auto-export to Sheets
+        try:
+            from core.bigquery import get_results, get_job, get_users
+            from services.sheets_export import export_job_to_sheets
+            job = get_job(job_id)
+            results = get_results(job_id)
+            if results:
+                creator = job.get("created_by", "") or username or ""
+                folder_id = ""
+                if creator:
+                    try:
+                        users = {u["username"]: u for u in get_users()}
+                        folder_id = users.get(creator, {}).get("google_folder") or ""
+                    except Exception:
+                        pass
+                url = export_job_to_sheets(job_id, job.get("filename", "results"), results,
+                                           folder_id=folder_id)
+                if url:
+                    from services.credits import _save_setting
+                    _save_setting(f"sheet_url_{job_id}", url)
+                    logger.info(f"Auto-exported job {job_id} to Sheets: {url}")
+        except Exception as e:
+            logger.warning(f"Auto Sheets export failed for job {job_id}: {e}")
+
+        _trigger_profiles_sync(job_id, domains)
+
+        # Refresh the technology search index for this job's domains (BW data only).
+        if "builtwith" in services:
+            def _update_tech_index(doms: list[str]):
                 try:
-                    users = {u["username"]: u for u in get_users()}
-                    folder_id = users.get(creator, {}).get("google_folder") or ""
-                except Exception:
-                    pass
-            url = export_job_to_sheets(job_id, job.get("filename", "results"), results,
-                                       folder_id=folder_id)
-            if url:
-                from services.credits import _save_setting
-                _save_setting(f"sheet_url_{job_id}", url)
-                logger.info(f"Auto-exported job {job_id} to Sheets: {url}")
-    except Exception as e:
-        logger.warning(f"Auto Sheets export failed for job {job_id}: {e}")
-
-    _trigger_profiles_sync(job_id, domains)
-
-    # Refresh the technology search index for this job's domains (BW data only).
-    if "builtwith" in services:
-        def _update_tech_index(doms: list[str]):
-            try:
-                from services.tech_index import update_tech_index_for_domains
-                result = update_tech_index_for_domains(doms)
-                logger.info(f"Tech index updated for job {job_id[:8]}: {result}")
-            except Exception as e:
-                logger.warning(f"Tech index update failed for job {job_id[:8]}: {e}")
-        threading.Thread(target=_update_tech_index, args=(domains,), daemon=True,
-                         name=f"tech-index-{job_id[:8]}").start()
+                    from services.tech_index import update_tech_index_for_domains
+                    result = update_tech_index_for_domains(doms)
+                    logger.info(f"Tech index updated for job {job_id[:8]}: {result}")
+                except Exception as e:
+                    logger.warning(f"Tech index update failed for job {job_id[:8]}: {e}")
+            threading.Thread(target=_update_tech_index, args=(domains,), daemon=True,
+                             name=f"tech-index-{job_id[:8]}").start()
 
 
 def resume_job(job_id: str, username: str = "") -> dict:

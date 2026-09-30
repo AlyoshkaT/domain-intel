@@ -71,6 +71,26 @@ AI_CONCURRENCY = int(os.getenv("AI_CONCURRENCY", str(BATCH_CONCURRENCY)))       
 PRIORITY_MAX_DOMAINS = int(os.getenv("PRIORITY_MAX_DOMAINS", "10"))
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Job lifecycle — crash recovery & cross-process safety (processing/batch.py)
+# ─────────────────────────────────────────────────────────────────────────────
+# Jobs live in one process's memory but their status/counters are shared in
+# BigQuery. To stop the SAME job from running in two processes at once (the
+# double-execution / double-BQ-cost bug), the owning process holds a "lease":
+# every JOB_HEARTBEAT_SECONDS it re-writes updated_at + the live processed/failed
+# counts. This (1) proves the job is still owned by a live process, and (2) keeps
+# analysis_jobs' counters fresh so ANOTHER process reading the job sees a number
+# close to reality (no more local=9k vs web=21k divergence). The same heartbeat
+# reads the job's status back: if another process set it to cancelled/completed
+# (Cancel / Force complete), this worker stops itself — cross-process stop.
+JOB_HEARTBEAT_SECONDS = int(os.getenv("JOB_HEARTBEAT_SECONDS", "45"))
+# On startup, only auto-resume a running/pending job whose lease (updated_at) is
+# at least this old — i.e. its owner is truly gone. A fresh lease means another
+# live process still owns it → don't resume (that was the double-run). Trade-off:
+# a job interrupted by a FAST restart (gap < this) isn't auto-resumed — use the
+# Resume button in the UI. Must be comfortably larger than JOB_HEARTBEAT_SECONDS.
+JOB_STALE_RESUME_MINUTES = int(os.getenv("JOB_STALE_RESUME_MINUTES", "5"))
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HTTP timeouts (seconds) — per outbound call
 # ─────────────────────────────────────────────────────────────────────────────
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "12"))        # SimilarWeb API (services/similarweb.py)

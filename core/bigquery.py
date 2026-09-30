@@ -1342,12 +1342,24 @@ def create_job(job_id: str, total_domains: int, services: list[str], filename: s
     """).result()
 
 
-def get_stale_running_jobs() -> list[dict]:
-    """Return all jobs currently in running/pending state (survived server restart)."""
+def get_stale_running_jobs(min_stale_minutes: int = 0) -> list[dict]:
+    """Return jobs currently in running/pending state (survived server restart).
+
+    min_stale_minutes: if > 0, only return jobs whose lease (updated_at) is at
+    least this old — i.e. their owning process is truly gone. This prevents a
+    second process (or a crash-loop restart) from resuming a job that another
+    live process is still actively running (the double-execution / double-cost
+    bug). A live owner refreshes updated_at every JOB_HEARTBEAT_SECONDS.
+    """
     bq = client()
     try:
+        stale_clause = ""
+        if min_stale_minutes and min_stale_minutes > 0:
+            stale_clause = (f" AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), updated_at, MINUTE) "
+                            f">= {int(min_stale_minutes)}")
         rows = list(bq.query(
-            f"SELECT * FROM `{table_ref(BQ_JOBS_TABLE)}` WHERE status IN ('running','pending')"
+            f"SELECT * FROM `{table_ref(BQ_JOBS_TABLE)}` "
+            f"WHERE status IN ('running','pending'){stale_clause}"
         ).result())
         result = []
         for row in rows:
@@ -1457,6 +1469,22 @@ def get_job(job_id: str) -> Optional[dict]:
         row["services"] = json.loads(row.get("services") or "[]")
         return row
     return None
+
+
+def get_job_status(job_id: str) -> Optional[str]:
+    """Lightweight status-only read — used by the running job's heartbeat to notice
+    a cross-process Cancel / Force complete without pulling the whole row."""
+    bq = client()
+    try:
+        rows = list(bq.query(
+            f"SELECT status FROM `{table_ref(BQ_JOBS_TABLE)}` WHERE job_id = @job_id LIMIT 1",
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("job_id", "STRING", job_id)])
+        ).result())
+        return rows[0]["status"] if rows else None
+    except Exception as e:
+        logger.error(f"get_job_status error: {e}")
+        return None
 
 
 def list_jobs(limit: int = 50) -> list[dict]:
