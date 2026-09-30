@@ -13,20 +13,20 @@ gets the full API capacity within seconds and the big job resumes after.
 """
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 
-from config.settings import BATCH_CONCURRENCY
+from config.settings import (
+    BATCH_CONCURRENCY, SW_CONCURRENCY, BW_CONCURRENCY, AI_CONCURRENCY,
+    PRIORITY_MAX_DOMAINS,
+)
 
 logger = logging.getLogger(__name__)
 
-PRIORITY_MAX_DOMAINS = int(os.getenv("PRIORITY_MAX_DOMAINS", "10"))
-
-# Per-service concurrency (defaults to BATCH_CONCURRENCY, override via env)
+# Per-service concurrency — all defined in config/settings.py
 _LIMITS = {
-    "sw": int(os.getenv("SW_CONCURRENCY", str(BATCH_CONCURRENCY))),
-    "bw": int(os.getenv("BW_CONCURRENCY", str(BATCH_CONCURRENCY))),
-    "ai": int(os.getenv("AI_CONCURRENCY", str(BATCH_CONCURRENCY))),
+    "sw": SW_CONCURRENCY,
+    "bw": BW_CONCURRENCY,
+    "ai": AI_CONCURRENCY,
 }
 
 # Lazy init — asyncio primitives must be created inside the running loop

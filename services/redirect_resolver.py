@@ -2,6 +2,7 @@
 Redirect resolver service
 Checks HTTP redirects and manages domain_redirects table in BQ.
 """
+import asyncio
 import httpx
 import logging
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from urllib.parse import urlparse
 
 from core.bigquery import client, table_ref
 from google.cloud import bigquery
+from config.settings import REDIRECT_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -146,30 +148,39 @@ def save_redirect(original: str, resolved: str, redirect_type: str, job_id: str)
         logger.error(f"Redirect save error: {e}")
 
 
-async def check_http_redirect(domain: str, timeout: int = 5) -> Optional[str]:
+async def _probe_scheme(domain: str, scheme: str, timeout: int) -> Optional[str]:
+    """Probe one scheme; return resolved domain on redirect, else None (or raise)."""
+    url = f"{scheme}://{domain}"
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=False,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; DomainIntel/1.0)"}
+    ) as client_http:
+        resp = await client_http.get(url)
+        if resp.status_code in (301, 302, 303, 307, 308):
+            location = resp.headers.get("location", "")
+            if location:
+                resolved = _extract_domain(location)
+                if resolved and resolved != domain:
+                    logger.info(f"HTTP redirect: {domain} → {resolved}")
+                    return resolved
+    return None
+
+
+async def check_http_redirect(domain: str, timeout: int = REDIRECT_TIMEOUT) -> Optional[str]:
     """
     Check if domain redirects to another domain via HTTP.
-    Returns resolved domain or None if no redirect.
+    Probes https + http CONCURRENTLY (dead-https domains no longer pay two serial
+    timeouts). Prefers the https result. Returns resolved domain or None.
     """
-    for scheme in ["https", "http"]:
-        url = f"{scheme}://{domain}"
-        try:
-            async with httpx.AsyncClient(
-                timeout=timeout,
-                follow_redirects=False,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; DomainIntel/1.0)"}
-            ) as client_http:
-                resp = await client_http.get(url)
-                if resp.status_code in (301, 302, 303, 307, 308):
-                    location = resp.headers.get("location", "")
-                    if location:
-                        resolved = _extract_domain(location)
-                        if resolved and resolved != domain:
-                            logger.info(f"HTTP redirect: {domain} → {resolved}")
-                            return resolved
-            return None  # No redirect
-        except Exception:
-            continue
+    results = await asyncio.gather(
+        _probe_scheme(domain, "https", timeout),
+        _probe_scheme(domain, "http", timeout),
+        return_exceptions=True,
+    )
+    for r in results:  # https first → preferred
+        if isinstance(r, str) and r:
+            return r
     return None
 
 

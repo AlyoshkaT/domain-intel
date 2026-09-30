@@ -10,6 +10,7 @@ const T = {
     nav_redirects: 'Redirects',
     nav_setup: 'Setup',
     nav_theme: 'Toggle theme',
+    nav_hints: 'Hints — hover a column header for an explanation',
 
     // ── New Job page ──
     new_title: 'New Analysis',
@@ -326,6 +327,7 @@ const T = {
     nav_redirects: 'Redirects',
     nav_setup: 'Setup',
     nav_theme: 'Змінити тему',
+    nav_hints: 'Підказки — наведіть на заголовок колонки для пояснення',
 
     // ── New Job page ──
     new_title: 'Новий аналіз',

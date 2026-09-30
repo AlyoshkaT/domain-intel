@@ -44,10 +44,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"BQ init error: {e}")
 
-    # Auto-resume jobs interrupted by server restart
+    # Auto-resume jobs interrupted by server restart — but ONLY those whose lease
+    # is truly stale (owner gone > JOB_STALE_RESUME_MINUTES). A fresh lease means
+    # another live process still owns the job, so resuming here would run it twice
+    # (the double-execution / double-BQ-cost bug). Fast-restart edge case: use the
+    # Resume button in the UI.
     try:
         from processing.batch import resume_job
-        stale_jobs = get_stale_running_jobs()
+        from config.settings import JOB_STALE_RESUME_MINUTES
+        stale_jobs = get_stale_running_jobs(min_stale_minutes=JOB_STALE_RESUME_MINUTES)
         resumed, failed_reset = 0, 0
         for job in stale_jobs:
             result = resume_job(job["job_id"])
@@ -559,8 +564,8 @@ def export_xlsx(request: Request, job_id: str):
     except Exception:
         pass
     import pandas as pd
-    from services.sheets_export import results_to_dataframe
-    df = results_to_dataframe(results)
+    from services.sheets_export import results_to_dataframe, sanitize_for_xlsx
+    df = sanitize_for_xlsx(results_to_dataframe(results))
     stream = io.BytesIO()
     with pd.ExcelWriter(stream, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Results")

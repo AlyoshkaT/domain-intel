@@ -6,15 +6,21 @@ import logging
 import threading
 from datetime import datetime
 
+from config.settings import (
+    SYNC_HOUR_UTC, PARSED_SYNC_HOUR_UTC, PIPEDRIVE_SYNC_HOUR_UTC,
+    PIPEDRIVE_MRR_HOUR_UTC, RESET_BQ_LIMIT_HOUR_UTC, BQ_LIMIT_DAILY_RESET_GB,
+)
+
 logger = logging.getLogger(__name__)
 
 _scheduler_thread: threading.Thread | None = None
 _stop_event = threading.Event()
-_SYNC_HOUR_UTC = 4         # 04:00 UTC = 06:00 Kyiv (UTC+2 winter)
-_PIPEDRIVE_SYNC_HOUR_UTC = 2  # 02:00 UTC — Pipedrive relationship-status sync
-_PIPEDRIVE_MRR_HOUR_UTC = 1   # 01:00 UTC — Pipedrive MRR pull from corpBQ
-_PARSED_SYNC_HOUR_UTC = 3  # 03:00 UTC — sync corpBQ raw → privateBQ parsed, 1 hour before profiles sync
-_RESET_BQ_LIMIT_HOUR_UTC = 0  # 00:00 UTC — daily reset of BQ byte limit back to safe default
+# Sync hours (UTC) — all configured in config/settings.py
+_SYNC_HOUR_UTC = SYNC_HOUR_UTC
+_PIPEDRIVE_SYNC_HOUR_UTC = PIPEDRIVE_SYNC_HOUR_UTC
+_PIPEDRIVE_MRR_HOUR_UTC = PIPEDRIVE_MRR_HOUR_UTC
+_PARSED_SYNC_HOUR_UTC = PARSED_SYNC_HOUR_UTC
+_RESET_BQ_LIMIT_HOUR_UTC = RESET_BQ_LIMIT_HOUR_UTC
 
 
 def _run_sync():
@@ -55,7 +61,7 @@ def _flush_call_stats():
         logger.debug(f"flush_bq_call_stats: {e}")
 
 
-_BQ_LIMIT_DAILY_RESET_GB = 25   # reset target — enough for a normal day, safe margin
+_BQ_LIMIT_DAILY_RESET_GB = BQ_LIMIT_DAILY_RESET_GB   # configured in config/settings.py
 
 
 def _get_sync_frequency() -> str:

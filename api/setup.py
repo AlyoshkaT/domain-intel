@@ -170,7 +170,10 @@ def update_settings(data: SettingsUpdate):
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
-VALID_PERMISSIONS = {"explorer", "jobs", "download", "sheets", "admin"}
+# Single source of truth for the permission set — imported from api.auth so this
+# list can't drift out of sync. (It previously hard-coded a set WITHOUT "pipedrive",
+# which made _normalize_permissions silently drop the Pipedrive permission on save.)
+from api.auth import _ALL_PERMS as VALID_PERMISSIONS
 
 
 def _normalize_permissions(perms: str | list | None) -> str:
@@ -199,6 +202,7 @@ def list_permissions():
         {"key": "jobs",      "label": "Jobs",            "desc": "Створення та запуск завдань обробки"},
         {"key": "download",  "label": "Download",        "desc": "Скачати CSV / XLSX"},
         {"key": "sheets",    "label": "Google Sheets",   "desc": "Експорт результатів у Google Sheets"},
+        {"key": "pipedrive", "label": "Pipedrive",        "desc": "Доступ до закладки Pipedrive"},
         {"key": "admin",     "label": "Admin",            "desc": "Керування системою, юзерами, каталогом"},
     ]}
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { t, type Lang } from "./i18n"
+import { useSort, SortHeader } from "./ui"
 
 const API = ""
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -81,6 +82,7 @@ export default function RedirectsPage({ lang }: { lang: Lang }) {
       r.job_id.toLowerCase().includes(q)
     )
   }, [rows, localSearch])
+  const { sorted, sort, onSort } = useSort(filtered, (r, key) => (r as any)[key])
 
   const exportCSV = useCallback(() => {
     const cols = ["original", "resolved", "type", "detected_at", "job_id"]
@@ -191,15 +193,15 @@ export default function RedirectsPage({ lang }: { lang: Lang }) {
           <table className="results-table">
             <thead>
               <tr>
-                <th>Original</th>
-                <th>Resolved</th>
-                <th>{t('redir_type', lang)}</th>
-                <th>Detected</th>
-                <th>Job ID</th>
+                <SortHeader col="original" sort={sort} onSort={onSort} hint="Домен, який ми перевіряли (звідки редирект).">Original</SortHeader>
+                <SortHeader col="resolved" sort={sort} onSort={onSort} hint="Кінцевий домен після HTTP-редиректу.">Resolved</SortHeader>
+                <SortHeader col="type" sort={sort} onSort={onSort} hint="Тип редиректу (301/302/…).">{t('redir_type', lang)}</SortHeader>
+                <SortHeader col="detected_at" sort={sort} onSort={onSort} hint="Коли редирект було виявлено.">Detected</SortHeader>
+                <SortHeader col="job_id" sort={sort} onSort={onSort} hint="ID завдання, у якому знайдено редирект.">Job ID</SortHeader>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => (
+              {sorted.map((r, i) => (
                 <tr key={i}>
                   <td className="td-domain">
                     <a href={`https://${r.original}`} target="_blank" rel="noopener">{r.original}</a>

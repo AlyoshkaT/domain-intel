@@ -15,7 +15,7 @@ import httpx
 import json
 import logging
 from typing import Optional
-from config.settings import ANTHROPIC_API_KEY, CORP_PROJECT_ID, CORP_DATASET
+from config.settings import ANTHROPIC_API_KEY, CORP_PROJECT_ID, CORP_DATASET, AI_API_TIMEOUT, HOMEPAGE_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +215,7 @@ async def classify_domain(
                                          bw_cms, bw_ecommerce, homepage_text)
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=AI_API_TIMEOUT) as client:
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -260,7 +260,7 @@ async def fetch_homepage_text(domain: str) -> str:
     for url in [f"https://{domain}", f"http://{domain}"]:
         try:
             async with httpx.AsyncClient(
-                timeout=10, follow_redirects=True,
+                timeout=HOMEPAGE_TIMEOUT, follow_redirects=True,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; DomainIntel/1.0)"}
             ) as client:
                 resp = await client.get(url)
