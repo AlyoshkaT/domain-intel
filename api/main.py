@@ -669,10 +669,16 @@ async def serve_world_topo():
     from fastapi import HTTPException
     raise HTTPException(status_code=404, detail="world-110m-ua.json not found")
 
+# index.html must never be cached by the browser: it references the hashed JS/CSS
+# bundles, so a stale index.html keeps loading old frontend code after a deploy
+# (this caused the "Pipedrive permission won't save" ghost — old bundle). The
+# hashed /assets/* files are immutable and still cache forever via StaticFiles.
+_HTML_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
 @app.get("/")
 async def serve_root():
     if os.path.exists(index_html):
-        return FileResponse(index_html)
+        return FileResponse(index_html, headers=_HTML_NO_CACHE)
     return {"status": "api-only"}
 
 @app.get("/{full_path:path}")
@@ -681,5 +687,5 @@ async def serve_spa(full_path: str):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Not Found")
     if os.path.exists(index_html):
-        return FileResponse(index_html)
+        return FileResponse(index_html, headers=_HTML_NO_CACHE)
     return {"status": "api-only", "path": full_path}
