@@ -353,19 +353,23 @@ function PermissionToggle({ value, onChange, lang }: { value: string[], onChange
     onChange(value.includes(key) ? value.filter(k => k !== key) : [...value, key])
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-      {ALL_PERMISSIONS.map(p => (
+      {ALL_PERMISSIONS.map(p => {
+        // "admin" grants every right at runtime — so when admin is selected,
+        // show ALL toggles as active (blue), matching the real access.
+        const active = value.includes(p.key) || (value.includes("admin") && p.key !== "admin")
+        return (
         <button key={p.key} title={t(p.descKey, lang)}
           onClick={() => toggle(p.key)}
           style={{
             padding: "3px 10px", fontSize: 12, borderRadius: 4, cursor: "pointer", border: "1px solid",
-            background: value.includes(p.key) ? "var(--accent)" : "var(--bg-2)",
-            color: value.includes(p.key) ? "#fff" : "var(--text-2)",
-            borderColor: value.includes(p.key) ? "var(--accent)" : "var(--border)",
-            fontWeight: value.includes(p.key) ? 600 : 400,
+            background: active ? "var(--accent)" : "var(--bg-2)",
+            color: active ? "#fff" : "var(--text-2)",
+            borderColor: active ? "var(--accent)" : "var(--border)",
+            fontWeight: active ? 600 : 400,
           }}>
           {p.label}
         </button>
-      ))}
+      )})}
       <span style={{ color: "var(--border)", margin: "0 2px" }}>|</span>
       {PRESETS.map(pr => (
         <button key={pr.label} onClick={() => onChange(pr.perms)}
