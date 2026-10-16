@@ -294,6 +294,9 @@ def _cell_value(row: dict, key: str):
             return int(val)
         except (TypeError, ValueError):
             return val
+    if key == "ai_is_ecommerce":
+        s = str(val)
+        return "Yes" if s in ("Так", "Yes") else "No" if s in ("Ні", "No") else s
     return str(val)
 
 

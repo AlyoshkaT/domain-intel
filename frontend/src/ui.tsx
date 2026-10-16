@@ -115,6 +115,14 @@ function regionDN(lang: Lang): Intl.DisplayNames {
   }
   return _dn[loc]
 }
+/* Normalize the AI e-commerce flag to English. Legacy rows stored "Так"/"Ні";
+ * new rows store "Yes"/"No". Display + filtering always use English. */
+export function ecomEN(v: string | null | undefined): string {
+  if (v === "Так" || v === "Yes") return "Yes"
+  if (v === "Ні" || v === "No") return "No"
+  return v || ""
+}
+
 export function regionLabel(code: string | null | undefined, lang: Lang = "en"): string {
   if (code == null || code === "") return "—"
   const c = String(code).trim()

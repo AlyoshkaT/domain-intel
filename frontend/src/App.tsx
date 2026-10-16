@@ -5,7 +5,7 @@ import RedirectsPage from "./Redirects"
 import PipedrivePage from "./Pipedrive"
 import SetupPage from "./Setup"
 import { t, type Lang } from "./i18n"
-import { HelpProvider, HelpToggle, useSort, SortHeader } from "./ui"
+import { HelpProvider, HelpToggle, useSort, SortHeader, ecomEN } from "./ui"
 import "./index.css"
 
 const API = ""
@@ -506,6 +506,7 @@ function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () =
   const renderCell = (r: Result, key: string): string => {
     if (key === "sw_visits") return r.sw_visits ? r.sw_visits.toLocaleString("en-US") : "—"
     if (key === "sw_primary_region_pct") return r.sw_primary_region_pct != null ? `${r.sw_primary_region_pct}%` : "—"
+    if (key === "ai_is_ecommerce") return cell(ecomEN((r as any)[key]))  // legacy Так/Ні → Yes/No
     return cell((r as any)[key])
   }
 

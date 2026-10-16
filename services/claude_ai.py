@@ -58,7 +58,7 @@ def _parse_ai_row(data: dict) -> Optional[dict]:
     return {
         "ai_category":     category,
         "ai_industry":     data.get("subcategory", ""),
-        "ai_is_ecommerce": "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
+        "ai_is_ecommerce": "Yes" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "No",
     }
 
 
@@ -190,7 +190,7 @@ def parse_classification_text(text: str) -> Optional[dict]:
     is_ecom = parsed.get("is_ecommerce", False)
     return {
         "ai_category":            parsed.get("category", "other"),
-        "ai_is_ecommerce":        "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
+        "ai_is_ecommerce":        "Yes" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "No",
         "ai_industry":            parsed.get("subcategory", "other"),
         "ai_category_reasoning":  parsed.get("category_reasoning", ""),
         "ai_ecommerce_reasoning": parsed.get("ecommerce_reasoning", ""),
@@ -243,7 +243,7 @@ async def classify_domain(
             is_ecom = parsed.get("is_ecommerce", False)
             return {
                 "ai_category":              parsed.get("category", "other"),
-                "ai_is_ecommerce":          "Так" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "Ні",
+                "ai_is_ecommerce":          "Yes" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "No",
                 "ai_industry":              parsed.get("subcategory", "other"),
                 "ai_category_reasoning":    parsed.get("category_reasoning", ""),
                 "ai_ecommerce_reasoning":   parsed.get("ecommerce_reasoning", ""),

@@ -438,7 +438,7 @@ def sync_domain_profiles() -> dict:
                     if key:
                         ai_data[key] = {
                             "ai_category":     r["ai_category"] or "",
-                            "ai_is_ecommerce": r["ai_is_ecommerce"] or "Ні",
+                            "ai_is_ecommerce": ("Yes" if (r["ai_is_ecommerce"] or "") in ("Так", "Yes") else "No"),
                             "ai_industry":     r["ai_industry"] or "",
                         }
         except Exception as e:
@@ -462,7 +462,7 @@ def sync_domain_profiles() -> dict:
                     if key:
                         ai_data[key] = {
                             "ai_category":     r["ai_category"] or "",
-                            "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
+                            "ai_is_ecommerce": "Yes" if r["ai_is_ecom"] in ("true", "1", "yes") else "No",
                             "ai_industry":     r["ai_industry"] or "",
                         }
             track_bq_call("corp_ai")
@@ -640,7 +640,7 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
                 if key:
                     ai_data[key] = {
                         "ai_category":     r["ai_category"] or "",
-                        "ai_is_ecommerce": r["ai_is_ecommerce"] or "Ні",
+                        "ai_is_ecommerce": ("Yes" if (r["ai_is_ecommerce"] or "") in ("Так", "Yes") else "No"),
                         "ai_industry":     r["ai_industry"] or "",
                     }
         except Exception as e:
@@ -665,7 +665,7 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
                 if key:
                     ai_data[key] = {
                         "ai_category":     r["ai_category"] or "",
-                        "ai_is_ecommerce": "Так" if r["ai_is_ecom"] in ("true", "1", "yes") else "Ні",
+                        "ai_is_ecommerce": "Yes" if r["ai_is_ecom"] in ("true", "1", "yes") else "No",
                         "ai_industry":     r["ai_industry"] or "",
                     }
 

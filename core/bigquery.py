@@ -1151,7 +1151,7 @@ def sync_parsed_from_corp(full_scan: bool = False) -> dict:
                     CURRENT_TIMESTAMP() AS fetched_at,
                     COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
                     IF(LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false'))
-                       IN ('true', '1', 'yes'), 'Так', 'Ні') AS ai_is_ecommerce,
+                       IN ('true', '1', 'yes'), 'Yes', 'No') AS ai_is_ecommerce,
                     COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry
                 FROM {ai_tbl}
                 {ai_date_filter}

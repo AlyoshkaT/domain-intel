@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import Dashboard, { TRAFFIC_GROUPS } from "./Dashboard"
 import { t, type Lang } from "./i18n"
-import { useSort, SortHeader, regionLabel } from "./ui"
+import { useSort, SortHeader, regionLabel, ecomEN } from "./ui"
 
 const API = ""
 
@@ -504,7 +504,7 @@ function FilterPanel({ filters, fieldValues, onChange, onInstant, onReset, onSea
         <div className="filter-section-label">{t('expl_ecom_label', lang)}</div>
         <div className="gran-btns">
           <button className={`gran-btn${ecomAllActive ? " active" : ""}`} onClick={setEcomAll}>{t('expl_filter_all', lang)}</button>
-          {([["Так", t('expl_ecom_yes', lang)], ["Ні", t('expl_ecom_no', lang)], ["", "?"]] as const).map(([v, lbl]) => (
+          {([["Yes", t('expl_ecom_yes', lang)], ["No", t('expl_ecom_no', lang)], ["", "?"]] as const).map(([v, lbl]) => (
             <button key={v || "q"}
               className={`gran-btn${ecomHas(v) ? " active" : ""}`}
               onClick={() => toggleEcom(v)}>
@@ -594,6 +594,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
         profiles = data.rows.map((row: any[]) => {
           const obj: any = {}
           cols.forEach((c, i) => { obj[c] = row[i] })
+          obj.ai_is_ecommerce = ecomEN(obj.ai_is_ecommerce)  // legacy Так/Ні → Yes/No
           return obj as ExploreResult
         })
       }
