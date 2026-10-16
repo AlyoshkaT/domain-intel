@@ -93,6 +93,7 @@ def submit_classification_batch(items: list[dict], job_id: str = "") -> dict:
             it.get("homepage_text", ""))
         reqs.append(Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
             model=AI_MODEL, max_tokens=AI_MAX_TOKENS,
+            thinking={"type": "disabled"},  # no reasoning needed; keep budget for JSON (Haiku 5.5 thinks by default)
             messages=[{"role": "user", "content": prompt}])))
         item_rows.append({"batch_id": None, "custom_id": cid, "domain": it["domain"]})
 

@@ -144,7 +144,7 @@ def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
         logger.error(f"Corp AI save exception ({domain}): {e}")
 
 
-AI_MODEL = "claude-haiku-4-5"
+AI_MODEL = "claude-haiku-5-5"
 AI_MAX_TOKENS = 300
 
 
@@ -224,8 +224,12 @@ async def classify_domain(
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": AI_MODEL,
                     "max_tokens": 300,
+                    # Classification needs no reasoning — disable thinking so the whole
+                    # token budget goes to the JSON (Haiku 5.5 has thinking ON by default,
+                    # which would eat max_tokens and truncate the JSON) and cost stays low.
+                    "thinking": {"type": "disabled"},
                     "messages": [{"role": "user", "content": prompt}],
                 }
             )
