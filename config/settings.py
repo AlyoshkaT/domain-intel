@@ -97,6 +97,12 @@ JOB_STALE_RESUME_MINUTES = int(os.getenv("JOB_STALE_RESUME_MINUTES", "5"))
 # Used in: services/claude_batch.py
 AI_BATCH_CHUNK = int(os.getenv("AI_BATCH_CHUNK", "50000"))
 
+# A big job processes its domains in slices of this many at a time (prefetch →
+# run → submit AI → free, per slice), so a job of ANY size keeps memory bounded
+# instead of loading every domain's data + tasks + AI items at once. | used in:
+# processing/batch.py
+JOB_CHUNK_SIZE = int(os.getenv("JOB_CHUNK_SIZE", "20000"))
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HTTP timeouts (seconds) — per outbound call
 # ─────────────────────────────────────────────────────────────────────────────

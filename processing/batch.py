@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from config.settings import BATCH_CONCURRENCY, DELAY_BETWEEN_DOMAINS, JOB_HEARTBEAT_SECONDS
+from config.settings import BATCH_CONCURRENCY, DELAY_BETWEEN_DOMAINS, JOB_HEARTBEAT_SECONDS, JOB_CHUNK_SIZE
 from processing.pipeline import process_domain
 from core.bigquery import (
     create_job, update_job, get_job, get_job_status, save_result,
@@ -189,26 +189,25 @@ async def run_batch_job(
         except Exception as e:
             logger.error(f"Job {job_id}: failed to mark running in BQ: {e}")
 
-    # Batch-prefetch: 2 privateBQ queries + 1 corpBQ query — total 3 BQ calls for whole job
-    try:
-        prefetch_parsed(domains)
-    except Exception as e:
-        logger.warning(f"prefetch_parsed failed (will fall back to per-domain queries): {e}")
-
-    # Batch-prefetch known redirects in ONE query instead of 1 BQ query per domain
-    # (each billed the 10MB minimum → ~$0.89 per 15K-domain job).
-    try:
-        from services.redirect_resolver import prefetch_redirects
-        await asyncio.to_thread(prefetch_redirects, domains)
-    except Exception as e:
-        logger.warning(f"prefetch_redirects failed (will fall back to per-domain queries): {e}")
-
-    try:
-        from services.claude_ai import CORP_AI_CACHE_KEY
-        if not (force_refresh and "ai" in services):
-            prefetch_corp_cache(domains, [CORP_AI_CACHE_KEY])
-    except Exception as e:
-        logger.warning(f"Prefetch AI failed (will fall back to per-domain queries): {e}")
+    # Batch-prefetch (parsed data, known redirects, AI cache) — done PER CHUNK below,
+    # not for all domains at once, so a huge job never loads everything into memory.
+    # Still just ~3 BQ calls per chunk (not per domain).
+    def _prefetch_chunk(chunk: list[str]):
+        try:
+            prefetch_parsed(chunk)
+        except Exception as e:
+            logger.warning(f"prefetch_parsed failed (per-domain fallback): {e}")
+        try:
+            from services.redirect_resolver import prefetch_redirects
+            prefetch_redirects(chunk)
+        except Exception as e:
+            logger.warning(f"prefetch_redirects failed (per-domain fallback): {e}")
+        try:
+            from services.claude_ai import CORP_AI_CACHE_KEY
+            if not (force_refresh and "ai" in services):
+                prefetch_corp_cache(chunk, [CORP_AI_CACHE_KEY])
+        except Exception as e:
+            logger.warning(f"Prefetch AI failed (per-domain fallback): {e}")
 
     # Per-job domain cap (limits in-flight redirects/BQ writes per job).
     # Actual API load is capped globally by per-service queues in processing/limits.py.
@@ -284,10 +283,38 @@ async def run_batch_job(
             if DELAY_BETWEEN_DOMAINS > 0:
                 await asyncio.sleep(DELAY_BETWEEN_DOMAINS)
 
+    async def _submit_ai_chunk():
+        """Safe mode: submit this chunk's collected AI items, then free the memory.
+        submit_classification_batch itself splits into ≤API-limit batches."""
+        if not ai_batch_items:
+            return
+        try:
+            from services.claude_batch import submit_classification_batch
+            out = await asyncio.to_thread(submit_classification_batch, list(ai_batch_items), job_id)
+            logger.info(f"Job {job_id}: AI batch submitted — {out}")
+        except Exception as e:
+            logger.error(f"Job {job_id}: AI batch submit failed: {e}", exc_info=True)
+        ai_batch_items.clear()
+
     hb_task = asyncio.create_task(_heartbeat())
     try:
-        tasks = [process_one(d) for d in domains]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Process in slices of JOB_CHUNK_SIZE: prefetch → run → submit AI → free, one
+        # slice at a time, so peak memory stays bounded no matter how many domains.
+        for start in range(0, len(domains), JOB_CHUNK_SIZE):
+            if stopped["flag"]:
+                break
+            chunk = domains[start:start + JOB_CHUNK_SIZE]
+            await asyncio.to_thread(_prefetch_chunk, chunk)
+            await asyncio.gather(*[process_one(d) for d in chunk], return_exceptions=True)
+            await _submit_ai_chunk()
+            # Release this slice's prefetch caches before loading the next
+            clear_prefetch_cache()
+            clear_parsed_cache()
+            try:
+                from services.redirect_resolver import clear_redirect_cache
+                clear_redirect_cache()
+            except Exception:
+                pass
     finally:
         # Stop the heartbeat and always release the priority + sequential gates.
         # Released here (right after processing) so the next queued job can start
@@ -326,16 +353,7 @@ async def run_batch_job(
             logger.error(f"Job {job_id}: failed to persist final state to BQ: {e}")
 
         logger.info(f"Job {job_id} finished: {processed} ok, {failed} failed")
-
-        # Safe/thrifty AI mode: submit all collected classifications as one Batch
-        # (−50%, async). Results are applied later by the scheduler poller.
-        if ai_batch_items:
-            try:
-                from services.claude_batch import submit_classification_batch
-                out = await asyncio.to_thread(submit_classification_batch, ai_batch_items, job_id)
-                logger.info(f"Job {job_id}: AI Safe batch submitted — {out}")
-            except Exception as e:
-                logger.error(f"Job {job_id}: AI batch submit failed: {e}", exc_info=True)
+        # (AI Safe batches are submitted per slice during processing, above.)
 
     # Clear shared prefetch caches only when no OTHER job is still running —
     # clearing mid-flight would force parallel jobs onto per-domain corpBQ
