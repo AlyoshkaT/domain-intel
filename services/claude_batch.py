@@ -72,42 +72,69 @@ def _ensure_tables():
             bq.create_table(bigquery.Table(ref, schema=schema))
 
 
+# Anthropic caps one Message Batch at 100,000 requests OR 256 MB (whichever first).
+# Chunk well under both so ANY job size submits without the caller minding the limit.
+_BATCH_MAX_BYTES = 180 * 1024 * 1024  # 180 MB safety margin under the 256 MB cap
+
+
 def submit_classification_batch(items: list[dict], job_id: str = "") -> dict:
     """items: [{domain, sw_title, sw_description, sw_category, bw_cms, bw_ecommerce,
-    homepage_text}]. Submits one Message Batch (max 100k) and registers it.
-    Returns {batch_id, count}."""
+    homepage_text}]. Auto-splits into as many Message Batches as needed (each under
+    the API's count/size caps) and registers every one. Returns {batches, count}."""
     from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
     from anthropic.types.messages.batch_create_params import Request
+    from config.settings import AI_BATCH_CHUNK
 
     items = [it for it in items if it.get("domain")]
     if not items:
         return {"status": "empty"}
     _ensure_tables()
 
-    reqs, item_rows = [], []
+    batch_ids: list[str] = []
+    total = 0
+    cur_reqs: list = []
+    cur_rows: list[dict] = []
+    cur_bytes = 0
+
+    def _flush():
+        nonlocal cur_reqs, cur_rows, cur_bytes
+        if not cur_reqs:
+            return
+        batch = _anthropic().messages.batches.create(requests=cur_reqs)
+        bid = batch.id
+        for r in cur_rows:
+            r["batch_id"] = bid
+        _append(BATCH_ITEMS_TABLE, _ITEMS_SCHEMA, cur_rows)
+        _append(BATCHES_TABLE, _BATCHES_SCHEMA, [{
+            "batch_id": bid, "status": batch.processing_status, "count": len(cur_reqs),
+            "applied": False, "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "job_id": job_id or None}])
+        batch_ids.append(bid)
+        logger.info(f"AI batch {len(batch_ids)} submitted: {bid} "
+                    f"({len(cur_reqs)} domains, job={job_id})")
+        cur_reqs, cur_rows, cur_bytes = [], [], 0
+
     for i, it in enumerate(items):
-        cid = f"d{i}"  # Batch custom_id must be [A-Za-z0-9_-]; domains have dots
+        cid = f"d{i}"  # Batch custom_id must be [A-Za-z0-9_-]; unique within its batch
         prompt = build_classification_prompt(
             it["domain"], it.get("sw_title", ""), it.get("sw_description", ""),
             it.get("sw_category", ""), it.get("bw_cms", ""), it.get("bw_ecommerce", ""),
             it.get("homepage_text", ""))
-        reqs.append(Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
+        pb = len(prompt.encode("utf-8"))
+        # Start a new batch before this item would breach either cap
+        if cur_reqs and (len(cur_reqs) >= AI_BATCH_CHUNK or cur_bytes + pb > _BATCH_MAX_BYTES):
+            _flush()
+        cur_reqs.append(Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
             model=AI_MODEL, max_tokens=AI_MAX_TOKENS,
             thinking={"type": "disabled"},  # no reasoning needed; keep budget for JSON (Haiku 5.5 thinks by default)
             messages=[{"role": "user", "content": prompt}])))
-        item_rows.append({"batch_id": None, "custom_id": cid, "domain": it["domain"]})
+        cur_rows.append({"batch_id": None, "custom_id": cid, "domain": it["domain"]})
+        cur_bytes += pb
+        total += 1
 
-    batch = _anthropic().messages.batches.create(requests=reqs)
-    bid = batch.id
-    for r in item_rows:
-        r["batch_id"] = bid
-    _append(BATCH_ITEMS_TABLE, _ITEMS_SCHEMA, item_rows)
-    _append(BATCHES_TABLE, _BATCHES_SCHEMA, [{
-        "batch_id": bid, "status": batch.processing_status, "count": len(reqs),
-        "applied": False, "submitted_at": datetime.now(timezone.utc).isoformat(),
-        "job_id": job_id or None}])
-    logger.info(f"AI batch submitted: {bid} ({len(reqs)} domains, job={job_id})")
-    return {"status": "ok", "batch_id": bid, "count": len(reqs)}
+    _flush()
+    logger.info(f"AI classification: {total} domains submitted across {len(batch_ids)} batch(es), job={job_id}")
+    return {"status": "ok", "batches": len(batch_ids), "batch_ids": batch_ids, "count": total}
 
 
 def _domain_map(batch_id: str) -> dict:

@@ -90,6 +90,13 @@ JOB_HEARTBEAT_SECONDS = int(os.getenv("JOB_HEARTBEAT_SECONDS", "45"))
 # Resume button in the UI. Must be comfortably larger than JOB_HEARTBEAT_SECONDS.
 JOB_STALE_RESUME_MINUTES = int(os.getenv("JOB_STALE_RESUME_MINUTES", "5"))
 
+# AI Batch API: Anthropic caps one Message Batch at 100,000 requests / 256 MB.
+# submit_classification_batch auto-splits any job into chunks of this many
+# requests (kept well under the count cap; a byte cap is enforced in code too),
+# so a job of ANY size works without the caller worrying about the limit.
+# Used in: services/claude_batch.py
+AI_BATCH_CHUNK = int(os.getenv("AI_BATCH_CHUNK", "50000"))
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HTTP timeouts (seconds) — per outbound call
 # ─────────────────────────────────────────────────────────────────────────────
