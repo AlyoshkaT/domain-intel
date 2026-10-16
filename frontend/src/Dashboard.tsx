@@ -174,7 +174,8 @@ function CountryBars({ data, onFilter, lang }: { data: Slice[]; onFilter?: OnFil
       <div className="dash-country-list">
         {data.slice(0, 12).map((item, i) => {
           const isOther = item.label === other
-          const clickable = !!onFilter && item.label !== t('dash_no_region', lang) && (!isOther || othersItems.length > 0)
+          const isNoRegion = item.label === t('dash_no_region', lang)
+          const clickable = !!onFilter && (!isOther || othersItems.length > 0)
           const isHov = hovered === item.label
           const isDim = hovered !== null && !isHov
           return (
@@ -183,7 +184,8 @@ function CountryBars({ data, onFilter, lang }: { data: Slice[]; onFilter?: OnFil
               onClick={() => {
                 if (!clickable) return
                 if (isOther) setOthersOpen(o => !o)
-                else onFilter!("sw_primary_region", item.label)
+                // "no region" → filter the empty-region rows (same as REGION → empty in the side panel)
+                else onFilter!("sw_primary_region", isNoRegion ? t('expl_empty_val', lang) : item.label)
               }}
               onMouseEnter={() => setHovered(item.label)}
               onMouseLeave={() => setHovered(null)}
