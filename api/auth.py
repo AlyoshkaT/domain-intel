@@ -155,10 +155,39 @@ async def auth_middleware(request: Request, call_next):
         return Response(content="Unauthorized", status_code=401,
                         headers={"WWW-Authenticate": 'Basic realm="Domain Intel"'})
 
-    if users.get(username) != password:
+    from core.passwords import verify_password
+    stored = users.get(username)
+    if not verify_password(stored, password):
         return Response(content="Unauthorized", status_code=401,
                         headers={"WWW-Authenticate": 'Basic realm="Domain Intel"'})
 
+    _maybe_migrate_password(username, password, stored)
     request.state.username = username
     _maybe_log_login(username)
     return await call_next(request)
+
+
+# Legacy plaintext → bcrypt migration, once per username per process, off the
+# request path (background thread). Only BQ users (not AUTH_USERS env users).
+_migrated_pw: set[str] = set()
+
+
+def _maybe_migrate_password(username: str, plain: str, stored: str) -> None:
+    from core.passwords import is_hash
+    if username in _migrated_pw or is_hash(stored):
+        return
+    if username in _load_env_users() or username not in _bq_users_cache:
+        return
+    _migrated_pw.add(username)
+
+    def _do():
+        try:
+            from core.bigquery import update_user
+            update_user(username, password=plain)   # update_user hashes it
+            invalidate_users_cache()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("password migration failed")
+
+    import threading
+    threading.Thread(target=_do, daemon=True, name=f"pwmig-{username}").start()

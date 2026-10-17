@@ -1712,8 +1712,9 @@ def add_user(username: str, password: str, permissions: str,
         f"DELETE FROM `{table_ref('app_users')}` WHERE username = @u",
         job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("u", "STRING", username)])
     ).result()
+    from core.passwords import hash_password
     row = {
-        "username": username, "password": password,
+        "username": username, "password": hash_password(password),
         "permissions": permissions,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1740,6 +1741,9 @@ def update_user(username: str, **kwargs):
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return
+    if updates.get("password"):
+        from core.passwords import hash_password
+        updates["password"] = hash_password(updates["password"])
     bq = client()
     set_parts = []
     params = [bigquery.ScalarQueryParameter("u", "STRING", username)]
