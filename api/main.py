@@ -420,7 +420,7 @@ def _sync_processed_domains(job_id: str):
     threading.Thread(target=_do_sheets, daemon=True, name=f"sheets-{job_id[:8]}").start()
 
 
-@app.post("/api/jobs/{job_id}/cancel")
+@app.post("/api/jobs/{job_id}/cancel", dependencies=[require_permission("jobs")])
 async def cancel_job_endpoint(job_id: str):
     cancelled = cancel_job(job_id)
     if not cancelled:

@@ -57,6 +57,18 @@ def _region_expr(alias: str = "") -> str:
     return f"COALESCE(NULLIF({p}sw_primary_region, ''), {p}derived_region)"
 
 
+# Columns a client may filter on. Filter KEYS are interpolated into SQL in
+# _build_where (BigQuery has no param for a column name), so they MUST be validated
+# against this whitelist — otherwise a crafted filter key is SQL injection.
+_ALLOWED_FILTER_FIELDS = {
+    "domain", "sw_visits", "sw_category", "sw_subcategory", "sw_description",
+    "sw_title", "sw_primary_region", "sw_primary_region_pct", "company_name",
+    "cms_list", "osearch", "osearch_group", "ems_list", "bw_vertical",
+    "ai_category", "ai_is_ecommerce", "ai_industry",
+    "derived_region", "derived_region_source",
+}
+
+
 def _make_cache_key(body: dict) -> str:
     """Stable hash of request body for cache keying."""
     serialized = json.dumps(body, sort_keys=True, default=str)
@@ -91,6 +103,9 @@ def _build_where(filters: dict) -> tuple[str, list]:
         return f"@{pname}"
 
     for field, flt in filters.items():
+        # Reject unknown field names (SQL-injection guard — the name is interpolated).
+        if field not in _ALLOWED_FILTER_FIELDS:
+            continue
         ftype = flt.get("type")
         # Region filters operate on the EFFECTIVE value (SW → derived fallback), so
         # the "empty region" slice means truly-still-unknown after the cascade.

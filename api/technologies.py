@@ -11,8 +11,11 @@ from fastapi import APIRouter, Request
 from google.cloud import bigquery as bq
 
 from core.bigquery import client, table_ref, _bq_touch, _bq_op, track_bq_call, BW_PARSED_TABLE, _bq_qcfg
+from api.auth import require_permission
 
-router = APIRouter(prefix="/api/technologies")
+# Analytical tech data is Explorer-adjacent → gate the whole router with "explorer"
+# (previously ungated: any logged-in user could read it AND write the catalog).
+router = APIRouter(prefix="/api/technologies", dependencies=[require_permission("explorer")])
 logger = logging.getLogger(__name__)
 
 # Cache of raw rows fetched for a given full domain set, so the per-site multi-filter
@@ -39,9 +42,12 @@ def _fetch_full_rows(filter_domains: list[str]) -> list:
             return cached[1]
     _bq_touch("priv_r")
     bq_client = client()
+    params: list = []
     if filter_domains:
-        domain_list = ", ".join(f"'{d}'" for d in filter_domains[:10000])
-        domain_where = f"WHERE LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN ({domain_list})"
+        # Parameterised (UNNEST) — never interpolate client-supplied domains into SQL.
+        norm = list({_norm_domain(d) for d in filter_domains[:10000] if d})
+        domain_where = "WHERE LOWER(REGEXP_REPLACE(domain, r'^www\\.', '')) IN UNNEST(@domains)"
+        params = [bq.ArrayQueryParameter("domains", "STRING", norm)]
     else:
         domain_where = ""
     with _bq_op("priv_r"):
@@ -53,7 +59,7 @@ def _fetch_full_rows(filter_domains: list[str]) -> list:
                 {domain_where}
             ) WHERE rn = 1
             LIMIT 50000
-        """, job_config=_bq_qcfg()).result())
+        """, job_config=_bq_qcfg(params=params)).result())
     track_bq_call("priv_bw")
     all_rows = [(r["domain"], r["technologies_json"]) for r in qrows]
     if cache_key:
@@ -361,9 +367,9 @@ def cooccurrence(body: dict):
         return {"error": str(e)}
 
 
-@router.post("/catalog/add")
+@router.post("/catalog/add", dependencies=[require_permission("admin")])
 def add_technology_endpoint(body: dict):
-    """Add a new technology to Google Sheet + BQ catalog."""
+    """Add a new technology to Google Sheet + BQ catalog. Admin-only (writes catalog)."""
     from fastapi import HTTPException
     from services.technology_catalog import add_technology
     sheet = body.get("sheet", "").strip()
