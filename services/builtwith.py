@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 from config.settings import (
     BUILTWITH_API_KEY, BUILTWITH_RAPIDAPI_KEY,
-    REQUEST_TIMEOUT, RATE_LIMIT_WAIT
+    REQUEST_TIMEOUT,
 )
 from core.bigquery import get_cached, save_cache
 

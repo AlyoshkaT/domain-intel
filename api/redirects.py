@@ -1,13 +1,14 @@
 """
 Redirects API router — exposes domain_redirects table.
 """
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from google.cloud import bigquery
 
 from core.bigquery import client, table_ref, _bq_touch
 from services.redirect_resolver import REDIRECTS_TABLE
+from api.auth import require_permission
 
-router = APIRouter()
+router = APIRouter(dependencies=[require_permission("explorer")])
 
 
 @router.get("/api/redirects")

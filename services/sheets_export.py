@@ -173,12 +173,8 @@ def _create_pivot_tables(sh, sheet_id: str,
     ]
 
     BLOCK_COLS  = 12   # 10 pivot cols + 2 gap
-    PIVOT_COLS  = 10   # label + Domain + 7 ranks + Grand Total
     PIVOT_ROW   = 2    # 0-based row index (A3 in Sheets) — rows 0,1 reserved for headers
     RANK_COUNT  = 7    # a.1M+ … g.micro
-    # Google Sheets pivot with column grouping renders 2 header rows.
-    # Pivot anchored at row index 2 → header rows at 2,3 → data starts at row 5 (1-based)
-    DATA_ROW_1B = PIVOT_ROW + 3   # = 5 (1-based)
 
     # ── Step 1: expand Analytics sheet columns ────────────────────────────────
     # A new sheet has only 26 columns (A–Z). Our pivots need columns up to AT (col 45).

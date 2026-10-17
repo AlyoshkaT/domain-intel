@@ -142,7 +142,7 @@ class SettingsUpdate(BaseModel):
 @router.post("/settings")
 def update_settings(data: SettingsUpdate):
     _bq_touch("priv_w")
-    from core.bigquery import get_setting, set_setting, _invalidate_max_bytes_cache
+    from core.bigquery import set_setting, _invalidate_max_bytes_cache
 
     if data.cache_ttl_days is not None:
         if not (1 <= data.cache_ttl_days <= 3650):
@@ -174,6 +174,12 @@ def update_settings(data: SettingsUpdate):
 # list can't drift out of sync. (It previously hard-coded a set WITHOUT "pipedrive",
 # which made _normalize_permissions silently drop the Pipedrive permission on save.)
 from api.auth import _ALL_PERMS as VALID_PERMISSIONS
+
+
+def _admin_usernames() -> set[str]:
+    """Usernames that currently hold the admin permission."""
+    from core.bigquery import get_users
+    return {u["username"] for u in get_users() if "admin" in (u.get("permissions") or "")}
 
 
 def _normalize_permissions(perms: str | list | None) -> str:
@@ -256,6 +262,10 @@ def patch_user(username: str, update: UserUpdate):
         raise HTTPException(status_code=400, detail="No fields to update")
     if "permissions" in fields:
         fields["permissions"] = _normalize_permissions(fields["permissions"])
+        # Don't let the last admin demote themselves out of admin (lockout guard).
+        admins = _admin_usernames()
+        if username in admins and "admin" not in fields["permissions"].split(",") and len(admins) <= 1:
+            raise HTTPException(status_code=400, detail="Cannot remove admin from the last admin")
     update_user(username, **fields)
     invalidate_users_cache()
     return {"ok": True}
@@ -266,6 +276,10 @@ def delete_user(username: str):
     _bq_touch("priv_w")
     from core.bigquery import remove_user
     from api.auth import invalidate_users_cache
+    # Lockout guard: never delete the last remaining admin.
+    admins = _admin_usernames()
+    if username in admins and len(admins) <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last admin")
     remove_user(username)
     invalidate_users_cache()
     return {"ok": True}

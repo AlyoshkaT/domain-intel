@@ -4,7 +4,6 @@ Reads CMS / OSearch / EMS from Google Sheets and stores in BigQuery.
 Supports write-back: appending new technologies to the sheet.
 """
 import logging
-from typing import Optional
 from google.cloud import bigquery as bq
 
 from config.settings import GOOGLE_SHEETS_CATALOG_ID

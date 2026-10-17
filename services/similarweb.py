@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Optional
 from config.settings import SIMILARWEB_RAPIDAPI_KEY, REQUEST_TIMEOUT, RATE_LIMIT_WAIT, SW_CONCURRENCY, SW_MAX_RETRIES
-from core.bigquery import get_cached, save_cache
+from core.bigquery import save_cache
 
 logger = logging.getLogger(__name__)
 

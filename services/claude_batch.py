@@ -13,7 +13,6 @@ On completion each result is written to corpBQ claude_responses + privateBQ
 ai_parsed via the same save path as the live flow.
 """
 import logging
-import time
 from datetime import datetime, timezone
 
 from google.cloud import bigquery

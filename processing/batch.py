@@ -452,8 +452,7 @@ def resume_job(job_id: str, username: str = "") -> dict:
     already_done = len(processed_set)
 
     if not remaining:
-        # Everything processed — just mark complete
-        errors = sum(1 for r in [] if r)  # can't easily count errors here; use job record
+        # Everything already processed — just mark complete.
         update_job(job_id, status="completed", error_message=None)
         return {"ok": True, "remaining": 0, "already_done": already_done}
 

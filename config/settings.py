@@ -10,7 +10,6 @@ Grouped: credentials/APIs → BigQuery → concurrency → HTTP timeouts →
 retries/pauses → scheduler → cache. Change a default here or override in .env.
 """
 import os
-from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()

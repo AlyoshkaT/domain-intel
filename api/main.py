@@ -17,13 +17,13 @@ from fastapi.staticfiles import StaticFiles
 
 from core.bigquery import (
     ensure_tables_exist, list_jobs, get_job, get_results,
-    reset_stale_jobs, update_job, get_stale_running_jobs, _bq_touch, _bq_op,
+    update_job, get_stale_running_jobs, _bq_touch, _bq_op,
 )
 from services.technology_catalog import sync_catalog
 from services.redirect_resolver import ensure_redirects_table
 from services.credits import fetch_builtwith_credits, get_cached_credits
 from services.sheets_export import export_job_to_sheets
-from services.domain_profiles import ensure_profiles_table, get_sync_status
+from services.domain_profiles import ensure_profiles_table
 from processing.batch import start_job, cancel_job
 from processing.pipeline import reload_catalog
 from api.auth import auth_middleware, get_user_permissions, require_permission
@@ -310,7 +310,12 @@ async def create_job_endpoint(
     if not domains:
         raise HTTPException(status_code=400, detail="No valid domains found in file")
 
-    services_list = json.loads(services)
+    try:
+        services_list = json.loads(services)
+        if not isinstance(services_list, list):
+            raise ValueError
+    except (json.JSONDecodeError, ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid 'services' value (expected a JSON array)")
     valid_services = ["similarweb", "builtwith", "ai"]
     services_list = [s for s in services_list if s in valid_services]
     if not services_list:
@@ -520,7 +525,7 @@ async def force_complete_job(job_id: str):
 
 
 # ─── Results ──────────────────────────────────────────────────────────────────
-@app.get("/api/jobs/{job_id}/results")
+@app.get("/api/jobs/{job_id}/results", dependencies=[require_permission("jobs")])
 def get_results_endpoint(job_id: str):
     with _bq_op("priv_r"):
         results = get_results(job_id)
@@ -625,7 +630,7 @@ async def export_sheets(request: Request, job_id: str,
     background_tasks.add_task(do_export)
     return {"status": "exporting"}
 
-@app.get("/api/jobs/{job_id}/export/sheets/url")
+@app.get("/api/jobs/{job_id}/export/sheets/url", dependencies=[require_permission("jobs")])
 async def get_sheets_url(job_id: str):
     from core.bigquery import get_setting
     url = get_setting(f"sheet_url_{job_id}")

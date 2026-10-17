@@ -919,7 +919,6 @@ def rematch_catalog() -> dict:
             }
         ndjson_lines = [_json.dumps(v) for v in deduped.values()]
 
-        tmp_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}`.catalog_rematch_tmp"
         tmp_schema = [
             bigquery.SchemaField("domain",        "STRING"),
             bigquery.SchemaField("cms_list",      "STRING"),

@@ -636,7 +636,7 @@ def set_sync_frequency(freq: str, base_url: str | None = None) -> dict:
 def register_webhook(base_url: str) -> dict:
     """Create a Pipedrive webhook for all deal events → <base_url>/api/pipedrive/webhook.
     Stores the webhook id so we can delete it later. Removes a stale one first."""
-    from core.bigquery import get_setting, set_setting
+    from core.bigquery import set_setting
     unregister_webhook()  # avoid duplicates
     url = base_url.rstrip("/") + "/api/pipedrive/webhook?token=" + get_webhook_secret()
     with httpx.Client(timeout=PIPEDRIVE_TIMEOUT) as cli:

@@ -14,7 +14,7 @@ Both are rebuilt from bw_parsed (full rebuild) or batch-updated for one job's do
 import logging
 import time
 
-from core.bigquery import client, table_ref, BW_PARSED_TABLE, GCP_PROJECT_ID, BIGQUERY_DATASET
+from core.bigquery import client, table_ref, BW_PARSED_TABLE
 
 logger = logging.getLogger(__name__)
 
