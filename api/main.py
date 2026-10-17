@@ -442,12 +442,16 @@ async def cancel_job_endpoint(job_id: str):
 @app.post("/api/jobs/{job_id}/resume", dependencies=[require_permission("jobs")])
 async def resume_job_endpoint(request: Request, job_id: str):
     """Resume an interrupted job from where it left off using the stored domain list."""
-    from processing.batch import resume_job
+    from processing.batch import resume_job, _active_jobs
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.get("status") in ("running", "pending"):
-        raise HTTPException(status_code=400, detail="Job is already running")
+    # Block only if a task is genuinely running in THIS process. A 'running'/'pending'
+    # status in BQ with no live task means the job was orphaned by a restart — allow
+    # resuming it (the previous blanket reject left such jobs un-kickable from the UI).
+    task = _active_jobs.get(job_id)
+    if task is not None and not task.done():
+        raise HTTPException(status_code=400, detail="Job is actively running")
     username = getattr(request.state, "username", "unknown")
     result = resume_job(job_id, username=username)
     if not result.get("ok"):

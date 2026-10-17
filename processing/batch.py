@@ -254,7 +254,12 @@ async def run_batch_job(
                 domain, job_id, services,
                 force_refresh=force_refresh,
                 username=username,
-                skip_redirect=force_refresh,
+                # Always resolve redirects — even on force_refresh. A domain from
+                # Explorer is NOT guaranteed canonical (e.g. lamarsy.com → maroda.com.ua
+                # was never resolved), and skipping made such sites look dead. The
+                # resolver is cache-aware (domain_redirects + per-job prefetch), so
+                # known redirects are free and only brand-new ones cost one probe.
+                skip_redirect=False,
                 priority=is_priority,
                 ai_mode=ai_mode,
             )
