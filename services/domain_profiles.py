@@ -13,7 +13,7 @@ from typing import Optional
 
 from google.cloud import bigquery
 
-from core.bigquery import client, corp_client, table_ref, _bq_op, track_bq_call, _bq_qcfg
+from core.bigquery import client, corp_client, table_ref, _bq_op, track_bq_call, _bq_qcfg, _bq_touch
 from config.settings import CORP_PROJECT_ID, CORP_DATASET, GCP_PROJECT_ID, BIGQUERY_DATASET
 
 # How many domains to keep in each parsed-data dict at any moment.
