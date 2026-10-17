@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 
 from config.settings import (
     BATCH_CONCURRENCY, SW_CONCURRENCY, BW_CONCURRENCY, AI_CONCURRENCY,
+    PRIORITY_MAX_DOMAINS,   # re-exported: processing/batch.py imports it from here — do NOT remove
 )
 
 logger = logging.getLogger(__name__)
