@@ -104,6 +104,17 @@ AI_BATCH_CHUNK = int(os.getenv("AI_BATCH_CHUNK", "50000"))
 JOB_CHUNK_SIZE = int(os.getenv("JOB_CHUNK_SIZE", "20000"))
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Region fallback — level №3 (Whois/RDAP registrant country). Levels №1 (ccTLD)
+# and №2 (AI homepage signals) are always on and free; №3 makes a network call per
+# domain, so it is OFF by default and run as a bounded, rate-limited sweep over the
+# residue that №1/№2 couldn't resolve. Used in: services/region_whois.py
+# ─────────────────────────────────────────────────────────────────────────────
+REGION_WHOIS_ENABLED = os.getenv("REGION_WHOIS_ENABLED", "false").lower() in ("1", "true", "yes")
+REGION_WHOIS_TIMEOUT = int(os.getenv("REGION_WHOIS_TIMEOUT", "8"))       # per RDAP request (s)
+REGION_WHOIS_SLEEP   = float(os.getenv("REGION_WHOIS_SLEEP", "1.0"))     # pause between RDAP calls (s), be polite
+REGION_WHOIS_BATCH   = int(os.getenv("REGION_WHOIS_BATCH", "500"))       # max domains per sweep run
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HTTP timeouts (seconds) — per outbound call
 # ─────────────────────────────────────────────────────────────────────────────
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "12"))        # SimilarWeb API (services/similarweb.py)

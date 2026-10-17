@@ -26,6 +26,16 @@ _RESET_BQ_LIMIT_HOUR_UTC = RESET_BQ_LIMIT_HOUR_UTC
 def _run_sync():
     """Run full sync in background thread."""
     from services.domain_profiles import sync_domain_profiles
+    # Region fallback №3 (gated): sweep a bounded batch of the still-unresolved
+    # residue via RDAP first, so the profile sync right after surfaces the results.
+    try:
+        from config.settings import REGION_WHOIS_ENABLED
+        if REGION_WHOIS_ENABLED:
+            from services.region_whois import backfill_whois_regions
+            logger.info("Region whois sweep (pre-sync) started")
+            logger.info(f"Region whois sweep done: {backfill_whois_regions()}")
+    except Exception as e:
+        logger.warning(f"Region whois sweep skipped: {e}")
     logger.info("Scheduled daily sync started")
     result = sync_domain_profiles()
     logger.info(f"Scheduled daily sync done: {result}")

@@ -44,6 +44,10 @@ PROFILES_SCHEMA = [
     bigquery.SchemaField("ai_category",           "STRING"),
     bigquery.SchemaField("ai_is_ecommerce",       "STRING"),
     bigquery.SchemaField("ai_industry",           "STRING"),
+    # Region fallback (used only when sw_primary_region is empty). Kept SEPARATE from
+    # SW so the SW column stays pristine; the UI/export show COALESCE(sw, derived).
+    bigquery.SchemaField("derived_region",        "STRING"),  # ISO-2, or NULL
+    bigquery.SchemaField("derived_region_source", "STRING"),  # cctld | ai | whois (internal/audit only)
 ]
 
 _sync_status = {
@@ -71,15 +75,26 @@ def normalize_domain(domain: str) -> str:
 
 def ensure_profiles_table():
     bq = client()
-    table_obj = bigquery.Table(
-        f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{PROFILES_TABLE}",
-        schema=PROFILES_SCHEMA
-    )
+    full_ref = f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{PROFILES_TABLE}"
+    table_obj = bigquery.Table(full_ref, schema=PROFILES_SCHEMA)
     try:
-        bq.get_table(table_obj)
+        existing = bq.get_table(table_obj)
     except Exception:
         bq.create_table(table_obj)
         logger.info(f"Created table {PROFILES_TABLE}")
+        return
+    # Non-destructive migration: add any new nullable columns in-place (the table
+    # has ~250K rows and is the live serving table — never drop it). ADD COLUMN
+    # IF NOT EXISTS is idempotent and instant.
+    have = {f.name for f in existing.schema}
+    missing = [f for f in PROFILES_SCHEMA if f.name not in have]
+    if missing:
+        adds = ", ".join(f"ADD COLUMN IF NOT EXISTS {f.name} {f.field_type}" for f in missing)
+        try:
+            bq.query(f"ALTER TABLE `{full_ref}` {adds}").result()
+            logger.info(f"{PROFILES_TABLE}: added columns {[f.name for f in missing]}")
+        except Exception as e:
+            logger.error(f"{PROFILES_TABLE} column migration failed: {e}")
 
 
 def _safe_json(val) -> Optional[dict]:
@@ -153,7 +168,8 @@ def _parse_bw(data: dict | None, catalog: dict) -> dict:
 _PROFILE_SCHEMA = {"domain","updated_at","sw_visits","sw_category","sw_subcategory",
                    "sw_description","sw_title","sw_primary_region","sw_primary_region_pct",
                    "company_name","cms_list","osearch","osearch_group","ems_list",
-                   "bw_vertical","ai_category","ai_is_ecommerce","ai_industry"}
+                   "bw_vertical","ai_category","ai_is_ecommerce","ai_industry",
+                   "derived_region","derived_region_source"}
 
 _SEP_TECH = "\x02"   # separator between tech entries in compact BW string
 _SEP_FIELD = "\x01"  # separator between name and lastDetected
@@ -281,21 +297,30 @@ def _match_bw_compact(bw_vertical: str, techs_compact: str, catalog: dict) -> di
 
 
 def _build_profile(domain: str, sw_raw, bw_raw,
-                   ai_rec: dict, catalog: dict, updated_at: str) -> dict:
+                   ai_rec: dict, catalog: dict, updated_at: str, whois_country: str = "") -> dict:
     """Legacy helper — accepts raw JSON. Use _build_profile_parsed for efficiency."""
     sw = _parse_sw(_safe_json(sw_raw))
     bw = _parse_bw(_safe_json(bw_raw), catalog)
-    return _assemble_profile(domain, sw, bw, ai_rec, updated_at)
+    return _assemble_profile(domain, sw, bw, ai_rec, updated_at, whois_country)
 
 
 def _build_profile_parsed(domain: str, sw: dict, bw: dict,
-                           ai_rec: dict, updated_at: str) -> dict:
+                           ai_rec: dict, updated_at: str, whois_country: str = "") -> dict:
     """Build profile from already-parsed dicts (no JSON parsing, memory efficient)."""
-    return _assemble_profile(domain, sw, bw, ai_rec, updated_at)
+    return _assemble_profile(domain, sw, bw, ai_rec, updated_at, whois_country)
 
 
 def _assemble_profile(domain: str, sw: dict, bw: dict,
-                      ai_rec: dict, updated_at: str) -> dict:
+                      ai_rec: dict, updated_at: str, whois_country: str = "") -> dict:
+    # Region fallback cascade. Runs only when SW has no region; returns ('','') when
+    # SW is present → derived_region auto-nulls on every rebuild (reconciliation).
+    from services.region_fallback import derive_region
+    derived_region, derived_region_source = derive_region(
+        domain,
+        sw.get("sw_primary_region", ""),
+        ai_rec.get("ai_region", ""),
+        whois_country,
+    )
     return {k: v for k, v in {
         "domain":                domain,
         "updated_at":            updated_at,
@@ -315,6 +340,8 @@ def _assemble_profile(domain: str, sw: dict, bw: dict,
         "ai_category":           ai_rec.get("ai_category", "") or "",
         "ai_is_ecommerce":       ai_rec.get("ai_is_ecommerce", "") or "",
         "ai_industry":           ai_rec.get("ai_industry", "") or "",
+        "derived_region":        derived_region or None,
+        "derived_region_source": derived_region_source or None,
     }.items() if k in _PROFILE_SCHEMA}
 
 
@@ -428,7 +455,7 @@ def sync_domain_profiles() -> dict:
         ai_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.ai_parsed`"
         try:
             ai_job = our.query(f"""
-                SELECT domain, ai_category, ai_is_ecommerce, ai_industry
+                SELECT domain, ai_category, ai_is_ecommerce, ai_industry, ai_region
                 FROM {ai_priv_table}
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
             """, job_config=_bq_qcfg(max_bytes=False))
@@ -440,6 +467,7 @@ def sync_domain_profiles() -> dict:
                             "ai_category":     r["ai_category"] or "",
                             "ai_is_ecommerce": ("Yes" if (r["ai_is_ecommerce"] or "") in ("Так", "Yes") else "No"),
                             "ai_industry":     r["ai_industry"] or "",
+                            "ai_region":       r["ai_region"] or "",
                         }
         except Exception as e:
             logger.warning(f"ai_parsed read failed ({e}) — falling back to corpBQ")
@@ -452,7 +480,8 @@ def sync_domain_profiles() -> dict:
                     domain,
                     COALESCE(JSON_VALUE(response_json, '$.category'), '')        AS ai_category,
                     LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
-                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '')      AS ai_industry
+                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '')      AS ai_industry,
+                    COALESCE(JSON_VALUE(response_json, '$.region'), '')           AS ai_region
                 FROM {corp_ai_table}
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
             """, job_config=_bq_qcfg(max_bytes=False))
@@ -464,10 +493,20 @@ def sync_domain_profiles() -> dict:
                             "ai_category":     r["ai_category"] or "",
                             "ai_is_ecommerce": "Yes" if r["ai_is_ecom"] in ("true", "1", "yes") else "No",
                             "ai_industry":     r["ai_industry"] or "",
+                            "ai_region":       r["ai_region"] or "",
                         }
             track_bq_call("corp_ai")
         _sync_status.update({"progress": f"3/4 · AI: {len(ai_data):,} доменів ✓", "pct": 80})
         logger.info(f"AI data total: {len(ai_data)} domains")
+
+        # Whois/RDAP region cache (region fallback №3). Small table — load all.
+        whois_data: dict[str, str] = {}
+        try:
+            from services.region_whois import load_whois_countries
+            whois_data = load_whois_countries()
+            logger.info(f"Whois regions: {len(whois_data)} domains")
+        except Exception as e:
+            logger.warning(f"whois region load skipped: {e}")
 
         all_domains = {d for d in sw_parsed.keys() | bw_parsed.keys() | ai_data.keys() if d}
         logger.info(f"Unique normalized domains: {len(all_domains)}")
@@ -491,6 +530,7 @@ def sync_domain_profiles() -> dict:
                             bw_parsed.get(domain, {}),
                             ai_data.get(domain, {}),
                             updated_at,
+                            whois_data.get(domain, ""),
                         )
                         f.write(json.dumps(profile, default=str) + "\n")
                         written += 1
@@ -631,7 +671,7 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
         ai_priv_table = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.ai_parsed`"
         try:
             for r in our.query(f"""
-                SELECT domain, ai_category, ai_is_ecommerce, ai_industry
+                SELECT domain, ai_category, ai_is_ecommerce, ai_industry, ai_region
                 FROM {ai_priv_table}
                 WHERE {in_clause}
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
@@ -642,6 +682,7 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
                         "ai_category":     r["ai_category"] or "",
                         "ai_is_ecommerce": ("Yes" if (r["ai_is_ecommerce"] or "") in ("Так", "Yes") else "No"),
                         "ai_industry":     r["ai_industry"] or "",
+                        "ai_region":       r["ai_region"] or "",
                     }
         except Exception as e:
             logger.warning(f"incremental: ai_parsed read failed ({e}) — corp fallback for all domains")
@@ -656,7 +697,8 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
                     domain,
                     COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
                     LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
-                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry
+                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry,
+                    COALESCE(JSON_VALUE(response_json, '$.region'), '') AS ai_region
                 FROM {corp_ai_table}
                 WHERE {ai_in}
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
@@ -667,7 +709,16 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
                         "ai_category":     r["ai_category"] or "",
                         "ai_is_ecommerce": "Yes" if r["ai_is_ecom"] in ("true", "1", "yes") else "No",
                         "ai_industry":     r["ai_industry"] or "",
+                        "ai_region":       r["ai_region"] or "",
                     }
+
+        # Whois/RDAP region cache (region fallback №3) for just these domains.
+        whois_data: dict[str, str] = {}
+        try:
+            from services.region_whois import load_whois_countries
+            whois_data = load_whois_countries(norm_domains)
+        except Exception as e:
+            logger.warning(f"incremental: whois region load skipped: {e}")
 
         updated_at = datetime.now(timezone.utc).isoformat()
         tmp_file = None
@@ -683,6 +734,7 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
                         bw_parsed.get(domain, {}),
                         ai_data.get(domain, {}),
                         updated_at,
+                        whois_data.get(domain, ""),
                     )
                     f.write(json.dumps(profile, default=str) + "\n")
                     written += 1
@@ -791,7 +843,10 @@ def sync_profiles_from_job_results(job_id: str) -> dict:
                 bw_vertical           = COALESCE(S.bw_vertical,           T.bw_vertical),
                 ai_category           = COALESCE(S.ai_category,           T.ai_category),
                 ai_is_ecommerce       = COALESCE(S.ai_is_ecommerce,       T.ai_is_ecommerce),
-                ai_industry           = COALESCE(S.ai_industry,           T.ai_industry)
+                ai_industry           = COALESCE(S.ai_industry,           T.ai_industry),
+                -- Reconciliation: once SW provides a region, drop the derived fallback.
+                derived_region        = IF(S.sw_primary_region IS NOT NULL, NULL, T.derived_region),
+                derived_region_source = IF(S.sw_primary_region IS NOT NULL, NULL, T.derived_region_source)
             WHEN NOT MATCHED THEN INSERT (
                 domain, updated_at, sw_visits, sw_category, sw_subcategory,
                 sw_description, sw_title, sw_primary_region, sw_primary_region_pct,

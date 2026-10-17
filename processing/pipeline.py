@@ -359,6 +359,7 @@ async def process_domain(
                     "ai_category":     ai_result.get("ai_category", ""),
                     "ai_is_ecommerce": ai_result.get("ai_is_ecommerce", ""),
                     "ai_industry":     ai_result.get("ai_industry", ""),
+                    "ai_region":       ai_result.get("ai_region", ""),
                 }))
 
     except Exception as e:

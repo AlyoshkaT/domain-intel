@@ -49,6 +49,14 @@ PROFILE_COLUMNS = [
 PROFILE_COLUMNS_FULL = PROFILE_COLUMNS + ["sw_description"]
 
 
+def _region_expr(alias: str = "") -> str:
+    """Effective region shown to users = SimilarWeb if present, else the derived
+    fallback (ccTLD / AI / Whois). The DB keeps sw_primary_region and derived_region
+    SEPARATE; this COALESCE unifies them only at read time for Explorer/dashboard/export."""
+    p = f"{alias}." if alias else ""
+    return f"COALESCE(NULLIF({p}sw_primary_region, ''), {p}derived_region)"
+
+
 def _make_cache_key(body: dict) -> str:
     """Stable hash of request body for cache keying."""
     serialized = json.dumps(body, sort_keys=True, default=str)
@@ -84,28 +92,31 @@ def _build_where(filters: dict) -> tuple[str, list]:
 
     for field, flt in filters.items():
         ftype = flt.get("type")
+        # Region filters operate on the EFFECTIVE value (SW → derived fallback), so
+        # the "empty region" slice means truly-still-unknown after the cascade.
+        col = _region_expr() if field == "sw_primary_region" else field
         if ftype == "contains" and flt.get("value"):
             val = flt["value"]
-            conditions.append(f"LOWER({field}) LIKE LOWER({p(field, 'STRING', f'%{val}%')})")
+            conditions.append(f"LOWER({col}) LIKE LOWER({p(field, 'STRING', f'%{val}%')})")
         elif ftype == "not_contains" and flt.get("value"):
             val = flt["value"]
-            conditions.append(f"(LOWER({field}) NOT LIKE LOWER({p(field, 'STRING', f'%{val}%')}) OR {field} IS NULL)")
+            conditions.append(f"(LOWER({col}) NOT LIKE LOWER({p(field, 'STRING', f'%{val}%')}) OR {col} IS NULL)")
         elif ftype == "empty":
-            conditions.append(f"({field} IS NULL OR {field} = '')")
+            conditions.append(f"({col} IS NULL OR {col} = '')")
         elif ftype == "not_empty":
-            conditions.append(f"({field} IS NOT NULL AND {field} != '')")
+            conditions.append(f"({col} IS NOT NULL AND {col} != '')")
         elif ftype == "in" and flt.get("values"):
             phs = [p(field, "STRING", str(v)) for v in flt["values"]]
-            conditions.append(f"{field} IN ({','.join(phs)})")
+            conditions.append(f"{col} IN ({','.join(phs)})")
         elif ftype == "not_in" and flt.get("values"):
             phs = [p(field, "STRING", str(v)) for v in flt["values"]]
-            conditions.append(f"({field} NOT IN ({','.join(phs)}) OR {field} IS NULL)")
+            conditions.append(f"({col} NOT IN ({','.join(phs)}) OR {col} IS NULL)")
         elif ftype == "gt" and flt.get("value") is not None:
-            conditions.append(f"{field} > {p(field,'FLOAT64',float(flt['value']))}")
+            conditions.append(f"{col} > {p(field,'FLOAT64',float(flt['value']))}")
         elif ftype == "lt" and flt.get("value") is not None:
-            conditions.append(f"{field} < {p(field,'FLOAT64',float(flt['value']))}")
+            conditions.append(f"{col} < {p(field,'FLOAT64',float(flt['value']))}")
         elif ftype == "between" and flt.get("min") is not None and flt.get("max") is not None:
-            conditions.append(f"{field} BETWEEN {p(field+'_min','FLOAT64',float(flt['min']))} AND {p(field+'_max','FLOAT64',float(flt['max']))}")
+            conditions.append(f"{col} BETWEEN {p(field+'_min','FLOAT64',float(flt['min']))} AND {p(field+'_max','FLOAT64',float(flt['max']))}")
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     return where, params
@@ -121,7 +132,9 @@ def get_all_profiles():
         return _profiles_cache
     try:
         bq_client = client()
-        cols_sql = ", ".join(f"t.{c}" for c in PROFILE_COLUMNS)
+        cols_sql = ", ".join(
+            (f"{_region_expr('t')} AS sw_primary_region" if c == "sw_primary_region" else f"t.{c}")
+            for c in PROFILE_COLUMNS)
         # sw_fetched / bw_fetched — freshness dates from parsed tables (UI-only, not exported)
         all_columns = PROFILE_COLUMNS + ["sw_fetched", "bw_fetched"]
         # _bq_op keeps the LED lit for the entire duration of this block (can be 5+ min)
@@ -177,7 +190,9 @@ def get_domain_detail(domain: str):
     try:
         _bq_touch("priv_r")
         bq_client = client()
-        cols_sql = ", ".join(PROFILE_COLUMNS_FULL)
+        cols_sql = ", ".join(
+            (f"{_region_expr()} AS sw_primary_region" if c == "sw_primary_region" else c)
+            for c in PROFILE_COLUMNS_FULL)
         rows = list(bq_client.query(
             f"SELECT {cols_sql} FROM `{table_ref(PROFILES_TABLE)}` WHERE domain = @d LIMIT 1",
             job_config=bq.QueryJobConfig(query_parameters=[bq.ScalarQueryParameter("d", "STRING", domain)])
@@ -228,13 +243,15 @@ def get_field_values(field: str, q: str = ""):
     try:
         _bq_touch("priv_r")
         bq_client = client()
-        where = f"AND LOWER({field}) LIKE LOWER(@q)" if q else ""
+        # Region values reflect the effective (SW → derived) column.
+        col = _region_expr() if field == "sw_primary_region" else field
+        where = f"AND LOWER({col}) LIKE LOWER(@q)" if q else ""
         params = [bq.ScalarQueryParameter("q", "STRING", f"%{q}%")] if q else []
         rows = list(bq_client.query(
-            f"""SELECT {field} as value, COUNT(*) as cnt
+            f"""SELECT {col} as value, COUNT(*) as cnt
                 FROM `{table_ref(PROFILES_TABLE)}`
-                WHERE {field} IS NOT NULL AND {field} != '' {where}
-                GROUP BY {field} ORDER BY cnt DESC LIMIT 300""",
+                WHERE {col} IS NOT NULL AND {col} != '' {where}
+                GROUP BY {col} ORDER BY cnt DESC LIMIT 300""",
             job_config=bq.QueryJobConfig(query_parameters=params)
         ).result())
         values = [{"value": r["value"], "count": r["cnt"]} for r in rows]
@@ -276,7 +293,7 @@ def explore_search(body: dict):
                 ems_list, ai_category, ai_is_ecommerce, ai_industry,
                 bw_vertical, sw_category, sw_subcategory,
                 sw_description, sw_title, company_name,
-                sw_primary_region, sw_primary_region_pct
+                {_region_expr()} AS sw_primary_region, sw_primary_region_pct
                 FROM `{table_ref(PROFILES_TABLE)}` {where}
                 ORDER BY sw_visits DESC NULLS LAST
                 LIMIT {limit} OFFSET {offset}""",
@@ -306,6 +323,18 @@ async def refresh_profiles(background_tasks: BackgroundTasks):
 def sync_status():
     from services.domain_profiles import get_sync_status
     return get_sync_status()
+
+
+@router.post("/region_whois/sweep", dependencies=[require_permission("admin")])
+async def region_whois_sweep(body: dict | None = None):
+    """Region fallback №3 (manual): look up registrant country via RDAP for a bounded
+    batch of domains still missing a region after ccTLD + AI. Gated by REGION_WHOIS_ENABLED.
+    Run a profile sync afterwards to surface the results."""
+    import asyncio
+    from services.region_whois import backfill_whois_regions
+    limit = int((body or {}).get("limit") or 0) or None
+    with _bq_op("priv_r"):
+        return await asyncio.to_thread(backfill_whois_regions, limit)
 
 
 # ─── Raw technology search (BuiltWith) ────────────────────────────────────────

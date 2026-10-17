@@ -59,6 +59,7 @@ def _parse_ai_row(data: dict) -> Optional[dict]:
         "ai_category":     category,
         "ai_industry":     data.get("subcategory", ""),
         "ai_is_ecommerce": "Yes" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "No",
+        "ai_region":       (data.get("region") or "").strip().upper(),
     }
 
 
@@ -88,7 +89,8 @@ def get_corp_ai_cached(domain: str) -> Optional[dict]:
             f"""SELECT
                   JSON_VALUE(response_json, '$.category')     AS category,
                   JSON_VALUE(response_json, '$.subcategory')  AS subcategory,
-                  JSON_VALUE(response_json, '$.is_ecommerce') AS is_ecommerce
+                  JSON_VALUE(response_json, '$.is_ecommerce') AS is_ecommerce,
+                  JSON_VALUE(response_json, '$.region')       AS region
                 FROM {CORP_AI_TABLE}
                 WHERE domain = @domain
                 QUALIFY ROW_NUMBER() OVER (ORDER BY fetched_at DESC) = 1""",
@@ -122,6 +124,7 @@ def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
         "category":            result.get("ai_category", "other"),
         "subcategory":         result.get("ai_industry", "other"),
         "is_ecommerce":        is_ecom_bool,
+        "region":              (result.get("ai_region") or "").strip().upper(),
         "category_reasoning":  result.get("ai_category_reasoning", ""),
         "ecommerce_reasoning": result.get("ai_ecommerce_reasoning", ""),
     }
@@ -166,11 +169,20 @@ def build_classification_prompt(domain: str, sw_title: str = "", sw_description:
 
 {context}
 
+For "region": the ISO 3166-1 alpha-2 country code (UPPERCASE, e.g. UA, DE, PL) of
+the site's PRIMARY target market. Infer it ONLY from geo-stable signals that do not
+change with the visitor's location: phone country code (+380→UA, +49→DE), currency
+and prices (₴/грн→UA, zł→PL), physical address or postal code, and shipping/delivery
+country mentions. Do NOT use the interface language — many sites switch language
+based on the visitor's IP, so language is unreliable. If none of these signals are
+present, return "" (empty string). Never guess from the TLD.
+
 Respond ONLY with JSON (no markdown):
 {{
   "category": "<one of: {cats_str}>",
   "subcategory": "<one of: {subs_str}>",
   "is_ecommerce": true or false,
+  "region": "<ISO-2 code or empty string>",
   "category_reasoning": "<1 sentence>",
   "ecommerce_reasoning": "<1 sentence>"
 }}"""
@@ -192,6 +204,7 @@ def parse_classification_text(text: str) -> Optional[dict]:
         "ai_category":            parsed.get("category", "other"),
         "ai_is_ecommerce":        "Yes" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "No",
         "ai_industry":            parsed.get("subcategory", "other"),
+        "ai_region":              (parsed.get("region") or "").strip().upper(),
         "ai_category_reasoning":  parsed.get("category_reasoning", ""),
         "ai_ecommerce_reasoning": parsed.get("ecommerce_reasoning", ""),
     }
@@ -249,6 +262,7 @@ async def classify_domain(
                 "ai_category":              parsed.get("category", "other"),
                 "ai_is_ecommerce":          "Yes" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "No",
                 "ai_industry":              parsed.get("subcategory", "other"),
+                "ai_region":                (parsed.get("region") or "").strip().upper(),
                 "ai_category_reasoning":    parsed.get("category_reasoning", ""),
                 "ai_ecommerce_reasoning":   parsed.get("ecommerce_reasoning", ""),
             }

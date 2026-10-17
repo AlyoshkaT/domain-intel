@@ -175,7 +175,8 @@ def apply_batch(batch_id: str) -> dict:
             save_ai_parsed(domain, {
                 "ai_category": parsed["ai_category"],
                 "ai_is_ecommerce": parsed["ai_is_ecommerce"],
-                "ai_industry": parsed["ai_industry"]})
+                "ai_industry": parsed["ai_industry"],
+                "ai_region": parsed.get("ai_region", "")})
             ok += 1
         except Exception:
             logger.exception(f"apply_batch save failed for {domain}")

@@ -175,8 +175,9 @@ _AI_PARSED_SCHEMA = [
     bigquery.SchemaField("domain",          "STRING"),
     bigquery.SchemaField("fetched_at",      "TIMESTAMP"),
     bigquery.SchemaField("ai_category",     "STRING"),
-    bigquery.SchemaField("ai_is_ecommerce", "STRING"),   # "Так" / "Ні"
+    bigquery.SchemaField("ai_is_ecommerce", "STRING"),   # "Yes" / "No"
     bigquery.SchemaField("ai_industry",     "STRING"),
+    bigquery.SchemaField("ai_region",       "STRING"),   # ISO-2 region inferred from homepage (region fallback №2)
 ]
 
 
@@ -336,7 +337,10 @@ def ensure_tables_exist():
     # (Previously "technologies_json" was sentinel, so tables created before techs_compact
     #  was added would be missing that column and the BW MERGE INSERT would fail.)
     _ensure_or_migrate_table(bq, BW_PARSED_TABLE, _BW_PARSED_SCHEMA, "techs_compact")
-    _ensure_or_migrate_table(bq, AI_PARSED_TABLE, _AI_PARSED_SCHEMA, "ai_industry")
+    # sentinel = "ai_region": recreates ai_parsed if this column is absent (added for
+    # the region-fallback cascade). The table is a cache — it refills from corp
+    # claude_responses on the next profile sync, so a one-time recreate is safe.
+    _ensure_or_migrate_table(bq, AI_PARSED_TABLE, _AI_PARSED_SCHEMA, "ai_region")
     bq_corp = corp_client()
     for table_name in [BQ_BUILTWITH_CACHE, BQ_SIMILARWEB_CACHE]:
         try:
@@ -522,6 +526,7 @@ def save_ai_parsed(domain: str, parsed: dict) -> None:
         "ai_category": parsed.get("ai_category", ""),
         "ai_is_ecommerce": parsed.get("ai_is_ecommerce", ""),
         "ai_industry": parsed.get("ai_industry", ""),
+        "ai_region": parsed.get("ai_region", ""),
     }
     try:
         errors = bq.insert_rows_json(table_ref(AI_PARSED_TABLE), [row], timeout=BQ_OP_TIMEOUT)
