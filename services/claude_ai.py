@@ -274,6 +274,14 @@ async def classify_domain(
         return None
 
 
+import re as _re
+# A common JS anti-bot interstitial hardcodes a hash, sets cookie
+# challenge_passed=<hash>, then reloads. We can't run JS, but the hash is in the
+# page — replay it as a cookie to fetch the real content (otherwise AI sees nothing
+# and e.g. can't tell a Ukrainian shop is UA).
+_CHALLENGE_HASH_RE = _re.compile(r'defaultHash\s*=\s*["\']([0-9a-fA-F]{16,})["\']')
+
+
 async def fetch_homepage_text(domain: str) -> str:
     for url in [f"https://{domain}", f"http://{domain}"]:
         try:
@@ -282,8 +290,19 @@ async def fetch_homepage_text(domain: str) -> str:
                 headers={"User-Agent": "Mozilla/5.0 (compatible; DomainIntel/1.0)"}
             ) as client:
                 resp = await client.get(url)
-                if resp.status_code == 200:
-                    return _extract_text(resp.text)
+                if resp.status_code != 200:
+                    continue
+                html = resp.text
+                if "challenge_passed" in html and len(html) < 5000:
+                    m = _CHALLENGE_HASH_RE.search(html)
+                    if m:
+                        try:
+                            resp2 = await client.get(url, cookies={"challenge_passed": m.group(1)})
+                            if resp2.status_code == 200 and len(resp2.text) > len(html):
+                                html = resp2.text
+                        except Exception:
+                            pass
+                return _extract_text(html)
         except Exception:
             continue
     return ""
