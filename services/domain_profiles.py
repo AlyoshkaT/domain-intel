@@ -48,6 +48,7 @@ PROFILES_SCHEMA = [
     # SW so the SW column stays pristine; the UI/export show COALESCE(sw, derived).
     bigquery.SchemaField("derived_region",        "STRING"),  # ISO-2, or NULL
     bigquery.SchemaField("derived_region_source", "STRING"),  # cctld | ai | whois (internal/audit only)
+    bigquery.SchemaField("redirect_from",         "STRING"),  # original domain that redirects here (if any)
 ]
 
 _sync_status = {
@@ -71,6 +72,28 @@ def normalize_domain(domain: str) -> str:
     if d.startswith("www."):
         d = d[4:]
     return d.strip(".")
+
+
+def _load_redirect_from_map(bq) -> dict[str, str]:
+    """Map {resolved_domain → original_domain} from domain_redirects (latest per target).
+    Fills domain_profiles.redirect_from so the UI can explain a swapped domain. The
+    table is small, so it is loaded whole."""
+    out: dict[str, str] = {}
+    try:
+        from services.redirect_resolver import REDIRECTS_TABLE
+        tbl = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{REDIRECTS_TABLE}`"
+        rows = bq.query(f"""
+            SELECT resolved, original FROM {tbl}
+            WHERE resolved IS NOT NULL AND resolved != '' AND original IS NOT NULL
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY resolved ORDER BY detected_at DESC) = 1
+        """).result()
+        for r in rows:
+            k = normalize_domain(r["resolved"])
+            if k and r["original"]:
+                out[k] = r["original"]
+    except Exception as e:
+        logger.warning(f"redirect_from map load skipped: {e}")
+    return out
 
 
 def ensure_profiles_table():
@@ -169,7 +192,7 @@ _PROFILE_SCHEMA = {"domain","updated_at","sw_visits","sw_category","sw_subcatego
                    "sw_description","sw_title","sw_primary_region","sw_primary_region_pct",
                    "company_name","cms_list","osearch","osearch_group","ems_list",
                    "bw_vertical","ai_category","ai_is_ecommerce","ai_industry",
-                   "derived_region","derived_region_source"}
+                   "derived_region","derived_region_source","redirect_from"}
 
 _SEP_TECH = "\x02"   # separator between tech entries in compact BW string
 _SEP_FIELD = "\x01"  # separator between name and lastDetected
@@ -305,13 +328,15 @@ def _build_profile(domain: str, sw_raw, bw_raw,
 
 
 def _build_profile_parsed(domain: str, sw: dict, bw: dict,
-                           ai_rec: dict, updated_at: str, whois_country: str = "") -> dict:
+                           ai_rec: dict, updated_at: str, whois_country: str = "",
+                           redirect_from: str = "") -> dict:
     """Build profile from already-parsed dicts (no JSON parsing, memory efficient)."""
-    return _assemble_profile(domain, sw, bw, ai_rec, updated_at, whois_country)
+    return _assemble_profile(domain, sw, bw, ai_rec, updated_at, whois_country, redirect_from)
 
 
 def _assemble_profile(domain: str, sw: dict, bw: dict,
-                      ai_rec: dict, updated_at: str, whois_country: str = "") -> dict:
+                      ai_rec: dict, updated_at: str, whois_country: str = "",
+                      redirect_from: str = "") -> dict:
     # Region fallback cascade. Runs only when SW has no region; returns ('','') when
     # SW is present → derived_region auto-nulls on every rebuild (reconciliation).
     from services.region_fallback import derive_region
@@ -342,6 +367,7 @@ def _assemble_profile(domain: str, sw: dict, bw: dict,
         "ai_industry":           ai_rec.get("ai_industry", "") or "",
         "derived_region":        derived_region or None,
         "derived_region_source": derived_region_source or None,
+        "redirect_from":         redirect_from or None,
     }.items() if k in _PROFILE_SCHEMA}
 
 
@@ -508,6 +534,11 @@ def sync_domain_profiles() -> dict:
         except Exception as e:
             logger.warning(f"whois region load skipped: {e}")
 
+        # Redirect map {resolved → original}: a profile for the redirect TARGET shows
+        # which requested domain led here (domain never submitted directly).
+        redirect_from_data = _load_redirect_from_map(our)
+        logger.info(f"Redirect-from map: {len(redirect_from_data)} targets")
+
         all_domains = {d for d in sw_parsed.keys() | bw_parsed.keys() | ai_data.keys() if d}
         logger.info(f"Unique normalized domains: {len(all_domains)}")
 
@@ -531,6 +562,7 @@ def sync_domain_profiles() -> dict:
                             ai_data.get(domain, {}),
                             updated_at,
                             whois_data.get(domain, ""),
+                            redirect_from_data.get(domain, ""),
                         )
                         f.write(json.dumps(profile, default=str) + "\n")
                         written += 1
@@ -720,6 +752,8 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
         except Exception as e:
             logger.warning(f"incremental: whois region load skipped: {e}")
 
+        redirect_from_data = _load_redirect_from_map(our)
+
         updated_at = datetime.now(timezone.utc).isoformat()
         tmp_file = None
         written = 0
@@ -735,6 +769,7 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
                         ai_data.get(domain, {}),
                         updated_at,
                         whois_data.get(domain, ""),
+                        redirect_from_data.get(domain, ""),
                     )
                     f.write(json.dumps(profile, default=str) + "\n")
                     written += 1
@@ -820,7 +855,8 @@ def sync_profiles_from_job_results(job_id: str) -> dict:
                     NULLIF(TRIM(COALESCE(bw_vertical, '')), '')         AS bw_vertical,
                     NULLIF(TRIM(COALESCE(ai_category, '')), '')         AS ai_category,
                     NULLIF(TRIM(COALESCE(ai_is_ecommerce, '')), '')     AS ai_is_ecommerce,
-                    NULLIF(TRIM(COALESCE(ai_industry, '')), '')         AS ai_industry
+                    NULLIF(TRIM(COALESCE(ai_industry, '')), '')         AS ai_industry,
+                    NULLIF(TRIM(COALESCE(redirect_from, '')), '')       AS redirect_from
                 FROM {results_full}
                 WHERE job_id = @job_id AND status != 'error'
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY processed_at DESC) = 1
@@ -846,17 +882,18 @@ def sync_profiles_from_job_results(job_id: str) -> dict:
                 ai_industry           = COALESCE(S.ai_industry,           T.ai_industry),
                 -- Reconciliation: once SW provides a region, drop the derived fallback.
                 derived_region        = IF(S.sw_primary_region IS NOT NULL, NULL, T.derived_region),
-                derived_region_source = IF(S.sw_primary_region IS NOT NULL, NULL, T.derived_region_source)
+                derived_region_source = IF(S.sw_primary_region IS NOT NULL, NULL, T.derived_region_source),
+                redirect_from         = COALESCE(S.redirect_from,         T.redirect_from)
             WHEN NOT MATCHED THEN INSERT (
                 domain, updated_at, sw_visits, sw_category, sw_subcategory,
                 sw_description, sw_title, sw_primary_region, sw_primary_region_pct,
                 company_name, cms_list, osearch, osearch_group, ems_list,
-                bw_vertical, ai_category, ai_is_ecommerce, ai_industry
+                bw_vertical, ai_category, ai_is_ecommerce, ai_industry, redirect_from
             ) VALUES (
                 S.domain, S.updated_at, S.sw_visits, S.sw_category, S.sw_subcategory,
                 S.sw_description, S.sw_title, S.sw_primary_region, S.sw_primary_region_pct,
                 S.company_name, S.cms_list, S.osearch, S.osearch_group, S.ems_list,
-                S.bw_vertical, S.ai_category, S.ai_is_ecommerce, S.ai_industry
+                S.bw_vertical, S.ai_category, S.ai_is_ecommerce, S.ai_industry, S.redirect_from
             )
         """, job_config=bigquery.QueryJobConfig(query_parameters=[
             bigquery.ScalarQueryParameter("job_id", "STRING", job_id)

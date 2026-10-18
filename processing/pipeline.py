@@ -78,6 +78,7 @@ async def process_domain(
         "bw_vertical": None, "bw_industry": None, "bw_technologies": None,
         "bw_cms_raw": None, "bw_ecommerce": None, "bw_email_marketing": None,
         "ai_category": None, "ai_is_ecommerce": None, "ai_industry": None,
+        "redirect_from": None,
     }
 
     try:
@@ -89,6 +90,8 @@ async def process_domain(
             if resolved_domain != domain:
                 logger.info(f"Redirect: {domain} → {resolved_domain}")
                 result["domain"] = resolved_domain
+                # Record where this row came from so the UI explains the swapped domain.
+                result["redirect_from"] = domain
             working_domain = resolved_domain
         catalog = _get_catalog()
 

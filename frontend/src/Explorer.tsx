@@ -59,6 +59,7 @@ interface ExploreResult {
   ai_industry?: string; sw_category?: string; sw_subcategory?: string
   sw_description?: string; sw_title?: string; company_name?: string
   sw_primary_region?: string; sw_primary_region_pct?: number
+  redirect_from?: string                     // original domain that redirects here (if any)
   sw_fetched?: string; bw_fetched?: string   // freshness dates, UI-only (not exported)
 }
 
@@ -681,7 +682,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
 
   // ── Export ─────────────────────────────────────────────────────────────────
   const exportCSV = () => {
-    const cols = ["domain","sw_visits","traffic_rank","cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name"]
+    const cols = ["domain","sw_visits","traffic_rank","cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name","redirect_from"]
     const rows = filteredProfiles.map(r => cols.map(h => {
       const v = h === "traffic_rank" ? trafficRank((r as any).sw_visits) : (r as any)[h]
       return v != null && v !== "" ? `"${String(v).replace(/"/g, '""')}"` : ""
@@ -925,6 +926,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
                   <SortHeader col="sw_primary_region_pct" sort={sort} onSort={onSort} hint="Частка трафіку з основного регіону (sw_primary_region_pct).">Region %</SortHeader>
                   <SortHeader col="sw_fetched" sort={sort} onSort={onSort} hint="Дата отримання даних SimilarWeb (sw_fetched).">SW 📅</SortHeader>
                   <SortHeader col="bw_fetched" sort={sort} onSort={onSort} hint="Дата отримання даних BuiltWith (bw_fetched).">BW 📅</SortHeader>
+                  <SortHeader col="redirect_from" sort={sort} onSort={onSort} hint="Запитаний домен, що редіректить сюди (redirect_from). Пояснює, чому немає вихідного сайту і звідки взявся цей.">Redirect from</SortHeader>
                 </tr>
               </thead>
               <tbody>
@@ -946,6 +948,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
                     <td>{r.sw_primary_region_pct != null ? `${r.sw_primary_region_pct}%` : "—"}</td>
                     <td className="td-date">{r.sw_fetched || "—"}</td>
                     <td className="td-date">{r.bw_fetched || "—"}</td>
+                    <td title={r.redirect_from || ""}>{cell(r.redirect_from)}</td>
                   </tr>
                 ))}
               </tbody>

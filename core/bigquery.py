@@ -269,6 +269,7 @@ RESULTS_SCHEMA = [
     bigquery.SchemaField("bw_ecommerce", "STRING"),
     bigquery.SchemaField("bw_email_marketing", "STRING"),
     bigquery.SchemaField("error_detail", "STRING"),
+    bigquery.SchemaField("redirect_from", "STRING"),  # original domain if this row came via a redirect
 ]
 
 
@@ -331,6 +332,12 @@ def ensure_tables_exist():
         _ensure_or_migrate_table(bq, BQ_JOBS_TABLE, JOBS_SCHEMA, "created_by")
     except Exception as e:
         logger.error(f"jobs table migration error: {e}")
+    # Migrate analysis_results: add redirect_from (non-destructive — keep job history)
+    try:
+        bq.query(f"ALTER TABLE `{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{BQ_RESULTS_TABLE}` "
+                 f"ADD COLUMN IF NOT EXISTS redirect_from STRING").result()
+    except Exception as e:
+        logger.warning(f"analysis_results redirect_from migration: {e}")
     # Parsed tables use migration logic to add new columns on first deploy
     _ensure_or_migrate_table(bq, SW_PARSED_TABLE, _SW_PARSED_SCHEMA, "sw_engagement")
     # sentinel = "techs_compact": recreates the table if this column is absent.

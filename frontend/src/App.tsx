@@ -28,6 +28,7 @@ interface Result {
   sw_subcategory?: string; sw_description?: string; sw_title?: string
   company_name?: string; sw_primary_region?: string
   sw_primary_region_pct?: number; error_detail?: string
+  redirect_from?: string
 }
 interface Credits { similarweb?: number | null; builtwith?: number | null }
 
@@ -430,6 +431,7 @@ const COLUMNS = [
   { key: "sw_subcategory", label: "Subcategory SW", w: "160px" }, { key: "sw_description", label: "Description", w: "200px" },
   { key: "sw_title", label: "Title", w: "160px" }, { key: "company_name", label: "Company", w: "140px" },
   { key: "sw_primary_region", label: "Region", w: "80px" }, { key: "sw_primary_region_pct", label: "Region %", w: "80px" },
+  { key: "redirect_from", label: "Redirect from", w: "150px" },
 ]
 
 function ResultsPage({ jobId, onBack, can, lang }: { jobId: string; onBack: () => void; can: (p: string) => boolean; lang: Lang }) {

@@ -43,6 +43,7 @@ PROFILE_COLUMNS = [
     "ems_list", "ai_category", "ai_is_ecommerce", "ai_industry",
     "sw_category", "sw_subcategory", "sw_title",
     "company_name", "sw_primary_region", "sw_primary_region_pct",
+    "redirect_from",
 ]
 
 # Full column list including description — used only in detail/export endpoints
@@ -308,7 +309,8 @@ def explore_search(body: dict):
                 ems_list, ai_category, ai_is_ecommerce, ai_industry,
                 bw_vertical, sw_category, sw_subcategory,
                 sw_description, sw_title, company_name,
-                {_region_expr()} AS sw_primary_region, sw_primary_region_pct
+                {_region_expr()} AS sw_primary_region, sw_primary_region_pct,
+                redirect_from
                 FROM `{table_ref(PROFILES_TABLE)}` {where}
                 ORDER BY sw_visits DESC NULLS LAST
                 LIMIT {limit} OFFSET {offset}""",
