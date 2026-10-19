@@ -486,7 +486,8 @@ def sync_domain_profiles() -> dict:
             ai_job = our.query(f"""
                 SELECT domain, ai_category, ai_is_ecommerce, ai_industry, ai_region
                 FROM {ai_priv_table}
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain
+                    ORDER BY fetched_at DESC, CASE WHEN COALESCE(ai_region,'')!='' THEN 0 ELSE 1 END) = 1
             """, job_config=_bq_qcfg(max_bytes=False))
             with _bq_op("priv_r"):
                 for r in ai_job.result():
@@ -709,7 +710,8 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
                 SELECT domain, ai_category, ai_is_ecommerce, ai_industry, ai_region
                 FROM {ai_priv_table}
                 WHERE {in_clause}
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain
+                    ORDER BY fetched_at DESC, CASE WHEN COALESCE(ai_region,'')!='' THEN 0 ELSE 1 END) = 1
             """).result():
                 key = normalize_domain(r["domain"])
                 if key:
