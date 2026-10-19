@@ -1,21 +1,20 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react"
-import Dashboard, { TRAFFIC_GROUPS } from "./Dashboard"
+import Dashboard from "./Dashboard"
 import { t, type Lang } from "./i18n"
 import { useSort, SortHeader, regionLabel, ecomEN } from "./ui"
 
 const API = ""
 
-// Sortable traffic-rank label — mirrors traffic_rank() in services/sheets_export.py
-function trafficRank(visits?: number): string {
-  const n = Number(visits) || 0
-  if (n <= 0)          return ""
-  if (n > 1_000_000)   return "a.1M+"
-  if (n > 200_000)     return "b.200k+"
-  if (n > 100_000)     return "c.100k+"
-  if (n > 50_000)      return "d.50k+"
-  if (n > 30_000)      return "e.30k+"
-  if (n > 10_000)      return "f.Small"
-  return "g.micro"
+// Company-standard traffic bucket — mirrors services/traffic_buckets.py
+// (0/NULL → Unknown; thresholds inclusive). Labels must match char-for-char.
+function trafficBucket(visits?: number): string {
+  const n = Number(visits)
+  if (!visits || isNaN(n) || n <= 0) return "Unknown"
+  if (n >= 2_500_000) return "05 VIP >2.5M"
+  if (n >= 150_000)   return "04 Large >150k"
+  if (n >= 25_000)    return "03 Medium >25k"
+  if (n >= 10_000)    return "02 Small >10k"
+  return "01 Micro <10k"
 }
 
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -38,6 +37,7 @@ type FilterState = {
   domain: TextFilter; cms_list: MultiFilter
   osearch: MultiFilter; ems_list: MultiFilter; ai_category: MultiFilter
   ai_is_ecommerce: MultiFilter; sw_category: MultiFilter; sw_primary_region: MultiFilter
+  traffic_bucket: MultiFilter
   sw_visits: NumFilter; sw_primary_region_pct: NumFilter
 }
 
@@ -48,10 +48,11 @@ const defaultFilters = (): FilterState => ({
   domain: defaultText(), cms_list: defaultMulti(),
   osearch: defaultMulti(), ems_list: defaultMulti(), ai_category: defaultMulti(),
   ai_is_ecommerce: defaultMulti(), sw_category: defaultMulti(), sw_primary_region: defaultMulti(),
+  traffic_bucket: defaultMulti(),
   sw_visits: defaultNum(), sw_primary_region_pct: defaultNum(),
 })
 
-const MULTI_FIELDS = ["cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","sw_category","sw_primary_region"]
+const MULTI_FIELDS = ["cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","sw_category","sw_primary_region","traffic_bucket"]
 
 interface ExploreResult {
   domain: string; sw_visits?: number; cms_list?: string; wcms_name?: string
@@ -60,6 +61,7 @@ interface ExploreResult {
   sw_description?: string; sw_title?: string; company_name?: string
   sw_primary_region?: string; sw_primary_region_pct?: number
   redirect_from?: string                     // original domain that redirects here (if any)
+  traffic_bucket?: string                    // company-standard bucket from sw_visits
   sw_fetched?: string; bw_fetched?: string   // freshness dates, UI-only (not exported)
 }
 
@@ -468,6 +470,7 @@ function FilterPanel({ filters, fieldValues, onChange, onInstant, onReset, onSea
   const sections = [
     { key: "domain",                 label: "Domain",      type: "domain" },
     { key: "sw_visits",              label: "Traffic",     type: "num"    },
+    { key: "traffic_bucket",         label: "Traffic bucket", type: "multi" },
     { key: "cms_list",               label: "CMS",         type: "multi"  },
     { key: "osearch",                label: "oSearch",     type: "multi"  },
     { key: "ems_list",               label: "EMS",         type: "multi"  },
@@ -682,9 +685,9 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
 
   // ── Export ─────────────────────────────────────────────────────────────────
   const exportCSV = () => {
-    const cols = ["domain","sw_visits","traffic_rank","cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name","redirect_from"]
+    const cols = ["domain","sw_visits","traffic_bucket","cms_list","osearch","ems_list","ai_category","ai_is_ecommerce","ai_industry","sw_category","sw_subcategory","sw_primary_region","sw_primary_region_pct","sw_description","sw_title","company_name","redirect_from"]
     const rows = filteredProfiles.map(r => cols.map(h => {
-      const v = h === "traffic_rank" ? trafficRank((r as any).sw_visits) : (r as any)[h]
+      const v = h === "traffic_bucket" ? ((r as any).traffic_bucket || trafficBucket((r as any).sw_visits)) : (r as any)[h]
       return v != null && v !== "" ? `"${String(v).replace(/"/g, '""')}"` : ""
     }).join(","))
     const csv = [cols.join(","), ...rows].join("\n")
@@ -748,22 +751,7 @@ export default function ExplorerPage({ onNavigateToJobs, onFilteredDomainsChange
   // ── Dashboard → filter click (instant, in-memory) ─────────────────────────
   const handleDashboardFilter = useCallback((field: string, label: string) => {
     const next = { ...filters }
-    if (field === "sw_visits") {
-      if (label === t('expl_empty_val', lang)) return
-      const group = TRAFFIC_GROUPS.find(g => g.label === label)
-      if (!group) return
-      const idx = TRAFFIC_GROUPS.indexOf(group)
-      const nextGroup = TRAFFIC_GROUPS[idx - 1]
-      const target = label === "Nano <10k"
-        ? { type: "lt" as const, value: "10000", min: "", max: "" }
-        : !nextGroup
-          ? { type: "gt" as const, value: String(group.min), min: "", max: "" }
-          : { type: "between" as const, value: "", min: String(group.min), max: String(nextGroup.min) }
-      // Toggle: clicking the already-selected traffic group clears it back to "all"
-      const curV = next.sw_visits
-      const same = curV.type === target.type && curV.value === target.value && curV.min === target.min && curV.max === target.max
-      next.sw_visits = same ? defaultNum() : target
-    } else if (label === t('expl_empty_val', lang)) {
+    if (label === t('expl_empty_val', lang)) {
       // Toggle the "empty" filter: second click on (empty) clears it (like named segments)
       const cur = next[field as keyof FilterState] as MultiFilter
       next[field as keyof FilterState] = cur.type === "empty"

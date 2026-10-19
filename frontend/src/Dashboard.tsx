@@ -12,23 +12,31 @@ import {
 interface Profile {
   domain: string; sw_visits?: number; sw_category?: string; sw_subcategory?: string
   sw_primary_region?: string; cms_list?: string; ems_list?: string; osearch?: string
+  traffic_bucket?: string
 }
 
+// Company-standard traffic buckets (es_analysis.market_analysis, since 2026-09-03).
+// Labels must match services/traffic_buckets.py char-for-char. Display order: big→small.
 export const TRAFFIC_GROUPS = [
-  { label: "SuperVIP >25M", min: 25_000_000, color: "#6366f1" },
-  { label: "VIP >5M",       min: 5_000_000,  color: "#818cf8" },
-  { label: "Large >2.5M",   min: 2_500_000,  color: "#22c55e" },
-  { label: "Medium >200k",  min: 200_000,    color: "#4ade80" },
-  { label: "Small >100k",   min: 100_000,    color: "#fbbf24" },
-  { label: "Micro >10k",    min: 10_000,     color: "#fb923c" },
-  { label: "Nano <10k",     min: 0,          color: "#f87171" },
+  { label: "05 VIP >2.5M",   color: "#6366f1" },
+  { label: "04 Large >150k", color: "#22c55e" },
+  { label: "03 Medium >25k", color: "#4ade80" },
+  { label: "02 Small >10k",  color: "#fbbf24" },
+  { label: "01 Micro <10k",  color: "#fb923c" },
+  { label: "Unknown",        color: "#94a3b8" },
 ]
 const COLORS = ["#6366f1","#22c55e","#fbbf24","#f87171","#60a5fa","#a78bfa","#34d399","#fb923c","#f472b6","#94a3b8"]
 
-function getGroup(v?: number) {
-  if (!v || v <= 0) return "Nano <10k"
-  for (const g of TRAFFIC_GROUPS) if (v >= g.min) return g.label
-  return "Nano <10k"
+// Prefer the stored bucket; fall back to computing from sw_visits (same rule).
+function getGroup(p: Profile): string {
+  if (p.traffic_bucket) return p.traffic_bucket
+  const v = p.sw_visits
+  if (!v || v <= 0)   return "Unknown"
+  if (v >= 2_500_000) return "05 VIP >2.5M"
+  if (v >= 150_000)   return "04 Large >150k"
+  if (v >= 25_000)    return "03 Medium >25k"
+  if (v >= 10_000)    return "02 Small >10k"
+  return "01 Micro <10k"
 }
 
 function flag(code: string) {
@@ -541,7 +549,7 @@ export default function Dashboard({ profiles, onFilter, lang }: { profiles: Prof
     let noRegion = 0
 
     for (const p of profiles) {
-      const g = getGroup(p.sw_visits)
+      const g = getGroup(p)
       trafficMap.set(g, (trafficMap.get(g) || 0) + 1)
       if (p.sw_primary_region) countryMap.set(p.sw_primary_region, (countryMap.get(p.sw_primary_region) || 0) + 1)
       else noRegion++
@@ -576,7 +584,7 @@ export default function Dashboard({ profiles, onFilter, lang }: { profiles: Prof
   return (
     <div>
       <div className="dashboard dashboard-4">
-        <Donut data={charts.trafficData} title="Traffic Groups" field="sw_visits"   onFilter={onFilter} lang={lang} />
+        <Donut data={charts.trafficData} title="Traffic Groups" field="traffic_bucket" onFilter={onFilter} lang={lang} />
         <Donut data={charts.cmsData}     title="CMS"            field="cms_list"    onFilter={onFilter} lang={lang} />
         <Donut data={charts.emsData}     title="EMS"            field="ems_list"    onFilter={onFilter} lang={lang} />
         <Donut data={charts.searchData}  title="Onsite Search"  field="osearch"     onFilter={onFilter} lang={lang} />

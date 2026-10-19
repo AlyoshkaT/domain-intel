@@ -15,6 +15,7 @@ from google.cloud import bigquery
 
 from core.bigquery import client, corp_client, table_ref, _bq_op, track_bq_call, _bq_qcfg, _bq_touch
 from config.settings import CORP_PROJECT_ID, CORP_DATASET, GCP_PROJECT_ID, BIGQUERY_DATASET
+from services.traffic_buckets import traffic_bucket as _tb, bucket_sql as _bucket_sql
 
 # How many domains to keep in each parsed-data dict at any moment.
 # Lower = less peak RAM, but the dicts are already small (parsed, not raw JSON).
@@ -49,6 +50,7 @@ PROFILES_SCHEMA = [
     bigquery.SchemaField("derived_region",        "STRING"),  # ISO-2, or NULL
     bigquery.SchemaField("derived_region_source", "STRING"),  # cctld | ai | whois (internal/audit only)
     bigquery.SchemaField("redirect_from",         "STRING"),  # original domain that redirects here (if any)
+    bigquery.SchemaField("traffic_bucket",        "STRING"),  # company-standard bucket from sw_visits
 ]
 
 _sync_status = {
@@ -192,7 +194,7 @@ _PROFILE_SCHEMA = {"domain","updated_at","sw_visits","sw_category","sw_subcatego
                    "sw_description","sw_title","sw_primary_region","sw_primary_region_pct",
                    "company_name","cms_list","osearch","osearch_group","ems_list",
                    "bw_vertical","ai_category","ai_is_ecommerce","ai_industry",
-                   "derived_region","derived_region_source","redirect_from"}
+                   "derived_region","derived_region_source","redirect_from","traffic_bucket"}
 
 _SEP_TECH = "\x02"   # separator between tech entries in compact BW string
 _SEP_FIELD = "\x01"  # separator between name and lastDetected
@@ -368,6 +370,7 @@ def _assemble_profile(domain: str, sw: dict, bw: dict,
         "derived_region":        derived_region or None,
         "derived_region_source": derived_region_source or None,
         "redirect_from":         redirect_from or None,
+        "traffic_bucket":        _tb(sw.get("sw_visits")),
     }.items() if k in _PROFILE_SCHEMA}
 
 
@@ -856,7 +859,8 @@ def sync_profiles_from_job_results(job_id: str) -> dict:
                     NULLIF(TRIM(COALESCE(ai_category, '')), '')         AS ai_category,
                     NULLIF(TRIM(COALESCE(ai_is_ecommerce, '')), '')     AS ai_is_ecommerce,
                     NULLIF(TRIM(COALESCE(ai_industry, '')), '')         AS ai_industry,
-                    NULLIF(TRIM(COALESCE(redirect_from, '')), '')       AS redirect_from
+                    NULLIF(TRIM(COALESCE(redirect_from, '')), '')       AS redirect_from,
+                    {_bucket_sql('sw_visits')}                          AS traffic_bucket
                 FROM {results_full}
                 WHERE job_id = @job_id AND status != 'error'
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY processed_at DESC) = 1
@@ -883,17 +887,18 @@ def sync_profiles_from_job_results(job_id: str) -> dict:
                 -- Reconciliation: once SW provides a region, drop the derived fallback.
                 derived_region        = IF(S.sw_primary_region IS NOT NULL, NULL, T.derived_region),
                 derived_region_source = IF(S.sw_primary_region IS NOT NULL, NULL, T.derived_region_source),
-                redirect_from         = COALESCE(S.redirect_from,         T.redirect_from)
+                redirect_from         = COALESCE(S.redirect_from,         T.redirect_from),
+                traffic_bucket        = S.traffic_bucket
             WHEN NOT MATCHED THEN INSERT (
                 domain, updated_at, sw_visits, sw_category, sw_subcategory,
                 sw_description, sw_title, sw_primary_region, sw_primary_region_pct,
                 company_name, cms_list, osearch, osearch_group, ems_list,
-                bw_vertical, ai_category, ai_is_ecommerce, ai_industry, redirect_from
+                bw_vertical, ai_category, ai_is_ecommerce, ai_industry, redirect_from, traffic_bucket
             ) VALUES (
                 S.domain, S.updated_at, S.sw_visits, S.sw_category, S.sw_subcategory,
                 S.sw_description, S.sw_title, S.sw_primary_region, S.sw_primary_region_pct,
                 S.company_name, S.cms_list, S.osearch, S.osearch_group, S.ems_list,
-                S.bw_vertical, S.ai_category, S.ai_is_ecommerce, S.ai_industry, S.redirect_from
+                S.bw_vertical, S.ai_category, S.ai_is_ecommerce, S.ai_industry, S.redirect_from, S.traffic_bucket
             )
         """, job_config=bigquery.QueryJobConfig(query_parameters=[
             bigquery.ScalarQueryParameter("job_id", "STRING", job_id)

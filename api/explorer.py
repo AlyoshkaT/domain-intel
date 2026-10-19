@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/explore", dependencies=[require_permission("expl
 PROFILES_TABLE = "domain_profiles"
 FILTERABLE_FIELDS = [
     "domain","cms_list","osearch","ems_list",
-    "ai_category","ai_is_ecommerce","sw_category","sw_primary_region",
+    "ai_category","ai_is_ecommerce","sw_category","sw_primary_region","traffic_bucket",
 ]
 
 # Cache for field values (lightweight)
@@ -43,7 +43,7 @@ PROFILE_COLUMNS = [
     "ems_list", "ai_category", "ai_is_ecommerce", "ai_industry",
     "sw_category", "sw_subcategory", "sw_title",
     "company_name", "sw_primary_region", "sw_primary_region_pct",
-    "redirect_from",
+    "redirect_from", "traffic_bucket",
 ]
 
 # Full column list including description — used only in detail/export endpoints
@@ -66,7 +66,7 @@ _ALLOWED_FILTER_FIELDS = {
     "sw_title", "sw_primary_region", "sw_primary_region_pct", "company_name",
     "cms_list", "osearch", "osearch_group", "ems_list", "bw_vertical",
     "ai_category", "ai_is_ecommerce", "ai_industry",
-    "derived_region", "derived_region_source",
+    "derived_region", "derived_region_source", "traffic_bucket",
 }
 
 
@@ -310,7 +310,7 @@ def explore_search(body: dict):
                 bw_vertical, sw_category, sw_subcategory,
                 sw_description, sw_title, company_name,
                 {_region_expr()} AS sw_primary_region, sw_primary_region_pct,
-                redirect_from
+                redirect_from, traffic_bucket
                 FROM `{table_ref(PROFILES_TABLE)}` {where}
                 ORDER BY sw_visits DESC NULLS LAST
                 LIMIT {limit} OFFSET {offset}""",
@@ -413,13 +413,16 @@ async def explore_export_xlsx(request: Request, body: dict):
     except Exception:
         pass
     df = pd.DataFrame(results)
-    # Insert Traffic_Rank right after the Traffic (sw_visits) column
-    from services.sheets_export import traffic_rank
-    ranks = [traffic_rank(r.get("sw_visits")) for r in results]
+    # Insert Traffic_Bucket (company scale) right after the Traffic (sw_visits) column.
+    # Prefer the stored bucket; recompute from sw_visits if a row lacks it.
+    from services.traffic_buckets import traffic_bucket
+    buckets = [r.get("traffic_bucket") or traffic_bucket(r.get("sw_visits")) for r in results]
+    if "traffic_bucket" in df.columns:
+        df = df.drop(columns=["traffic_bucket"])
     if "sw_visits" in df.columns:
-        df.insert(df.columns.get_loc("sw_visits") + 1, "traffic_rank", ranks)
+        df.insert(df.columns.get_loc("sw_visits") + 1, "Traffic_Bucket", buckets)
     else:
-        df["traffic_rank"] = ranks
+        df["Traffic_Bucket"] = buckets
     stream = io.BytesIO()
     with pd.ExcelWriter(stream, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Explorer")

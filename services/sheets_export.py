@@ -20,20 +20,13 @@ from services.sheets_client import sheets_client
 
 logger = logging.getLogger(__name__)
 
+from services.traffic_buckets import traffic_bucket, BUCKET_ORDER
+
+
 def traffic_rank(visits) -> str:
-    """Categorise sw_visits into a sortable rank label (mirrors the Sheets IFs formula)."""
-    try:
-        v = int(visits or 0)
-    except (TypeError, ValueError):
-        return ""
-    if v <= 0:        return ""
-    if v > 1_000_000: return "a.1M+"
-    if v > 200_000:   return "b.200k+"
-    if v > 100_000:   return "c.100k+"
-    if v > 50_000:    return "d.50k+"
-    if v > 30_000:    return "e.30k+"
-    if v > 10_000:    return "f.Small"
-    return "g.micro"
+    """Company-standard traffic bucket from sw_visits (see services/traffic_buckets.py).
+    Kept under this name for callers in this module."""
+    return traffic_bucket(visits)
 
 
 # Column definitions: (result_key, header_label)
@@ -41,7 +34,7 @@ def traffic_rank(visits) -> str:
 EXPORT_COLUMNS = [
     ("domain",               "Domain"),
     ("sw_visits",            "Traffic"),
-    ("_traffic_rank",        "Traffic_Rank"),      # computed from sw_visits
+    ("_traffic_bucket",      "Traffic_Bucket"),    # computed from sw_visits (company scale)
     ("cms_list",             "CMS"),
     ("osearch_group",        "oSearch Group"),
     ("osearch",              "oSearch"),
@@ -64,7 +57,7 @@ EXPORT_COLUMNS = [
 
 # ── Analytics pivot helpers ────────────────────────────────────────────────────
 
-RANK_COLS = ["a.1M+", "b.200k+", "c.100k+", "d.50k+", "e.30k+", "f.Small", "g.micro"]
+RANK_COLS = list(BUCKET_ORDER)   # company buckets: 01 Micro … 05 VIP, Unknown
 
 # 4 pivot dimensions shown in the Analytics sheet
 ANALYTICS_PIVOTS = [
@@ -153,7 +146,7 @@ def _create_pivot_tables(sh, sheet_id: str,
     """
     col_idx    = {label: i for i, (_, label) in enumerate(EXPORT_COLUMNS)}
     domain_col = col_idx.get("Domain", 0)
-    rank_col   = col_idx.get("Traffic_Rank", 2)
+    rank_col   = col_idx.get("Traffic_Bucket", 2)
     end_col    = n_cols if n_cols is not None else len(EXPORT_COLUMNS)
 
     source = {
@@ -174,7 +167,7 @@ def _create_pivot_tables(sh, sheet_id: str,
 
     BLOCK_COLS  = 12   # 10 pivot cols + 2 gap
     PIVOT_ROW   = 2    # 0-based row index (A3 in Sheets) — rows 0,1 reserved for headers
-    RANK_COUNT  = 7    # a.1M+ … g.micro
+    RANK_COUNT  = len(RANK_COLS)   # company buckets (01 Micro … 05 VIP, Unknown)
 
     # ── Step 1: expand Analytics sheet columns ────────────────────────────────
     # A new sheet has only 26 columns (A–Z). Our pivots need columns up to AT (col 45).
@@ -244,8 +237,8 @@ def _create_pivot_tables(sh, sheet_id: str,
     # Each pivot counts only domains with a NON-EMPTY value for its dimension,
     # so Grand Totals differ per pivot (e.g. EMS=1265, CMS=1264, ...).
     # Formula: COUNTIFS(rank_col, rank_val, dim_col, "<>") — matches pivot exactly.
-    RANK_VALUES = ["a.1M+", "b.200k+", "c.100k+", "d.50k+", "e.30k+", "f.Small", "g.micro"]
-    rank_col_letter = _col_letter(rank_col)   # "C" — Traffic_Rank at col index 2
+    RANK_VALUES = list(RANK_COLS)
+    rank_col_letter = _col_letter(rank_col)   # "C" — Traffic_Bucket at col index 2
     safe_name = data_tab_name.replace("'", "''")
 
     formula_data = []
@@ -280,8 +273,8 @@ def _create_pivot_tables(sh, sheet_id: str,
 
 def _cell_value(row: dict, key: str):
     """Resolve a column key to a cell value, handling computed fields."""
-    if key == "_traffic_rank":
-        return traffic_rank(row.get("sw_visits"))
+    if key == "_traffic_bucket":
+        return row.get("traffic_bucket") or traffic_rank(row.get("sw_visits"))
     val = row.get(key)
     if val is None:
         return ""
