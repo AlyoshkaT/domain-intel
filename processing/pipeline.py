@@ -13,8 +13,7 @@ from core.bigquery import get_cached, get_sw_parsed, get_bw_parsed, save_bw_pars
 from services.similarweb import fetch_similarweb, parse_similarweb
 from services.builtwith import fetch_builtwith, parse_builtwith
 from services.claude_ai import (
-    classify_domain, fetch_homepage_text,
-    get_corp_ai_cached, save_corp_ai_result, _make_input_hash
+    classify_domain, fetch_homepage_text, get_corp_ai_cached,
 )
 from services.technology_catalog import get_catalog, match_technologies
 from services.redirect_resolver import resolve_domain
@@ -341,7 +340,6 @@ async def process_domain(
         elif "ai" in services:
             async with api_slot("ai", priority):
                 homepage_text = await fetch_homepage_text(working_domain)
-                input_hash = _make_input_hash(working_domain, result.get("sw_title") or "", result.get("sw_description") or "")
                 ai_result = await classify_domain(
                     domain=working_domain,
                     sw_title=result.get("sw_title") or "",
@@ -355,8 +353,9 @@ async def process_domain(
                 result["ai_category"]     = ai_result.get("ai_category")
                 result["ai_is_ecommerce"] = ai_result.get("ai_is_ecommerce")
                 result["ai_industry"]     = ai_result.get("ai_industry")
-                asyncio.create_task(asyncio.to_thread(save_corp_ai_result, working_domain, ai_result, input_hash))
-                # Mirror into privateBQ ai_parsed so profile syncs never need corpBQ for fresh results
+                # NOTE: we intentionally do NOT write to corp claude_responses (owner's
+                # classifier cache — our rows polluted their reports). Store only in
+                # our private ai_parsed below.
                 from core.bigquery import save_ai_parsed
                 asyncio.create_task(asyncio.to_thread(save_ai_parsed, working_domain, {
                     "ai_category":     ai_result.get("ai_category", ""),

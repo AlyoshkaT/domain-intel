@@ -21,7 +21,6 @@ from config.settings import ANTHROPIC_API_KEY
 from core.bigquery import client, table_ref
 from services.claude_ai import (
     AI_MODEL, AI_MAX_TOKENS, build_classification_prompt, parse_classification_text,
-    save_corp_ai_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -169,7 +168,7 @@ def apply_batch(batch_id: str) -> dict:
             err += 1
             continue
         try:
-            save_corp_ai_result(domain, parsed)
+            # Do NOT write to corp claude_responses (owner's cache). Private only.
             from core.bigquery import save_ai_parsed
             save_ai_parsed(domain, {
                 "ai_category": parsed["ai_category"],

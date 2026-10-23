@@ -110,41 +110,15 @@ def get_corp_ai_cached(domain: str) -> Optional[dict]:
 
 
 def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):
-    """Append AI result to claude_responses."""
-    from core.bigquery import corp_client, _bq_touch
-    _bq_touch("corp_w")
-    from datetime import datetime, timezone
-    bq = corp_client()
+    """DISABLED — DO NOT write to corp claude_responses.
 
-    is_ecom = result.get("ai_is_ecommerce", "")
-    is_ecom_bool = is_ecom.lower() in ("так", "yes", "true", "1") if isinstance(is_ecom, str) else bool(is_ecom)
-
-    # response_json column is BQ JSON type — pass as dict, BQ client serialises it
-    response_json = {
-        "category":            result.get("ai_category", "other"),
-        "subcategory":         result.get("ai_industry", "other"),
-        "is_ecommerce":        is_ecom_bool,
-        "region":              (result.get("ai_region") or "").strip().upper(),
-        "category_reasoning":  result.get("ai_category_reasoning", ""),
-        "ecommerce_reasoning": result.get("ai_ecommerce_reasoning", ""),
-    }
-
-    row = {
-        "domain":        domain,
-        "fetched_at":    datetime.now(timezone.utc).isoformat(),
-        "response_json": json.dumps(response_json),   # insert_rows_json needs string for JSON columns
-        "input_hash":    input_hash or _make_input_hash(domain, "", ""),
-    }
-
-    try:
-        from core.bigquery import BQ_OP_TIMEOUT
-        errors = bq.insert_rows_json(CORP_AI_TABLE_ID, [row], timeout=BQ_OP_TIMEOUT)
-        if errors:
-            logger.error(f"Corp AI save error ({domain}): {errors}")
-        else:
-            logger.info(f"Corp AI saved: {domain}")
-    except Exception as e:
-        logger.error(f"Corp AI save exception ({domain}): {e}")
+    claude_responses is the OWNER's classifier cache that feeds their market_analysis
+    reports. Our rows polluted it (incident 2026-10-17: backfill overrode their
+    categories for ~150 domains). We now keep AI results ONLY in our private
+    ai_parsed. This is a no-op kept so existing callers don't break.
+    See memory: feedback_corp_bq_readonly / never write claude_responses.
+    """
+    return
 
 
 AI_MODEL = "claude-haiku-5-5"
