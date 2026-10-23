@@ -168,13 +168,15 @@ def apply_batch(batch_id: str) -> dict:
             err += 1
             continue
         try:
-            # Do NOT write to corp claude_responses (owner's cache). Private only.
+            # Region from the batch; category from the owner's view (cached). Private only.
             from core.bigquery import save_ai_parsed
+            from services.claude_ai import get_corp_ai_cached
+            catrow = get_corp_ai_cached(domain) or {}
             save_ai_parsed(domain, {
-                "ai_category": parsed["ai_category"],
-                "ai_is_ecommerce": parsed["ai_is_ecommerce"],
-                "ai_industry": parsed["ai_industry"],
-                "ai_region": parsed.get("ai_region", "")})
+                "ai_category":     catrow.get("ai_category", ""),
+                "ai_is_ecommerce": catrow.get("ai_is_ecommerce", ""),
+                "ai_industry":     catrow.get("ai_industry", ""),
+                "ai_region":       parsed.get("ai_region", "")})
             ok += 1
         except Exception:
             logger.exception(f"apply_batch save failed for {domain}")

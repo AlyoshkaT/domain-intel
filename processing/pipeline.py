@@ -313,56 +313,44 @@ async def process_domain(
         if bw_want:
             await asyncio.sleep(DELAY_BETWEEN_API_CALLS / 1000)
 
-        # ── Claude AI — read corpBQ cache, write to corpBQ ────────────────────
-        # Read from cache unless force_refresh AND ai is selected.
-        # Non-selected AI always enriches from cache.
-        ai_cached = None
-        if not (force_refresh and "ai" in services):
-            ai_cached = get_corp_ai_cached(working_domain)
+        # ── Category: ALWAYS from the owner's v2 view (authoritative). We no longer
+        #    classify categories ourselves and never write to corp claude_responses. ──
+        cat = get_corp_ai_cached(working_domain) or {}
+        if cat:
+            result["ai_category"]     = cat.get("ai_category")
+            result["ai_is_ecommerce"] = cat.get("ai_is_ecommerce")
+            result["ai_industry"]     = cat.get("ai_industry")
 
-        if ai_cached:
-            result["ai_category"]     = ai_cached.get("ai_category")
-            result["ai_is_ecommerce"] = ai_cached.get("ai_is_ecommerce")
-            result["ai_industry"]     = ai_cached.get("ai_industry")
-        elif "ai" in services and ai_mode == "safe":
-            # Safe/thrifty mode: don't classify live. Emit a batch item so the job
-            # can submit all AI requests to the Batch API (−50%, async).
-            homepage_text = await fetch_homepage_text(working_domain)
-            result["_ai_batch_item"] = {
-                "domain": working_domain,
-                "sw_title": result.get("sw_title") or "",
-                "sw_description": result.get("sw_description") or "",
-                "sw_category": result.get("sw_category") or "",
-                "bw_cms": result.get("cms_list") or "",
-                "bw_ecommerce": result.get("bw_ecommerce") or "",
-                "homepage_text": homepage_text,
-            }
-        elif "ai" in services:
-            async with api_slot("ai", priority):
+        # ── Region: OUR own detection from the homepage (owner doesn't provide it). ──
+        if "ai" in services:
+            if ai_mode == "safe":
+                # Safe mode: emit a batch item; region is detected via the Batch API.
                 homepage_text = await fetch_homepage_text(working_domain)
-                ai_result = await classify_domain(
-                    domain=working_domain,
-                    sw_title=result.get("sw_title") or "",
-                    sw_description=result.get("sw_description") or "",
-                    sw_category=result.get("sw_category") or "",
-                    bw_cms=result.get("cms_list") or "",
-                    bw_ecommerce=result.get("bw_ecommerce") or "",
-                    homepage_text=homepage_text,
-                )
-            if ai_result:
-                result["ai_category"]     = ai_result.get("ai_category")
-                result["ai_is_ecommerce"] = ai_result.get("ai_is_ecommerce")
-                result["ai_industry"]     = ai_result.get("ai_industry")
-                # NOTE: we intentionally do NOT write to corp claude_responses (owner's
-                # classifier cache — our rows polluted their reports). Store only in
-                # our private ai_parsed below.
-                from core.bigquery import save_ai_parsed
-                asyncio.create_task(asyncio.to_thread(save_ai_parsed, working_domain, {
-                    "ai_category":     ai_result.get("ai_category", ""),
-                    "ai_is_ecommerce": ai_result.get("ai_is_ecommerce", ""),
-                    "ai_industry":     ai_result.get("ai_industry", ""),
-                    "ai_region":       ai_result.get("ai_region", ""),
-                }))
+                result["_ai_batch_item"] = {
+                    "domain": working_domain,
+                    "sw_title": result.get("sw_title") or "",
+                    "sw_description": result.get("sw_description") or "",
+                    "homepage_text": homepage_text,
+                }
+            else:
+                async with api_slot("ai", priority):
+                    homepage_text = await fetch_homepage_text(working_domain)
+                    ai_result = await classify_domain(
+                        domain=working_domain,
+                        sw_title=result.get("sw_title") or "",
+                        sw_description=result.get("sw_description") or "",
+                        homepage_text=homepage_text,
+                    )
+                if ai_result:
+                    # Store region in our private ai_parsed, carrying the view category
+                    # so a region-only write never blanks the category.
+                    from core.bigquery import save_ai_parsed
+                    asyncio.create_task(asyncio.to_thread(save_ai_parsed, working_domain, {
+                        "ai_category":     result.get("ai_category") or "",
+                        "ai_is_ecommerce": result.get("ai_is_ecommerce") or "",
+                        "ai_industry":     result.get("ai_industry") or "",
+                        "ai_region":       ai_result.get("ai_region", ""),
+                    }))
 
     except Exception as e:
         logger.error(f"Pipeline error for {domain}: {e}")

@@ -128,42 +128,31 @@ AI_MAX_TOKENS = 300
 def build_classification_prompt(domain: str, sw_title: str = "", sw_description: str = "",
                                 sw_category: str = "", bw_cms: str = "", bw_ecommerce: str = "",
                                 homepage_text: str = "") -> str:
-    """Build the classification prompt — shared by the live and Batch-API paths."""
-    cats_str = ", ".join(CATEGORIES)
-    subs_str = ", ".join(SUBCATEGORIES)
+    """Build the REGION-detection prompt (shared by live + Batch-API paths).
+
+    Categories now come from the owner's classifier (view / their API), so we only
+    infer the audience REGION here. The sw_category/bw_* params are kept for call-site
+    compatibility but no longer used."""
     context_parts = []
     if sw_title:       context_parts.append(f"Title: {sw_title}")
     if sw_description: context_parts.append(f"Description: {sw_description[:300]}")
-    if sw_category:    context_parts.append(f"SW category: {sw_category}")
-    if bw_cms:         context_parts.append(f"CMS: {bw_cms}")
-    if bw_ecommerce:   context_parts.append(f"E-commerce platform: {bw_ecommerce}")
-    if homepage_text:  context_parts.append(f"Homepage text:\n{homepage_text[:1000]}")
+    if homepage_text:  context_parts.append(f"Homepage text:\n{homepage_text[:1200]}")
     context = "\n".join(context_parts) or f"Domain: {domain}"
-    return f"""Classify this website. Domain: {domain}
+    return f"""Determine the PRIMARY target-market country of this website. Domain: {domain}
 
 {context}
 
-For "region": the ISO 3166-1 alpha-2 country code (UPPERCASE, e.g. UA, DE, PL) of
-the site's PRIMARY target market. Infer it ONLY from geo-stable signals that do not
-change with the visitor's location: phone country code (+380→UA, +49→DE), currency
-and prices (₴/грн→UA, zł→PL), physical address or postal code, and shipping/delivery
-country mentions. Do NOT use the interface language — many sites switch language
-based on the visitor's IP, so language is unreliable. If none of these signals are
-present, return "" (empty string). Never guess from the TLD.
+Return the ISO 3166-1 alpha-2 country code (UPPERCASE, e.g. UA, DE, PL), inferred ONLY
+from geo-stable signals that do NOT change with the visitor's location: phone country
+code (+380→UA, +49→DE), currency/prices (₴/грн→UA, zł→PL), physical address or postal
+code, shipping/delivery-country mentions. Do NOT use the interface language (it switches
+by visitor IP). If no such signal is present, return "". Never guess from the TLD.
 
-Respond ONLY with JSON (no markdown):
-{{
-  "category": "<one of: {cats_str}>",
-  "subcategory": "<one of: {subs_str}>",
-  "is_ecommerce": true or false,
-  "region": "<ISO-2 code or empty string>",
-  "category_reasoning": "<1 sentence>",
-  "ecommerce_reasoning": "<1 sentence>"
-}}"""
+Respond ONLY with JSON (no markdown): {{"region": "<ISO-2 code or empty string>"}}"""
 
 
 def parse_classification_text(text: str) -> Optional[dict]:
-    """Parse a model JSON reply into our ai_* fields — shared by live + batch."""
+    """Parse the region JSON reply → {ai_region}. (Categories come from the owner.)"""
     text = text.strip()
     if text.startswith("```"):
         text = text.split("```")[1]
@@ -173,15 +162,7 @@ def parse_classification_text(text: str) -> Optional[dict]:
         parsed = json.loads(text.strip())
     except json.JSONDecodeError:
         return None
-    is_ecom = parsed.get("is_ecommerce", False)
-    return {
-        "ai_category":            parsed.get("category", "other"),
-        "ai_is_ecommerce":        "Yes" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "No",
-        "ai_industry":            parsed.get("subcategory", "other"),
-        "ai_region":              (parsed.get("region") or "").strip().upper(),
-        "ai_category_reasoning":  parsed.get("category_reasoning", ""),
-        "ai_ecommerce_reasoning": parsed.get("ecommerce_reasoning", ""),
-    }
+    return {"ai_region": (parsed.get("region") or "").strip().upper()}
 
 
 async def classify_domain(
@@ -231,15 +212,8 @@ async def classify_domain(
             text = text.strip()
 
             parsed = json.loads(text)
-            is_ecom = parsed.get("is_ecommerce", False)
-            return {
-                "ai_category":              parsed.get("category", "other"),
-                "ai_is_ecommerce":          "Yes" if is_ecom is True or str(is_ecom).lower() in ("true", "1", "yes") else "No",
-                "ai_industry":              parsed.get("subcategory", "other"),
-                "ai_region":                (parsed.get("region") or "").strip().upper(),
-                "ai_category_reasoning":    parsed.get("category_reasoning", ""),
-                "ai_ecommerce_reasoning":   parsed.get("ecommerce_reasoning", ""),
-            }
+            # Region only — categories come from the owner's classifier.
+            return {"ai_region": (parsed.get("region") or "").strip().upper()}
     except json.JSONDecodeError as e:
         logger.error(f"Claude AI JSON parse error for {domain}: {e}")
         return None
