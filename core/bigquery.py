@@ -1140,34 +1140,23 @@ def sync_parsed_from_corp(full_scan: bool = False) -> dict:
     t_ai = time.time()
     ai_rows_affected = 0
     try:
-        ai_tbl  = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
+        ai_view = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.latest_categories_claude`"
         our_ai  = f"`{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{AI_PARSED_TABLE}`"
 
-        ai_date_filter = date_filter
-        try:
-            cnt = list(client().query(
-                f"SELECT COUNT(*) AS c FROM {our_ai}",
-                job_config=_bq_qcfg(max_bytes=False)
-            ).result())[0]["c"]
-            if cnt == 0:
-                ai_date_filter = ""
-                logger.info("sync: ai_parsed is empty — AI merge will FULL-scan corp claude_responses (backfill)")
-        except Exception:
-            pass
-
+        # Categories come from the OWNER's v2 view (one row per domain), NOT raw
+        # claude_responses — so we never re-ingest our own polluting rows or the old
+        # taxonomy. is_ecommerce is derived from the v2 category; region stays ours
+        # (this merge never touches ai_region).
         ai_merge = f"""
             MERGE {our_ai} T
             USING (
                 SELECT
                     domain,
                     CURRENT_TIMESTAMP() AS fetched_at,
-                    COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
-                    IF(LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false'))
-                       IN ('true', '1', 'yes'), 'Yes', 'No') AS ai_is_ecommerce,
-                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry
-                FROM {ai_tbl}
-                {ai_date_filter}
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+                    COALESCE(category, '') AS ai_category,
+                    IF(category IN ('product_ecom','service_ecom'), 'Yes', 'No') AS ai_is_ecommerce,
+                    COALESCE(subcategory, '') AS ai_industry
+                FROM {ai_view}
             ) S
             ON T.domain = S.domain
             WHEN MATCHED AND S.fetched_at > T.fetched_at THEN UPDATE SET

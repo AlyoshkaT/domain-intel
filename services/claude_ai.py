@@ -63,50 +63,50 @@ def _parse_ai_row(data: dict) -> Optional[dict]:
     }
 
 
-def get_corp_ai_cached(domain: str) -> Optional[dict]:
-    """Read AI classification from claude_responses (latest per domain, all fields)."""
-    from core.bigquery import _prefetch_cache
+# Owner's v2 classifier view — one row per domain, authoritative category.
+# We no longer read raw claude_responses (it held our polluting rows + old taxonomy).
+CORP_AI_VIEW = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.latest_categories_claude`"
 
-    # Fast path: prefetch cache (populated at job start)
-    if CORP_AI_CACHE_KEY in _prefetch_cache and domain in _prefetch_cache[CORP_AI_CACHE_KEY]:
-        raw = _prefetch_cache[CORP_AI_CACHE_KEY][domain]
-        if raw is None:
-            logger.debug(f"Prefetch AI MISS: {domain}")
-            return None
-        data = raw if isinstance(raw, dict) else json.loads(raw)
-        result = _parse_ai_row(data)
-        if result:
-            logger.debug(f"Prefetch AI HIT: {domain}")
-        return result
+_view_cache: Optional[dict] = None
+_view_cache_ts: float = 0.0
+_VIEW_TTL = 3600  # load the whole view once/hour (~54 MB scan), then lookups are free
 
-    # Slow path: QUALIFY query — same logic as latest_categories_claude view
+
+def _load_category_view() -> dict:
+    """{domain → (category, subcategory)} from the owner's view, cached in memory so
+    per-domain lookups don't each scan the view."""
+    global _view_cache, _view_cache_ts
+    import time as _t
+    if _view_cache is not None and (_t.time() - _view_cache_ts) < _VIEW_TTL:
+        return _view_cache
     from core.bigquery import corp_client, _bq_touch
     _bq_touch("corp_r")
-    import google.cloud.bigquery as gcbq
-    bq = corp_client()
+    out: dict = {}
     try:
-        rows = list(bq.query(
-            f"""SELECT
-                  JSON_VALUE(response_json, '$.category')     AS category,
-                  JSON_VALUE(response_json, '$.subcategory')  AS subcategory,
-                  JSON_VALUE(response_json, '$.is_ecommerce') AS is_ecommerce,
-                  JSON_VALUE(response_json, '$.region')       AS region
-                FROM {CORP_AI_TABLE}
-                WHERE domain = @domain
-                QUALIFY ROW_NUMBER() OVER (ORDER BY fetched_at DESC) = 1""",
-            job_config=gcbq.QueryJobConfig(
-                query_parameters=[gcbq.ScalarQueryParameter("domain", "STRING", domain)]
-            )
-        ).result())
-        if rows:
-            result = _parse_ai_row(dict(rows[0]))
-            if result:
-                logger.info(f"Corp AI cache HIT: {domain}")
-            return result
-        return None
+        for r in corp_client().query(f"SELECT domain, category, subcategory FROM {CORP_AI_VIEW}").result():
+            d = (r["domain"] or "").strip().lower()
+            if d and r["category"]:
+                out[d] = (r["category"], r["subcategory"] or "")
+        _view_cache, _view_cache_ts = out, _t.time()
     except Exception as e:
-        logger.error(f"Corp AI cache read error ({domain}): {e}")
+        logger.error(f"category view load failed: {e}")
+        if _view_cache is None:
+            _view_cache = {}
+    return _view_cache
+
+
+def get_corp_ai_cached(domain: str) -> Optional[dict]:
+    """Owner's v2 category for a domain (from latest_categories_claude, in-memory cached).
+    Returns our ai_* fields. No region — region is ours, stored privately."""
+    hit = _load_category_view().get((domain or "").strip().lower())
+    if not hit:
         return None
+    cat, sub = hit
+    return {
+        "ai_category":     cat,
+        "ai_industry":     sub,
+        "ai_is_ecommerce": "Yes" if cat in ("product_ecom", "service_ecom") else "No",
+    }
 
 
 def save_corp_ai_result(domain: str, result: dict, input_hash: str = ""):

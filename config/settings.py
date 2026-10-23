@@ -44,6 +44,14 @@ BUILTWITH_API_KEY = os.getenv("BUILTWITH_API_KEY", "")
 BUILTWITH_RAPIDAPI_KEY = os.getenv("BUILTWITH_RAPIDAPI_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+# Owner's website classifier (categories v2). We call it instead of classifying
+# categories ourselves; it reads the site HTML and writes the answer to the owner's
+# table, which surfaces in their latest_categories_claude view. Key is set by the
+# user in .env / Railway (never hard-coded). Used in: services/classifier_api.py
+CLASSIFIER_API_URL = os.getenv("CLASSIFIER_API_URL", "https://classifier.yespo.app/api/analyze")
+CLASSIFIER_API_KEY = os.getenv("CLASSIFIER_API_KEY", "")
+CLASSIFIER_TIMEOUT = int(os.getenv("CLASSIFIER_TIMEOUT", "60"))
+
 # Pipedrive CRM (relationship-status sync)
 PIPEDRIVE_API_TOKEN = os.getenv("PIPEDRIVE_API_TOKEN", "")
 PIPEDRIVE_COMPANY_DOMAIN = os.getenv("PIPEDRIVE_COMPANY_DOMAIN", "")

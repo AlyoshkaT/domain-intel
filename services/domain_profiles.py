@@ -384,7 +384,6 @@ def sync_domain_profiles() -> dict:
         corp = corp_client()
         our  = client()
 
-        corp_ai_table = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
 
         # Load catalog once
         _sync_status["progress"] = "Завантажуємо каталог..."
@@ -503,17 +502,16 @@ def sync_domain_profiles() -> dict:
             logger.warning(f"ai_parsed read failed ({e}) — falling back to corpBQ")
 
         if not ai_data:
-            logger.info("ai_parsed empty — falling back to corpBQ claude_responses full scan")
-            _sync_status.update({"progress": "3/4 · AI запит (corpBQ fallback)…", "pct": 71})
+            logger.info("ai_parsed empty — falling back to owner's v2 category view")
+            _sync_status.update({"progress": "3/4 · AI запит (view fallback)…", "pct": 71})
             ai_job = corp.query(f"""
                 SELECT
                     domain,
-                    COALESCE(JSON_VALUE(response_json, '$.category'), '')        AS ai_category,
-                    LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
-                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '')      AS ai_industry,
-                    COALESCE(JSON_VALUE(response_json, '$.region'), '')           AS ai_region
-                FROM {corp_ai_table}
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
+                    COALESCE(category, '')    AS ai_category,
+                    IF(category IN ('product_ecom','service_ecom'), 'yes', 'no') AS ai_is_ecom,
+                    COALESCE(subcategory, '') AS ai_industry,
+                    '' AS ai_region
+                FROM `{CORP_PROJECT_ID}.{CORP_DATASET}.latest_categories_claude`
             """, job_config=_bq_qcfg(max_bytes=False))
             with _bq_op("corp_r"):
                 for r in ai_job.result():
@@ -649,7 +647,6 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
         corp = corp_client()
         our  = client()
 
-        corp_ai_table = f"`{CORP_PROJECT_ID}.{CORP_DATASET}.claude_responses`"
 
         from services.technology_catalog import get_catalog
         catalog = get_catalog()
@@ -732,13 +729,12 @@ def sync_domain_profiles_incremental(domains: list[str]) -> dict:
             for r in corp.query(f"""
                 SELECT
                     domain,
-                    COALESCE(JSON_VALUE(response_json, '$.category'), '') AS ai_category,
-                    LOWER(COALESCE(JSON_VALUE(response_json, '$.is_ecommerce'), 'false')) AS ai_is_ecom,
-                    COALESCE(JSON_VALUE(response_json, '$.subcategory'), '') AS ai_industry,
-                    COALESCE(JSON_VALUE(response_json, '$.region'), '') AS ai_region
-                FROM {corp_ai_table}
+                    COALESCE(category, '') AS ai_category,
+                    IF(category IN ('product_ecom','service_ecom'), 'yes', 'no') AS ai_is_ecom,
+                    COALESCE(subcategory, '') AS ai_industry,
+                    '' AS ai_region
+                FROM `{CORP_PROJECT_ID}.{CORP_DATASET}.latest_categories_claude`
                 WHERE {ai_in}
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY domain ORDER BY fetched_at DESC) = 1
             """).result():
                 key = normalize_domain(r["domain"])
                 if key:
