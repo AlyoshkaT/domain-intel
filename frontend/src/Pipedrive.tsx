@@ -231,12 +231,17 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
     setSeries(ts.series || [])
   }, [dateFrom, dateTo])
 
-  const load = useCallback(async () => {
+  // usePeriod=false → read the precomputed pipedrive_status table (fast, all domains,
+  // status as of the last sync). usePeriod=true → recompute status as of the chosen
+  // date / period (slower; triggered explicitly by the Apply button).
+  const load = useCallback(async (usePeriod = false) => {
     setLoading(true); setError("")
     try {
       const p = new URLSearchParams()
-      if (dateTo) p.set("as_of", dateTo)
-      if (dateFrom) p.set("date_from", dateFrom)
+      if (usePeriod) {
+        if (dateTo) p.set("as_of", dateTo)
+        if (dateFrom) p.set("date_from", dateFrom)
+      }
       const [s] = await Promise.all([
         apiFetch(`/api/pipedrive/status?${p.toString()}`),
         loadSeries(managerFilter),
@@ -246,7 +251,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
     } catch (e: any) { setError(e.message) } finally { setLoading(false) }
   }, [dateFrom, dateTo, managerFilter, loadSeries])
 
-  useEffect(() => { load() }, [])  // initial load only; period changes apply via the button
+  useEffect(() => { load(false) }, [])  // initial: fast precomputed read; period applies via the button
 
   // Rebuild the trend chart whenever the selected manager changes (skip mount).
   const mounted = useRef(false)
@@ -441,7 +446,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
               {["Alarm", "Churn"].map(f => <option key={f} value={f}>{f}</option>)}
             </select>
           </div>
-          <button className="btn-search" onClick={load} disabled={loading}>{loading ? tx.loading : "🔄"} {tx.load}</button>
+          <button className="btn-search" onClick={() => load(true)} disabled={loading}>{loading ? tx.loading : "🔄"} {tx.load}</button>
           {can("admin") && (
             <button className="btn-search" onClick={sync} disabled={syncing} style={{ marginLeft: "auto" }}>
               {syncing ? tx.syncing : tx.sync}
