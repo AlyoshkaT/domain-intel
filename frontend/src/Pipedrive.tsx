@@ -31,16 +31,18 @@ interface StatusRow {
   manager: string
   tariff: string
   mrr: number | null
+  mrr_monthly: string        // JSON: recent months [{month, mrr}], recent-first
   deals_json: string
   computed_at: string
 }
 interface Point { month: string; won: number; open: number; lost: number }
+interface MrrMonth { month: string; mrr: number }
 
 const L = (lang: Lang) => ({
   title: lang === "ua" ? "Pipedrive — статус відносин" : "Pipedrive — relationship status",
   subtitle: lang === "ua"
-    ? "Поточний статус кожного домену за історією оплат (won-угоди по місяцях)"
-    : "Per-domain status derived from payment history (won deals by month)",
+    ? "Статус кожного домену за реальним щомісячним MRR (corpBQ). Pipedrive — довідкові колонки."
+    : "Per-domain status from real monthly MRR (corpBQ). Pipedrive data is reference only.",
   fact: lang === "ua" ? "Статус ФАКТ" : "Status FACT",
   allFact: lang === "ua" ? "Усі статуси" : "All statuses",
   risk: lang === "ua" ? "Ризик" : "Risk",
@@ -57,6 +59,7 @@ const L = (lang: Lang) => ({
   noMatch: lang === "ua" ? "Нічого не знайдено за фільтром." : "Nothing matches the filter.",
   count: (a: string, b: string) => lang === "ua" ? `${a} з ${b}` : `${a} of ${b}`,
   chartTitle: lang === "ua" ? "Динаміка Won / Open / Lost (по місяцях)" : "Won / Open / Lost trend (monthly)",
+  moneyTitle: lang === "ua" ? "MRR відфільтрованих компаній — сума за місяцями (12 міс)" : "MRR of filtered companies — monthly total (12 mo)",
   boardCount: lang === "ua" ? "Продажі по менеджерах — кількість" : "Sales by manager — count",
   boardMoney: lang === "ua" ? "Продажі по менеджерах — гроші (₴)" : "Sales by manager — money (₴)",
   boardNote: lang === "ua" ? "сума оплат, переважно UAH" : "paid total, mostly UAH",
@@ -67,7 +70,7 @@ const L = (lang: Lang) => ({
   thManager: "MANAGER",
   thNum: "DEALS №",
   thTariff: "TARIFF",
-  thMrr: "MRR",
+  thMrr: lang === "ua" ? "MRR (міс / −1 / −2)" : "MRR (mo / −1 / −2)",
   thPd: "DEALS Status",
   dealsStatus: "STATUS DEALS",
   thFact: lang === "ua" ? "ФАКТ" : "FACT",
@@ -79,7 +82,7 @@ const L = (lang: Lang) => ({
   dealsHdr: lang === "ua" ? "Угоди домену:" : "Deals for this domain:",
 })
 
-const FACT_COLORS: Record<string, string> = { Won: "#22c55e", Open: "#3b82f6", Lost: "#ef4444" }
+const FACT_COLORS: Record<string, string> = { Won: "#22c55e", Open: "#3b82f6", Lost: "#ef4444", "—": "#6b7280" }
 const RISK_COLORS: Record<string, string> = { Alarm: "#f59e0b", Churn: "#a855f7" }
 const KIND_COLORS = { won: "#22c55e", open: "#3b82f6", lost: "#ef4444" }
 
@@ -122,6 +125,35 @@ function TrendChart({ data, title }: { data: Point[]; title: string }) {
                 return <rect key={k} x={bx} y={y(d[k])} width={bw} height={base - y(d[k])}
                   fill={KIND_COLORS[k]} rx={1}><title>{`${d.month} ${k}: ${d[k]}`}</title></rect>
               })}
+              <text x={x0} y={H - 8} textAnchor="middle" fontSize={9} fill="var(--text-3)">{d.month.slice(2)}</text>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+// Simple money bar chart (SVG) — total MRR of the filtered companies per month.
+function MoneyChart({ data, title }: { data: { month: string; mrr: number; domains: number }[]; title: string }) {
+  if (!data.length) return null
+  const W = Math.max(640, data.length * 44), H = 200, pad = 28, base = H - pad
+  const max = Math.max(1, ...data.map(d => d.mrr))
+  const slot = (W - pad * 2) / data.length
+  const bw = Math.min(22, slot * 0.6)
+  const y = (v: number) => base - (v / max) * (base - 10)
+  return (
+    <div className="card" style={{ marginBottom: 12, overflowX: "auto" }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", marginBottom: 6 }}>{title}</div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxHeight: 220 }}>
+        <line x1={pad} y1={base} x2={W - pad} y2={base} stroke="var(--border)" />
+        {data.map((d) => {
+          const x0 = pad + data.indexOf(d) * slot + slot / 2
+          return (
+            <g key={d.month}>
+              <rect x={x0 - bw / 2} y={y(d.mrr)} width={bw} height={base - y(d.mrr)} fill="#22c55e" rx={2}>
+                <title>{`${d.month}: ${d.mrr.toLocaleString()} · ${d.domains}`}</title>
+              </rect>
               <text x={x0} y={H - 8} textAnchor="middle" fontSize={9} fill="var(--text-3)">{d.month.slice(2)}</text>
             </g>
           )
@@ -233,7 +265,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   }, [load])
 
   const summary = useMemo(() => {
-    const s: Record<string, number> = { Won: 0, Open: 0, Lost: 0, Alarm: 0, Churn: 0 }
+    const s: Record<string, number> = { Won: 0, Lost: 0, "—": 0, Alarm: 0, Churn: 0 }
     for (const r of rows) { if (r.status_fact in s) s[r.status_fact]++; if (r.risk) s[r.risk]++ }
     return s
   }, [rows])
@@ -258,6 +290,23 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
     return [...out].sort(cmp)
   }, [rows, factFilter, dealsFilter, riskFilter, managerFilter, search, sortCol, sortDir])
 
+  // Money chart: SUM of real MRR per month over the currently-filtered companies
+  // (client-side from each row's recent-12-month mrr_monthly). Reflects filters live.
+  const mrrSeries = useMemo(() => {
+    const sums = new Map<string, { mrr: number; n: number }>()
+    for (const r of filtered) {
+      let arr: MrrMonth[] = []
+      try { arr = JSON.parse(r.mrr_monthly || "[]") } catch { /* ignore */ }
+      for (const m of arr) {
+        if (!m.mrr) continue
+        const e = sums.get(m.month) || { mrr: 0, n: 0 }
+        e.mrr += m.mrr; e.n += 1; sums.set(m.month, e)
+      }
+    }
+    return [...sums.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([month, v]) => ({ month, mrr: Math.round(v.mrr), domains: v.n }))
+  }, [filtered])
+
   // Sales by manager (count = paid deals, money = Σ paid value), over the loaded
   // period. Used by the two interactive boards; clicking filters the table.
   const managerStats = useMemo(() => {
@@ -279,7 +328,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   const exportCSV = useCallback(() => {
     const cols = ["domain", "org_name", "manager", "main_deal_id", "tariff", "deals_status", "status_pipedrive", "status_fact", "risk",
       "paid_m1", "paid_m2", "paid_m3", "last_contact_at", "last_paid_at", "won_deals", "open_deals",
-      "lost_deals", "total_deals", "total_paid_value", "currency", "paid_breakdown", "mrr", "computed_at"]
+      "lost_deals", "total_deals", "total_paid_value", "currency", "paid_breakdown", "mrr", "mrr_monthly", "computed_at"]
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`
     const csv = [cols.join(","), ...filtered.map(r => cols.map(c => esc((r as any)[c])).join(","))].join("\n")
     const a = document.createElement("a")
@@ -293,6 +342,23 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
     borderRadius: "var(--radius)", color: "var(--text)", fontSize: 12, outline: "none", minWidth: 110,
   }
   const dot = (v: boolean) => <span style={{ display: "inline-block", width: 11, height: 11, borderRadius: "50%", background: v ? "#22c55e" : "var(--border)", margin: "0 2px" }} />
+  const mrr3 = (j: string) => {
+    let arr: MrrMonth[] = []
+    try { arr = JSON.parse(j || "[]") } catch { /* ignore */ }
+    if (!arr.length) return <span style={{ color: "var(--text-3)" }}>—</span>
+    const v = (i: number) => arr[i]?.mrr || 0
+    const cell = (val: number, main: boolean) => (
+      <span style={{ color: val ? (main ? "#22c55e" : "var(--text-2)") : "var(--text-3)", fontWeight: main ? 700 : 400 }}>
+        {val ? Math.round(val).toLocaleString() : "·"}
+      </span>
+    )
+    const sep = <span style={{ color: "var(--text-3)" }}> / </span>
+    return (
+      <span title={arr.slice(0, 3).map(m => `${m.month}: ${Math.round(m.mrr).toLocaleString()}`).join("   ")}>
+        {cell(v(0), true)}{sep}{cell(v(1), false)}{sep}{cell(v(2), false)}
+      </span>
+    )
+  }
   const dealUrl = (id: number | null) => (id && company) ? `https://${company}.pipedrive.com/deal/${id}` : ""
   const factOf = (s: string) => s === "won" ? "Won" : s === "open" ? "Open" : "Lost"
   const dealNum = (id: number | null) => {
@@ -314,7 +380,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
 
       {/* Summary cards */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-        {(["Won", "Open", "Lost"] as const).map(k => (
+        {(["Won", "Lost", "—"] as const).map(k => (
           <div key={k} className="card" style={{ padding: "10px 16px", minWidth: 90, cursor: "pointer", borderColor: factFilter === k ? FACT_COLORS[k] : undefined }}
             onClick={() => setFactFilter(factFilter === k ? "" : k)}>
             <div style={{ fontSize: 11, color: "var(--text-3)" }}>{k}</div>
@@ -330,8 +396,10 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
         ))}
       </div>
 
-      {/* Trend chart */}
+      {/* Trend chart (deal counts) */}
       <TrendChart data={series} title={tx.chartTitle + (managerFilter ? ` · 👤 ${managerFilter}` : "")} />
+      {/* Money chart (real MRR of the filtered companies) */}
+      <MoneyChart data={mrrSeries} title={tx.moneyTitle} />
 
       {/* Sales-by-manager boards (interactive → filter the table) */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
@@ -363,7 +431,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
             <label className="tech-filter-label">{tx.fact}</label>
             <select style={selStyle} value={factFilter} onChange={e => setFactFilter(e.target.value)}>
               <option value="">{tx.allFact}</option>
-              {["Won", "Open", "Lost"].map(f => <option key={f} value={f}>{f}</option>)}
+              {["Won", "Lost", "—"].map(f => <option key={f} value={f}>{f}</option>)}
             </select>
           </div>
           <div className="tech-filter-group">
@@ -430,7 +498,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => {
+              {filtered.slice(0, 800).map((r) => {
                 const multi = r.total_deals > 1
                 const isOpen = expanded === r.domain
                 let deals: DealDetail[] = []
@@ -461,8 +529,8 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                         {r.total_paid_value ? r.total_paid_value.toLocaleString() : "0"} {r.currency}
                         {r.paid_breakdown && r.paid_breakdown.includes(",") && <span style={{ color: "var(--text-3)", marginLeft: 3 }}>＊</span>}
                       </td>
-                      <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap", color: r.mrr ? "#22c55e" : "var(--text-3)" }}>
-                        {r.mrr ? Math.round(r.mrr).toLocaleString() : "—"}
+                      <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>
+                        {mrr3(r.mrr_monthly)}
                       </td>
                     </tr>
                     {isOpen && (
@@ -495,6 +563,13 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
         </div>
       )}
 
+      {!loading && filtered.length > 800 && (
+        <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 6 }}>
+          {lang === "ua"
+            ? `Показано перші 800 із ${filtered.length.toLocaleString()} — уточни фільтр або вивантаж CSV (усі рядки).`
+            : `Showing first 800 of ${filtered.length.toLocaleString()} — refine the filter or export CSV (all rows).`}
+        </div>
+      )}
       {!loading && rows.length === 0 && <div className="empty-state">{tx.empty}</div>}
       {!loading && rows.length > 0 && filtered.length === 0 && <div className="empty-state">{tx.noMatch}</div>}
     </div>

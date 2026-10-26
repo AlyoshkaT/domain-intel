@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 
 DEALS_RAW_TABLE = "pipedrive_deals_raw"
 STATUS_TABLE = "pipedrive_status"
-MRR_TABLE = "pipedrive_mrr"  # domain → MRR, pulled from corpBQ on its own schedule
+MRR_TABLE = "pipedrive_mrr"  # domain → latest MRR (derived from monthly; kept for sort/compat)
+MRR_MONTHLY_TABLE = "pipedrive_mrr_monthly"  # domain → month → MRR, FULL history from corpBQ
 
 # Custom deal field keys (discovered from /dealFields).
 F_DOMEN = "008b81ed34c02301397301892241ef26029fbd62"
@@ -189,15 +190,19 @@ def _prev_months(today: date, n: int) -> list[str]:
 
 
 def _compute_status(rows: list[dict], today: date | None = None,
-                    mrr_map: dict | None = None) -> list[dict]:
+                    mrr_monthly: dict | None = None) -> list[dict]:
+    """Relationship status per domain. FACT and RISK are MRR-driven (real monthly
+    MRR from corpBQ in `mrr_monthly` = {domain: {"YYYY-MM": mrr}}). Rows cover the
+    UNION of Pipedrive-deal domains and MRR domains — a paying customer with no
+    Pipedrive deal still appears (deal columns empty). Pipedrive data (manager,
+    tariff, deal mix, last contact) is reference only and never drives FACT."""
     today = today or date.today()
-    # Window of 3 calendar months INCLUDING the current one:
-    #   m1 = current month, m2 = previous, m3 = two months ago.
-    # A payment in the current month must count as active (Won) — excluding it
-    # would mislabel the most recent payers as Lost.
+    # 3-month window INCLUDING the current month (m1=current, m2=prev, m3=two ago).
     m1 = _month_key(today)
     m2, m3 = _prev_months(today, 2)
     last12 = set(_prev_months(today, 12)) | {m1}
+    recent12 = [m1] + _prev_months(today, 11)   # current + 11 previous, recent-first
+    mrr_monthly = mrr_monthly or {}
 
     by_domain: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
@@ -205,72 +210,69 @@ def _compute_status(rows: list[dict], today: date | None = None,
             by_domain[r["domain"]].append(r)
 
     as_of_iso = today.isoformat()
+    _prio = {"won": 3, "open": 2, "lost": 1}
     result = []
-    for domain, deals in by_domain.items():
-        # Only consider deals that exist as-of the evaluation date (won/lost up to today).
+    # Union: every domain that has a Pipedrive deal OR real MRR history.
+    for domain in set(by_domain) | set(mrr_monthly):
+        deals = by_domain.get(domain, [])
+
+        # ── MRR side (drives FACT / RISK) — months up to the eval month only ──
+        series = {mo: v for mo, v in (mrr_monthly.get(domain) or {}).items()
+                  if v and v > 0 and mo <= m1}
+        if not deals and not series:
+            continue   # e.g. only future-dated MRR and no deal → nothing to show
+        p1, p2, p3 = (m1 in series), (m2 in series), (m3 in series)
+        paid_3mo = p1 or p2 or p3
+        in_12 = bool(series.keys() & last12)
+        has_any_mrr = bool(series)
+
+        if paid_3mo:
+            fact = "Won"          # MRR in any of the last 3 months → alive
+        elif has_any_mrr:
+            fact = "Lost"         # had MRR before, none in the last 3 months
+        else:
+            fact = "—"            # no (past/current) MRR for this domain in corpBQ
+
+        risk = ""
+        if (not p1) and (not p2) and p3:
+            risk = "Alarm"        # paid 3 months ago, missed the last two
+        elif (not paid_3mo) and in_12:
+            risk = "Churn"        # paid within the last year, nothing in 3 months
+
+        latest_mrr_month = max(series) if series else None
+        last_paid = (latest_mrr_month + "-01") if latest_mrr_month else None
+        mrr_latest = round(series[latest_mrr_month], 2) if latest_mrr_month else None
+        mrr_recent = [{"month": mo, "mrr": round(series.get(mo, 0.0), 2)} for mo in recent12]
+
+        # ── Pipedrive side (reference only; empty when the domain has no deals) ──
         won = [d for d in deals if d["status"] == "won" and d["won_time"] and d["won_time"] <= as_of_iso]
         open_deals = [d for d in deals if d["status"] == "open"]
         lost_deals = [d for d in deals if d["status"] == "lost"]
 
-        paid_months = {d["won_time"][:7] for d in won}
-        p1, p2, p3 = m1 in paid_months, m2 in paid_months, m3 in paid_months
-        paid_3mo = p1 or p2 or p3
-
-        # A domain can hold several deals at once (main service won, add-on open,
-        # add-on lost). Status FACT is payment-driven: any recent payment → the
-        # relationship is alive (Won), regardless of how many side deals are
-        # open/lost. When there is no recent payment we fall back to the deal mix:
-        # an open deal means an active opportunity (Open), otherwise Lost.
-        if paid_3mo:
-            fact = "Won"
-        elif open_deals:
-            fact = "Open"
-        else:
-            fact = "Lost"
-
-        # Aggregate Pipedrive-side status as a count mix, e.g. "won:1 open:1 lost:1".
         mix = []
         if won: mix.append(f"won:{len(won)}")
         if open_deals: mix.append(f"open:{len(open_deals)}")
         if lost_deals: mix.append(f"lost:{len(lost_deals)}")
         pd_status = " ".join(mix) or "—"
+        deals_status = ("won" if won else "open" if open_deals
+                        else "lost" if lost_deals else "")
 
-        # Combined deal status: any won → won, else any open → open, else lost.
-        # (A single won deal makes the combined verdict "won" regardless of how
-        # many lost/open deals sit alongside it.)
-        if won:
-            deals_status = "won"
-        elif open_deals:
-            deals_status = "open"
+        if deals:
+            # "Main" deal: highest priority (won>open>lost), then most recent.
+            main_deal = max(deals, key=lambda d: (
+                _prio.get(d["status"], 0),
+                d["won_time"] or d["lost_time"] or d["add_time"] or ""))
+            main_deal_id = main_deal["deal_id"]
+            manager = main_deal.get("manager") or next(
+                (d["manager"] for d in deals if d.get("manager")), "")
+            tariff = main_deal.get("tariff_label") or next(
+                (d.get("tariff_label") for d in deals if d.get("tariff_label")), "")
         else:
-            deals_status = "lost"
+            main_deal_id, manager, tariff = None, "", ""
 
-        # The "main" deal whose number we surface: highest priority (won>open>lost),
-        # then most recent. Used for the DEALS № column / Pipedrive deep-link.
-        _prio = {"won": 3, "open": 2, "lost": 1}
-        main_deal = max(deals, key=lambda d: (
-            _prio.get(d["status"], 0),
-            d["won_time"] or d["lost_time"] or d["add_time"] or ""))
-        main_deal_id = main_deal["deal_id"]
-        # Manager = owner of the main deal; fall back to any deal that has one.
-        manager = main_deal.get("manager") or next(
-            (d["manager"] for d in deals if d.get("manager")), "")
-        # Tariff label of the main deal (fallback to any deal that has one).
-        tariff = main_deal.get("tariff_label") or next(
-            (d.get("tariff_label") for d in deals if d.get("tariff_label")), "")
-
-        risk = ""
-        if (not p1) and (not p2) and p3:
-            risk = "Alarm"
-        elif (not paid_3mo) and (paid_months & last12):
-            risk = "Churn"
-
-        last_paid = max((d["won_time"] for d in won), default=None)
         last_contact = max((d["last_contact"] for d in deals
                             if d.get("last_contact") and d["last_contact"] <= as_of_iso), default=None)
-        # Paid total per currency — a domain can have deals in UAH/USD/EUR, so a
-        # plain sum would mix currencies. Show the primary (largest) currency total
-        # in the column, with the full breakdown kept for a tooltip.
+        # Lifetime paid from won deals, by currency (supplementary, not the MRR metric).
         paid_by_cur: dict[str, float] = defaultdict(float)
         for d in won:
             paid_by_cur[(d["currency"] or "?")] += d["value"]
@@ -283,8 +285,6 @@ def _compute_status(rows: list[dict], today: date | None = None,
         paid_breakdown = ", ".join(f"{round(v):,} {c}"
                                    for c, v in sorted(paid_by_cur.items(), key=lambda x: -x[1]))
         org_name = next((d["org_name"] for d in deals if d["org_name"]), "")
-
-        # Per-deal breakdown so the dashboard can expand a domain with several deals.
         deals_detail = sorted(
             ({"deal_id": d["deal_id"], "title": d["title"], "status": d["status"],
               "value": d["value"], "currency": d["currency"], "won_time": d["won_time"],
@@ -311,7 +311,8 @@ def _compute_status(rows: list[dict], today: date | None = None,
             "org_name": org_name,
             "manager": manager,
             "tariff": tariff,
-            "mrr": round(mrr_map.get(domain), 2) if (mrr_map and mrr_map.get(domain)) else None,
+            "mrr": mrr_latest,
+            "mrr_monthly": json.dumps(mrr_recent, ensure_ascii=False),
             "deals_json": json.dumps(deals_detail, ensure_ascii=False),
             "computed_at": as_of_iso,
         })
@@ -362,8 +363,15 @@ _STATUS_SCHEMA = [
     bigquery.SchemaField("manager", "STRING"),
     bigquery.SchemaField("tariff", "STRING"),
     bigquery.SchemaField("mrr", "FLOAT"),
+    bigquery.SchemaField("mrr_monthly", "STRING"),   # JSON: recent months [{month, mrr}]
     bigquery.SchemaField("deals_json", "STRING"),
     bigquery.SchemaField("computed_at", "DATE"),
+]
+
+_MRR_MONTHLY_SCHEMA = [
+    bigquery.SchemaField("domain", "STRING"),
+    bigquery.SchemaField("month", "STRING"),   # "YYYY-MM"
+    bigquery.SchemaField("mrr", "FLOAT"),
 ]
 
 
@@ -384,7 +392,7 @@ def sync_pipedrive() -> dict:
     _load_tariff_labels()  # resolve tariff codes → names once (free, Pipedrive API)
     deals = _fetch_all_deals()
     rows = [_deal_row(d) for d in deals]
-    status = _compute_status(rows, mrr_map=_get_mrr_map())
+    status = _compute_status(rows, mrr_monthly=_get_mrr_monthly_map())
     _load(DEALS_RAW_TABLE, _DEALS_SCHEMA, rows)
     _load(STATUS_TABLE, _STATUS_SCHEMA, status)
     elapsed = round(time.time() - t0, 1)
@@ -424,7 +432,7 @@ def get_status_rows(as_of: str | None = None, date_from: str | None = None) -> l
         try:
             ad = date.fromisoformat(as_of) if as_of else date.today()
             raw = _read_raw_deals()
-            rows = _compute_status(raw, ad, mrr_map=_get_mrr_map())
+            rows = _compute_status(raw, ad, mrr_monthly=_get_mrr_monthly_map())
             if date_from:
                 end = ad.isoformat()
                 # A domain is "active in the period" if any of its deals has an
@@ -489,6 +497,31 @@ def get_timeseries(date_from: str, date_to: str, manager: str | None = None) -> 
     return [{"month": r["month"], "won": r["won"], "open": r["open"], "lost": r["lost"]} for r in rows]
 
 
+def get_mrr_timeseries(date_from: str, date_to: str,
+                       domains: list[str] | None = None) -> list[dict]:
+    """Monthly SUM of real MRR over [date_from, date_to] (YYYY-MM), optionally limited
+    to `domains` (the dashboard's currently-filtered set) — the money chart. Reads the
+    private pipedrive_mrr_monthly table (cheap)."""
+    bq = client()
+    params = [bigquery.ScalarQueryParameter("df", "STRING", date_from[:7]),
+              bigquery.ScalarQueryParameter("dt", "STRING", date_to[:7])]
+    where = "WHERE month BETWEEN @df AND @dt"
+    if domains:
+        doms = sorted({normalize_domain(d) for d in domains if d})
+        if doms:
+            where += " AND domain IN UNNEST(@doms)"
+            params.append(bigquery.ArrayQueryParameter("doms", "STRING", doms))
+    q = f"""SELECT month, ROUND(SUM(mrr), 2) AS mrr, COUNT(DISTINCT domain) AS domains
+            FROM `{table_ref(MRR_MONTHLY_TABLE)}` {where}
+            GROUP BY month ORDER BY month"""
+    try:
+        rows = bq.query(q, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+    except Exception:
+        logger.exception("get_mrr_timeseries failed")
+        return []
+    return [{"month": r["month"], "mrr": r["mrr"], "domains": r["domains"]} for r in rows]
+
+
 # ── MRR from corpBQ (separate source + schedule) ────────────────────────────
 # MRR is NOT in Pipedrive (the deal.mrr field is empty); the accurate figures live
 # in corpBQ, tied to another CRM. We pull domain→MRR there ONCE per scheduled MRR
@@ -516,39 +549,47 @@ def set_mrr_frequency(freq: str) -> dict:
 
 
 def sync_mrr_from_corp() -> dict:
-    """Pull domain→MRR from corpBQ into the private `pipedrive_mrr` table, then fold
-    MRR into pipedrive_status. One corp scan (~700 MB) per call — schedule sparsely."""
+    """Pull the FULL monthly MRR history (domain × month × MRR) from corpBQ into the
+    private `pipedrive_mrr_monthly` table, derive the latest MRR per domain into
+    `pipedrive_mrr` (sort/compat), then fold MRR into pipedrive_status.
+    One corp scan (~700 MB) per call — schedule sparsely."""
     import time as _t
     from core.bigquery import corp_client, CORP_PROJECT_ID, CORP_DATASET
     t0 = _t.time()
     cds = f"{CORP_PROJECT_ID}.{CORP_DATASET}"
     sql = f"""
-        WITH latest_mrr AS (
-          SELECT OrganisationID, MRR,
-                 ROW_NUMBER() OVER (PARTITION BY OrganisationID ORDER BY DateDistributedM DESC) rn
-          FROM `{cds}.mrr_by_month_from_mv`
-        )
-        SELECT LOWER(p.lookup_domain_actual) AS domain, MAX(m.MRR) AS mrr
+        SELECT LOWER(p.lookup_domain_actual) AS domain,
+               FORMAT_DATE('%Y-%m', m.DateDistributedM) AS month,
+               MAX(m.MRR) AS mrr
         FROM `{cds}.primary_domains_orgs_mrr` p
-        JOIN latest_mrr m
-          ON CAST(m.OrganisationID AS STRING) = CAST(p.best_org_id AS STRING) AND m.rn = 1
+        JOIN `{cds}.mrr_by_month_from_mv` m
+          ON m.OrganisationID = p.best_org_id
         WHERE p.lookup_domain_actual IS NOT NULL AND m.MRR > 0
-        GROUP BY domain
+        GROUP BY domain, month
     """
     job = corp_client().query(sql)
-    rows = [{"domain": normalize_domain(r["domain"]), "mrr": float(r["mrr"])}
-            for r in job.result() if normalize_domain(r["domain"])]
-    schema = [bigquery.SchemaField("domain", "STRING"), bigquery.SchemaField("mrr", "FLOAT")]
-    _load(MRR_TABLE, schema, rows)
+    monthly = [{"domain": normalize_domain(r["domain"]), "month": r["month"], "mrr": float(r["mrr"])}
+               for r in job.result() if normalize_domain(r["domain"])]
+    _load(MRR_MONTHLY_TABLE, _MRR_MONTHLY_SCHEMA, monthly)
+    # Derive latest MRR per domain (most recent month) for sort/compat.
+    latest: dict[str, tuple[str, float]] = {}
+    for r in monthly:
+        d, mo = r["domain"], r["month"]
+        if d not in latest or mo > latest[d][0]:
+            latest[d] = (mo, r["mrr"])
+    flat = [{"domain": d, "mrr": v} for d, (mo, v) in latest.items()]
+    _load(MRR_TABLE, [bigquery.SchemaField("domain", "STRING"), bigquery.SchemaField("mrr", "FLOAT")], flat)
     # Fold the fresh MRR into the precomputed status table (cheap: reads private raw).
     try:
-        _load(STATUS_TABLE, _STATUS_SCHEMA, _compute_status(_read_raw_deals(), mrr_map=_get_mrr_map(fresh=rows)))
+        mm = _get_mrr_monthly_map(fresh=monthly)
+        _load(STATUS_TABLE, _STATUS_SCHEMA, _compute_status(_read_raw_deals(), mrr_monthly=mm))
     except Exception:
         logger.exception("MRR fold into status failed")
     mb = round((job.total_bytes_billed or 0) / 1e6)
-    logger.info(f"sync_mrr_from_corp: {len(rows)} domains, {mb} MB corp, {round(_t.time()-t0,1)}s")
-    return {"status": "ok", "domains": len(rows), "mb_billed_corp": mb,
-            "elapsed": round(_t.time() - t0, 1)}
+    logger.info(f"sync_mrr_from_corp: {len(monthly)} domain-months, {len(flat)} domains, "
+                f"{mb} MB corp, {round(_t.time()-t0,1)}s")
+    return {"status": "ok", "domain_months": len(monthly), "domains": len(flat),
+            "mb_billed_corp": mb, "elapsed": round(_t.time() - t0, 1)}
 
 
 def _get_mrr_map(fresh: list[dict] | None = None) -> dict:
@@ -561,6 +602,25 @@ def _get_mrr_map(fresh: list[dict] | None = None) -> dict:
         return {r["domain"]: r["mrr"] for r in rows if r["domain"]}
     except Exception:
         return {}
+
+
+def _get_mrr_monthly_map(fresh: list[dict] | None = None) -> dict:
+    """domain → {"YYYY-MM": mrr} from pipedrive_mrr_monthly (or a freshly-built list)."""
+    out: dict[str, dict] = defaultdict(dict)
+    if fresh is not None:
+        for r in fresh:
+            if r.get("domain"):
+                out[r["domain"]][r["month"]] = r["mrr"]
+        return dict(out)
+    bq = client()
+    try:
+        rows = bq.query(f"SELECT domain, month, mrr FROM `{table_ref(MRR_MONTHLY_TABLE)}`").result()
+        for r in rows:
+            if r["domain"]:
+                out[r["domain"]][r["month"]] = r["mrr"]
+    except Exception:
+        return {}
+    return dict(out)
 
 
 def get_status_for_domains(domains: list[str]) -> dict[str, dict]:
@@ -684,7 +744,7 @@ def _recompute_domains(domains: list[str]) -> None:
         return
     bq = client()
     raw = [r for r in _read_raw_deals() if r["domain"] in domains]
-    new_rows = _compute_status(raw)
+    new_rows = _compute_status(raw, mrr_monthly=_get_mrr_monthly_map())
     bq.query(f"DELETE FROM `{table_ref(STATUS_TABLE)}` WHERE domain IN UNNEST(@d)",
              job_config=bigquery.QueryJobConfig(query_parameters=[
                  bigquery.ArrayQueryParameter("d", "STRING", domains)])).result()

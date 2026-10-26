@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 from api.auth import require_permission
 from config.settings import PIPEDRIVE_COMPANY_DOMAIN
 from services.pipedrive import (
-    sync_pipedrive, get_status_rows, get_timeseries,
+    sync_pipedrive, get_status_rows, get_timeseries, get_mrr_timeseries,
     get_sync_frequency, set_sync_frequency, get_webhook_secret, apply_webhook_event,
     get_mrr_frequency, set_mrr_frequency, sync_mrr_from_corp,
 )
@@ -37,6 +37,17 @@ async def timeseries(date_from: str | None = None, date_to: str | None = None,
         raise HTTPException(status_code=400, detail="date_from / date_to must be YYYY-MM-DD")
     return {"series": get_timeseries(df.isoformat(), dt.isoformat(), manager or None),
             "date_from": df.isoformat(), "date_to": dt.isoformat(), "manager": manager}
+
+
+@router.post("/mrr_timeseries")
+async def mrr_timeseries(request: Request):
+    """Money chart: monthly SUM of real MRR. Body {date_from, date_to, domains?}.
+    date_from/date_to are YYYY-MM (or YYYY-MM-DD); domains limits to the filtered set."""
+    body = await request.json()
+    df, dt = body.get("date_from"), body.get("date_to")
+    if not df or not dt:
+        raise HTTPException(status_code=400, detail="date_from and date_to required (YYYY-MM)")
+    return {"series": get_mrr_timeseries(df, dt, body.get("domains") or None)}
 
 
 @router.get("/sync_settings", dependencies=[require_permission("admin")])
