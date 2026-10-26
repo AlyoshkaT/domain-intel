@@ -70,7 +70,7 @@ const L = (lang: Lang) => ({
   thManager: "MANAGER",
   thNum: "DEALS №",
   thTariff: "TARIFF",
-  thMrr: lang === "ua" ? "MRR (міс / −1 / −2)" : "MRR (mo / −1 / −2)",
+  thMrr: lang === "ua" ? "MRR (−2 / −1 / міс)" : "MRR (−2 / −1 / mo)",
   thPd: "DEALS Status",
   dealsStatus: "STATUS DEALS",
   thFact: lang === "ua" ? "ФАКТ" : "FACT",
@@ -78,7 +78,7 @@ const L = (lang: Lang) => ({
   thLast: lang === "ua" ? "Остання оплата" : "Last paid",
   thContact: "LAST CONTACT",
   thValue: lang === "ua" ? "Сума оплат" : "Paid total",
-  months: lang === "ua" ? "Цей міс / −1 / −2" : "This mo / −1 / −2",
+  months: lang === "ua" ? "−2 / −1 / Цей міс" : "−2 / −1 / This mo",
   dealsHdr: lang === "ua" ? "Угоди домену:" : "Deals for this domain:",
 })
 
@@ -354,8 +354,8 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
     )
     const sep = <span style={{ color: "var(--text-3)" }}> / </span>
     return (
-      <span title={arr.slice(0, 3).map(m => `${m.month}: ${Math.round(m.mrr).toLocaleString()}`).join("   ")}>
-        {cell(v(0), true)}{sep}{cell(v(1), false)}{sep}{cell(v(2), false)}
+      <span title={arr.slice(0, 3).reverse().map(m => `${m.month}: ${Math.round(m.mrr).toLocaleString()}`).join("   ")}>
+        {cell(v(2), false)}{sep}{cell(v(1), false)}{sep}{cell(v(0), true)}
       </span>
     )
   }
@@ -521,7 +521,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                       <td><Badge text={r.deals_status} color={FACT_COLORS[factOf(r.deals_status)] || "#6b7280"} /></td>
                       <td><Badge text={r.status_fact} color={FACT_COLORS[r.status_fact] || "#6b7280"} /></td>
                       <td>{r.risk ? <Badge text={r.risk} color={RISK_COLORS[r.risk] || "#6b7280"} /> : ""}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{dot(r.paid_m1)}{dot(r.paid_m2)}{dot(r.paid_m3)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{dot(r.paid_m3)}{dot(r.paid_m2)}{dot(r.paid_m1)}</td>
                       <td style={{ fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>{r.last_contact_at || "—"}</td>
                       <td style={{ fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>{r.last_paid_at || "—"}</td>
                       <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}
