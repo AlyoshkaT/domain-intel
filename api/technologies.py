@@ -22,7 +22,10 @@ logger = logging.getLogger(__name__)
 # can re-aggregate any subset WITHOUT a new BQ query.
 import hashlib
 _tech_rows_cache: dict[str, tuple[float, list]] = {}
-_TECH_ROWS_TTL = 600  # 10 min
+# bw_parsed is refreshed at most once/day (corp→private parsed-sync), and an
+# unfiltered fetch scans the fat technologies_json column (~1.2 GB). A short TTL
+# meant repeated full scans for data that barely changes, so cache for 6 h.
+_TECH_ROWS_TTL = 21600  # 6 h
 
 
 def _norm_domain(d: str) -> str:
