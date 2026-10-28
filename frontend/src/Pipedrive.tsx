@@ -589,28 +589,20 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                     {label}{sortCol === col ? (sortDir === 1 ? " ▲" : " ▼") : ""}
                   </th>
                 ))}
-                {/* MRR direction columns (current month), then the Σ total column */}
-                <th title={tx.chByChannel} colSpan={CHANNELS.length}
-                  style={{ textAlign: "center", userSelect: "none", whiteSpace: "nowrap",
-                    fontSize: 10, color: "var(--text-3)", borderBottom: "1px solid var(--border)" }}>
-                  {tx.chByChannel}
-                </th>
-                <th onClick={() => toggleSort("mrr")}
-                  style={{ cursor: "pointer", userSelect: "none", textAlign: "right", whiteSpace: "nowrap" }}>
-                  {tx.thMrr}{sortCol === "mrr" ? (sortDir === 1 ? " ▲" : " ▼") : ""}
-                </th>
-              </tr>
-              <tr>
-                {/* sub-header: one cell per channel, greyed when the channel is OFF */}
-                <th colSpan={12} style={{ padding: 0, border: "none" }} />
+                {/* MRR direction columns (current month) — short labels; full name on
+                    hover, dimmed when the channel is toggled off on the chart. */}
                 {CHANNELS.map(c => (
-                  <th key={c.key} title={c.label}
-                    style={{ textAlign: "right", whiteSpace: "nowrap", fontSize: 10, fontWeight: 600,
+                  <th key={c.key} title={tx.chByChannel + " · " + c.label}
+                    style={{ textAlign: "right", whiteSpace: "nowrap",
                       color: chOn[c.key] ? "var(--text-2)" : "var(--text-3)", opacity: chOn[c.key] ? 1 : 0.55 }}>
                     {c.short}
                   </th>
                 ))}
-                <th style={{ padding: 0, border: "none" }} />
+                {/* Σ total column = full monthly MRR (drives the 3-mo window + status) */}
+                <th onClick={() => toggleSort("mrr")}
+                  style={{ cursor: "pointer", userSelect: "none", textAlign: "right", whiteSpace: "nowrap" }}>
+                  {tx.thMrr}{sortCol === "mrr" ? (sortDir === 1 ? " ▲" : " ▼") : ""}
+                </th>
               </tr>
             </thead>
             <tbody>
