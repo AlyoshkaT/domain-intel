@@ -71,6 +71,9 @@ const L = (lang: Lang) => ({
   from: lang === "ua" ? "від" : "from",
   to: lang === "ua" ? "до" : "to",
   search: lang === "ua" ? "Пошук за доменом / організацією…" : "Search by domain / organization…",
+  filterByDomain: lang === "ua" ? "Клік — відфільтрувати за цим сайтом" : "Click to filter by this site",
+  openSite: lang === "ua" ? "Відкрити сайт" : "Open site",
+  clearSearch: lang === "ua" ? "очистити пошук" : "clear search",
   sync: lang === "ua" ? "↻ Синхронізувати" : "↻ Sync",
   syncing: lang === "ua" ? "Синхронізація…" : "Syncing…",
   load: lang === "ua" ? "Застосувати" : "Apply",
@@ -571,6 +574,13 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
       {rows.length > 0 && (
         <div className="filter-row" style={{ marginBottom: 8 }}>
           <input className="filter-input" placeholder={tx.search} value={search} onChange={e => setSearch(e.target.value)} />
+          {search && (
+            <button onClick={() => setSearch("")} title={tx.clearSearch}
+              style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
+                background: "rgba(148,163,184,0.18)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
+              🔎 {search} ✕
+            </button>
+          )}
           {managerFilter && (
             <button onClick={() => setManagerFilter("")} title="clear manager filter"
               style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
@@ -638,7 +648,10 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                       onClick={multi ? () => setExpanded(isOpen ? null : r.domain) : undefined}>
                       <td className="td-domain">
                         {multi && <span style={{ color: "var(--text-3)", marginRight: 4 }}>{isOpen ? "▾" : "▸"}</span>}
-                        <a href={`https://${r.domain}`} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}>{r.domain}</a>
+                        <span className="dom-pick" title={tx.filterByDomain}
+                          onClick={e => { e.stopPropagation(); setSearch(r.domain) }}>{r.domain}</span>
+                        <a className="dom-open" href={`https://${r.domain}`} target="_blank" rel="noopener"
+                          title={tx.openSite} onClick={e => e.stopPropagation()}>↗</a>
                       </td>
                       <td style={{ fontSize: 12, color: "var(--text-2)" }}>{r.org_name || "—"}</td>
                       <td style={{ fontSize: 12, color: "var(--text-2)", whiteSpace: "nowrap" }}>{r.manager || "—"}</td>

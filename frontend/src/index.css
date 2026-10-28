@@ -176,6 +176,10 @@ th.th-sort-active{color:var(--accent,var(--text))}
 .td-domain{font-weight:500;color:var(--text) !important;min-width:160px}
 .td-domain a{color:var(--text)}
 .td-domain a:hover{color:var(--accent)}
+.td-domain .dom-pick{color:var(--text);cursor:pointer}
+.td-domain .dom-pick:hover{color:var(--accent);text-decoration:underline}
+.td-domain .dom-open{color:var(--text-3);margin-left:6px;text-decoration:none;font-size:11px}
+.td-domain .dom-open:hover{color:var(--accent)}
 .td-traffic{font-family:var(--mono);font-size:12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .td-desc{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help}
 
