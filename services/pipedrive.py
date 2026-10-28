@@ -217,8 +217,15 @@ def _compute_status(rows: list[dict], today: date | None = None,
         deals = by_domain.get(domain, [])
 
         # ── MRR side (drives FACT / RISK) — months up to the eval month only ──
-        series = {mo: v for mo, v in (mrr_monthly.get(domain) or {}).items()
-                  if v and v > 0 and mo <= m1}
+        # ch_by_month = {"YYYY-MM": {channel: mrr}}; the total per month (channels
+        # summed) drives FACT/RISK exactly as before — channel split is additive.
+        ch_by_month = mrr_monthly.get(domain) or {}
+        series: dict[str, float] = {}
+        for mo, chd in ch_by_month.items():
+            if mo <= m1:
+                tot = sum(v for v in chd.values() if v and v > 0)
+                if tot > 0:
+                    series[mo] = tot
         if not deals and not series:
             continue   # e.g. only future-dated MRR and no deal → nothing to show
         p1, p2, p3 = (m1 in series), (m2 in series), (m3 in series)
@@ -242,7 +249,14 @@ def _compute_status(rows: list[dict], today: date | None = None,
         latest_mrr_month = max(series) if series else None
         last_paid = (latest_mrr_month + "-01") if latest_mrr_month else None
         mrr_latest = round(series[latest_mrr_month], 2) if latest_mrr_month else None
-        mrr_recent = [{"month": mo, "mrr": round(series.get(mo, 0.0), 2)} for mo in recent12]
+        # recent-12 months with the per-channel split (`ch`) for the money chart's
+        # channel toggles; `mrr` stays the monthly total for the Σ column + mrr3.
+        def _ch(mo: str) -> dict:
+            return {c: round(v, 2) for c, v in (ch_by_month.get(mo) or {}).items() if v and v > 0}
+        mrr_recent = [{"month": mo, "mrr": round(series.get(mo, 0.0), 2), "ch": _ch(mo)} for mo in recent12]
+        # Per-channel breakdown of the latest month → the table's channel columns
+        # (sums back to mrr_latest / the Σ column).
+        mrr_channels = _ch(latest_mrr_month) if latest_mrr_month else {}
 
         # ── Pipedrive side (reference only; empty when the domain has no deals) ──
         won = [d for d in deals if d["status"] == "won" and d["won_time"] and d["won_time"] <= as_of_iso]
@@ -313,6 +327,7 @@ def _compute_status(rows: list[dict], today: date | None = None,
             "tariff": tariff,
             "mrr": mrr_latest,
             "mrr_monthly": json.dumps(mrr_recent, ensure_ascii=False),
+            "mrr_channels": json.dumps(mrr_channels, ensure_ascii=False),
             "deals_json": json.dumps(deals_detail, ensure_ascii=False),
             "computed_at": as_of_iso,
         })
@@ -363,16 +378,23 @@ _STATUS_SCHEMA = [
     bigquery.SchemaField("manager", "STRING"),
     bigquery.SchemaField("tariff", "STRING"),
     bigquery.SchemaField("mrr", "FLOAT"),
-    bigquery.SchemaField("mrr_monthly", "STRING"),   # JSON: recent months [{month, mrr}]
+    bigquery.SchemaField("mrr_monthly", "STRING"),   # JSON: recent months [{month, mrr, ch:{chan:val}}]
+    bigquery.SchemaField("mrr_channels", "STRING"),  # JSON: latest month per-channel {chan: val}
     bigquery.SchemaField("deals_json", "STRING"),
     bigquery.SchemaField("computed_at", "DATE"),
 ]
 
 _MRR_MONTHLY_SCHEMA = [
     bigquery.SchemaField("domain", "STRING"),
-    bigquery.SchemaField("month", "STRING"),   # "YYYY-MM"
-    bigquery.SchemaField("mrr", "FLOAT"),
+    bigquery.SchemaField("month", "STRING"),    # "YYYY-MM"
+    bigquery.SchemaField("channel", "STRING"),  # corp Media: Email / Viber / ExtraFeatures / …
+    bigquery.SchemaField("mrr", "FLOAT"),       # SUM(MRRUSD) for that domain·month·channel
 ]
+
+# corp source that still carries the per-channel `Media` dimension (the
+# mrr_by_month_from_mv VIEW already SUM()s it away). Summing all channels for a
+# domain·month reproduces that view's figure exactly (verified on apteka.net.ua).
+MRR_SOURCE_TABLE = "es_live.mv_Income_Report_MRR"
 
 
 def _load(table: str, schema: list, rows: list[dict]) -> None:
@@ -552,32 +574,39 @@ def sync_mrr_from_corp() -> dict:
     """Pull the FULL monthly MRR history (domain × month × MRR) from corpBQ into the
     private `pipedrive_mrr_monthly` table, derive the latest MRR per domain into
     `pipedrive_mrr` (sort/compat), then fold MRR into pipedrive_status.
-    One corp scan (~700 MB) per call — schedule sparsely."""
+    One corp scan (~610 MB) per call — schedule sparsely."""
     import time as _t
     from core.bigquery import corp_client, CORP_PROJECT_ID, CORP_DATASET
     t0 = _t.time()
     cds = f"{CORP_PROJECT_ID}.{CORP_DATASET}"
+    # Per-channel (Media) monthly MRR. We read the live income source (which still
+    # has Media) instead of the mrr_by_month_from_mv view (which SUM()s it away).
+    # SUM(MRRUSD) over all channels of a domain·month == the view's figure.
     sql = f"""
         SELECT LOWER(p.lookup_domain_actual) AS domain,
-               FORMAT_DATE('%Y-%m', m.DateDistributedM) AS month,
-               MAX(m.MRR) AS mrr
+               FORMAT_DATE('%Y-%m', DATE(m.DateDistributed)) AS month,
+               m.Media AS channel,
+               SUM(m.MRRUSD) AS mrr
         FROM `{cds}.primary_domains_orgs_mrr` p
-        JOIN `{cds}.mrr_by_month_from_mv` m
+        JOIN `{CORP_PROJECT_ID}.{MRR_SOURCE_TABLE}` m
           ON m.OrganisationID = p.best_org_id
-        WHERE p.lookup_domain_actual IS NOT NULL AND m.MRR > 0
-        GROUP BY domain, month
+        WHERE p.lookup_domain_actual IS NOT NULL AND m.MRRUSD > 0 AND m.Media IS NOT NULL
+        GROUP BY domain, month, channel
     """
     job = corp_client().query(sql)
-    monthly = [{"domain": normalize_domain(r["domain"]), "month": r["month"], "mrr": float(r["mrr"])}
+    monthly = [{"domain": normalize_domain(r["domain"]), "month": r["month"],
+                "channel": r["channel"], "mrr": float(r["mrr"])}
                for r in job.result() if normalize_domain(r["domain"])]
     _load(MRR_MONTHLY_TABLE, _MRR_MONTHLY_SCHEMA, monthly)
-    # Derive latest MRR per domain (most recent month) for sort/compat.
-    latest: dict[str, tuple[str, float]] = {}
+    # Derive latest total MRR per domain (channels summed, most recent month) for sort/compat.
+    month_total: dict[tuple[str, str], float] = defaultdict(float)
     for r in monthly:
-        d, mo = r["domain"], r["month"]
+        month_total[(r["domain"], r["month"])] += r["mrr"]
+    latest: dict[str, tuple[str, float]] = {}
+    for (d, mo), v in month_total.items():
         if d not in latest or mo > latest[d][0]:
-            latest[d] = (mo, r["mrr"])
-    flat = [{"domain": d, "mrr": v} for d, (mo, v) in latest.items()]
+            latest[d] = (mo, v)
+    flat = [{"domain": d, "mrr": round(v, 2)} for d, (mo, v) in latest.items()]
     _load(MRR_TABLE, [bigquery.SchemaField("domain", "STRING"), bigquery.SchemaField("mrr", "FLOAT")], flat)
     # Fold the fresh MRR into the precomputed status table (cheap: reads private raw).
     try:
@@ -605,22 +634,22 @@ def _get_mrr_map(fresh: list[dict] | None = None) -> dict:
 
 
 def _get_mrr_monthly_map(fresh: list[dict] | None = None) -> dict:
-    """domain → {"YYYY-MM": mrr} from pipedrive_mrr_monthly (or a freshly-built list)."""
-    out: dict[str, dict] = defaultdict(dict)
-    if fresh is not None:
-        for r in fresh:
-            if r.get("domain"):
-                out[r["domain"]][r["month"]] = r["mrr"]
-        return dict(out)
-    bq = client()
-    try:
-        rows = bq.query(f"SELECT domain, month, mrr FROM `{table_ref(MRR_MONTHLY_TABLE)}`").result()
-        for r in rows:
-            if r["domain"]:
-                out[r["domain"]][r["month"]] = r["mrr"]
-    except Exception:
-        return {}
-    return dict(out)
+    """domain → {"YYYY-MM": {channel: mrr}} from pipedrive_mrr_monthly (or a freshly-
+    built list). Per-channel; _compute_status sums channels for the FACT/RISK total."""
+    out: dict[str, dict] = defaultdict(lambda: defaultdict(dict))
+    rows = fresh
+    if rows is None:
+        try:
+            rows = list(client().query(
+                f"SELECT domain, month, channel, mrr FROM `{table_ref(MRR_MONTHLY_TABLE)}`").result())
+        except Exception:
+            return {}
+    for r in rows:   # dict (fresh) or BQ Row — both support r["col"]
+        d = r["domain"]
+        if not d:
+            continue
+        out[d][r["month"]][r["channel"] or "?"] = r["mrr"]
+    return {d: {mo: dict(chs) for mo, chs in months.items()} for d, months in out.items()}
 
 
 def get_status_for_domains(domains: list[str]) -> dict[str, dict]:

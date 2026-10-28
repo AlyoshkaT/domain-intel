@@ -31,12 +31,32 @@ interface StatusRow {
   manager: string
   tariff: string
   mrr: number | null
-  mrr_monthly: string        // JSON: recent months [{month, mrr}], recent-first
+  mrr_monthly: string        // JSON: recent months [{month, mrr, ch:{chan:val}}], recent-first
+  mrr_channels: string       // JSON: latest month per-channel {chan: val} (sums to mrr)
   deals_json: string
   computed_at: string
 }
 interface Point { month: string; won: number; open: number; lost: number }
-interface MrrMonth { month: string; mrr: number }
+interface MrrMonth { month: string; mrr: number; ch?: Record<string, number> }
+
+// MRR direction columns, in the order the user asked for. `key` = the corp `Media`
+// value stored in pipedrive_mrr_monthly.channel. SMS & Viber are OFF by default:
+// they still count in the Σ column (full monthly MRR → status), but a toggle decides
+// whether a channel is added to the money chart's summed line.
+const CHANNELS: { key: string; label: string; short: string }[] = [
+  { key: "ExtraFeatures", label: "CDP module", short: "CDP" },
+  { key: "Email", label: "Email", short: "Email" },
+  { key: "AppInbox", label: "App Inbox", short: "Inbox" },
+  { key: "WebPush", label: "Web Push", short: "WebP" },
+  { key: "InApp", label: "In App", short: "InApp" },
+  { key: "MobPush", label: "Mob push", short: "MobP" },
+  { key: "TelegramBot", label: "Telegram", short: "TG" },
+  { key: "Widget", label: "Web widget", short: "Widget" },
+  { key: "Sms", label: "SMS", short: "SMS" },
+  { key: "Viber", label: "Viber", short: "Viber" },
+]
+const DEFAULT_OFF = new Set(["Sms", "Viber"])
+const CH_KEY = "pd_mrr_channels_on"
 
 const L = (lang: Lang) => ({
   title: lang === "ua" ? "Pipedrive — статус відносин" : "Pipedrive — relationship status",
@@ -59,7 +79,7 @@ const L = (lang: Lang) => ({
   noMatch: lang === "ua" ? "Нічого не знайдено за фільтром." : "Nothing matches the filter.",
   count: (a: string, b: string) => lang === "ua" ? `${a} з ${b}` : `${a} of ${b}`,
   chartTitle: lang === "ua" ? "Динаміка Won / Open / Lost (по місяцях)" : "Won / Open / Lost trend (monthly)",
-  moneyTitle: lang === "ua" ? "MRR відфільтрованих компаній — сума за місяцями (12 міс)" : "MRR of filtered companies — monthly total (12 mo)",
+  moneyTitle: lang === "ua" ? "MRR відфільтрованих компаній — сума за місяцями, $ (12 міс)" : "MRR of filtered companies — monthly total, $ (12 mo)",
   boardCount: lang === "ua" ? "Продажі по менеджерах — кількість" : "Sales by manager — count",
   boardMoney: lang === "ua" ? "Продажі по менеджерах — гроші (₴)" : "Sales by manager — money (₴)",
   boardNote: lang === "ua" ? "сума оплат, переважно UAH" : "paid total, mostly UAH",
@@ -70,7 +90,11 @@ const L = (lang: Lang) => ({
   thManager: "MANAGER",
   thNum: "DEALS №",
   thTariff: "TARIFF",
-  thMrr: lang === "ua" ? "MRR (−2 / −1 / міс)" : "MRR (−2 / −1 / mo)",
+  thMrr: lang === "ua" ? "Σ MRR (−2/−1/міс)" : "Σ MRR (−2/−1/mo)",
+  chByChannel: lang === "ua" ? "MRR по каналах (поточний міс, $)" : "MRR by channel (current mo, $)",
+  chTogglesNote: lang === "ua"
+    ? "Канали на графіку (сірі — не входять у суму; Σ у таблиці завжди повна)"
+    : "Channels on the chart (greyed = excluded from the sum; the table Σ is always full)",
   thPd: "DEALS Status",
   dealsStatus: "STATUS DEALS",
   thFact: lang === "ua" ? "ФАКТ" : "FACT",
@@ -224,6 +248,17 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   const [sortCol, setSortCol] = useState<string>("last_contact_at")
   const [sortDir, setSortDir] = useState<1 | -1>(-1)  // newest contact first → oldest
 
+  // Which channels are summed into the money chart (SMS/Viber off by default).
+  // Persisted per-browser; does NOT affect the table Σ column or FACT/RISK status.
+  const [chOn, setChOn] = useState<Record<string, boolean>>(() => {
+    const d: Record<string, boolean> = {}
+    for (const c of CHANNELS) d[c.key] = !DEFAULT_OFF.has(c.key)
+    try { const s = JSON.parse(localStorage.getItem(CH_KEY) || "null"); if (s && typeof s === "object") return { ...d, ...s } } catch { /* ignore */ }
+    return d
+  })
+  useEffect(() => { try { localStorage.setItem(CH_KEY, JSON.stringify(chOn)) } catch { /* ignore */ } }, [chOn])
+  const enabledCh = useMemo(() => CHANNELS.filter(c => chOn[c.key]).map(c => c.key), [chOn])
+
   // Trend chart is server-computed; reload it for the current period + manager.
   const loadSeries = useCallback(async (manager: string) => {
     const mp = manager ? `&manager=${encodeURIComponent(manager)}` : ""
@@ -295,21 +330,38 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
     return [...out].sort(cmp)
   }, [rows, factFilter, dealsFilter, riskFilter, managerFilter, search, sortCol, sortDir])
 
-  // Money chart: SUM of real MRR per month over the currently-filtered companies
-  // (client-side from each row's recent-12-month mrr_monthly). Reflects filters live.
+  // Money chart: SUM of real MRR per month over the currently-filtered companies,
+  // counting only the ENABLED channels (client-side from each row's recent-12-month
+  // mrr_monthly). Reflects filters + channel toggles live. Falls back to the monthly
+  // total when a row has no channel split yet (data from before the per-channel sync).
   const mrrSeries = useMemo(() => {
+    const on = new Set(enabledCh)
     const sums = new Map<string, { mrr: number; n: number }>()
     for (const r of filtered) {
       let arr: MrrMonth[] = []
       try { arr = JSON.parse(r.mrr_monthly || "[]") } catch { /* ignore */ }
       for (const m of arr) {
-        if (!m.mrr) continue
+        let v = 0
+        if (m.ch) { for (const k of on) v += m.ch[k] || 0 }
+        else v = m.mrr || 0
+        if (!v) continue
         const e = sums.get(m.month) || { mrr: 0, n: 0 }
-        e.mrr += m.mrr; e.n += 1; sums.set(m.month, e)
+        e.mrr += v; e.n += 1; sums.set(m.month, e)
       }
     }
     return [...sums.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
       .map(([month, v]) => ({ month, mrr: Math.round(v.mrr), domains: v.n }))
+  }, [filtered, enabledCh])
+
+  // Per-channel Σ of the latest month over the filtered set — shown on the toggle chips.
+  const channelTotals = useMemo(() => {
+    const t: Record<string, number> = {}
+    for (const r of filtered) {
+      let ch: Record<string, number> = {}
+      try { ch = JSON.parse(r.mrr_channels || "{}") } catch { /* ignore */ }
+      for (const k in ch) t[k] = (t[k] || 0) + (ch[k] || 0)
+    }
+    return t
   }, [filtered])
 
   // Sales by manager (count = paid deals, money = Σ paid value), over the loaded
@@ -333,7 +385,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
   const exportCSV = useCallback(() => {
     const cols = ["domain", "org_name", "manager", "main_deal_id", "tariff", "deals_status", "status_pipedrive", "status_fact", "risk",
       "paid_m1", "paid_m2", "paid_m3", "last_contact_at", "last_paid_at", "won_deals", "open_deals",
-      "lost_deals", "total_deals", "total_paid_value", "currency", "paid_breakdown", "mrr", "mrr_monthly", "computed_at"]
+      "lost_deals", "total_deals", "total_paid_value", "currency", "paid_breakdown", "mrr", "mrr_channels", "mrr_monthly", "computed_at"]
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`
     const csv = [cols.join(","), ...filtered.map(r => cols.map(c => esc((r as any)[c])).join(","))].join("\n")
     const a = document.createElement("a")
@@ -363,6 +415,22 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
         {cell(v(2), false)}{sep}{cell(v(1), false)}{sep}{cell(v(0), true)}
       </span>
     )
+  }
+  // One <td> per channel (latest-month value); greyed/dimmed when that channel is
+  // toggled off. Informational — the Σ column still carries the full monthly MRR.
+  const chCells = (chJson: string) => {
+    let ch: Record<string, number> = {}
+    try { ch = JSON.parse(chJson || "{}") } catch { /* ignore */ }
+    return CHANNELS.map(c => {
+      const v = ch[c.key] || 0
+      const on = chOn[c.key]
+      return (
+        <td key={c.key} style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap",
+          color: v && on ? "var(--text-2)" : "var(--text-3)", opacity: on ? 1 : 0.5 }}>
+          {v ? Math.round(v).toLocaleString() : "·"}
+        </td>
+      )
+    })
   }
   const dealUrl = (id: number | null) => (id && company) ? `https://${company}.pipedrive.com/deal/${id}` : ""
   const factOf = (s: string) => s === "won" ? "Won" : s === "open" ? "Open" : "Lost"
@@ -403,7 +471,29 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
 
       {/* Trend chart (deal counts) */}
       <TrendChart data={series} title={tx.chartTitle + (managerFilter ? ` · 👤 ${managerFilter}` : "")} />
-      {/* Money chart (real MRR of the filtered companies) */}
+      {/* Channel toggles — decide which directions sum into the money chart below */}
+      <div className="card" style={{ marginBottom: 12, padding: "8px 12px" }}>
+        <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 6 }}>{tx.chTogglesNote}</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {CHANNELS.map(c => {
+            const on = chOn[c.key]
+            const tot = channelTotals[c.key] || 0
+            return (
+              <button key={c.key} onClick={() => setChOn(s => ({ ...s, [c.key]: !s[c.key] }))}
+                title={c.label + (tot ? ` · ${fmtMoney(tot)}$` : "")}
+                style={{
+                  cursor: "pointer", fontSize: 11, padding: "3px 9px", borderRadius: 14, whiteSpace: "nowrap",
+                  background: on ? "rgba(34,197,94,0.16)" : "var(--bg-2)",
+                  color: on ? "#22c55e" : "var(--text-3)",
+                  border: `1px solid ${on ? "rgba(34,197,94,0.45)" : "var(--border)"}`,
+                }}>
+                {on ? "●" : "○"} {c.label}{tot ? ` · ${fmtMoney(tot)}` : ""}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      {/* Money chart (real MRR of the filtered companies, enabled channels only) */}
       <MoneyChart data={mrrSeries} title={tx.moneyTitle} />
 
       {/* Sales-by-manager boards (interactive → filter the table) */}
@@ -492,7 +582,6 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                   ["last_contact_at", tx.thContact, "left"],
                   ["last_paid_at", tx.thLast, "left"],
                   ["total_paid_value", tx.thValue, "right"],
-                  ["mrr", tx.thMrr, "right"],
                 ] as [string, string, string][]).map(([col, label, align]) => (
                   <th key={col} onClick={() => toggleSort(col)}
                     title={col === "paid_m1" ? tx.months : undefined}
@@ -500,6 +589,28 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                     {label}{sortCol === col ? (sortDir === 1 ? " ▲" : " ▼") : ""}
                   </th>
                 ))}
+                {/* MRR direction columns (current month), then the Σ total column */}
+                <th title={tx.chByChannel} colSpan={CHANNELS.length}
+                  style={{ textAlign: "center", userSelect: "none", whiteSpace: "nowrap",
+                    fontSize: 10, color: "var(--text-3)", borderBottom: "1px solid var(--border)" }}>
+                  {tx.chByChannel}
+                </th>
+                <th onClick={() => toggleSort("mrr")}
+                  style={{ cursor: "pointer", userSelect: "none", textAlign: "right", whiteSpace: "nowrap" }}>
+                  {tx.thMrr}{sortCol === "mrr" ? (sortDir === 1 ? " ▲" : " ▼") : ""}
+                </th>
+              </tr>
+              <tr>
+                {/* sub-header: one cell per channel, greyed when the channel is OFF */}
+                <th colSpan={12} style={{ padding: 0, border: "none" }} />
+                {CHANNELS.map(c => (
+                  <th key={c.key} title={c.label}
+                    style={{ textAlign: "right", whiteSpace: "nowrap", fontSize: 10, fontWeight: 600,
+                      color: chOn[c.key] ? "var(--text-2)" : "var(--text-3)", opacity: chOn[c.key] ? 1 : 0.55 }}>
+                    {c.short}
+                  </th>
+                ))}
+                <th style={{ padding: 0, border: "none" }} />
               </tr>
             </thead>
             <tbody>
@@ -534,13 +645,14 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
                         {r.total_paid_value ? r.total_paid_value.toLocaleString() : "0"} {r.currency}
                         {r.paid_breakdown && r.paid_breakdown.includes(",") && <span style={{ color: "var(--text-3)", marginLeft: 3 }}>＊</span>}
                       </td>
+                      {chCells(r.mrr_channels)}
                       <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "nowrap" }}>
                         {mrr3(r.mrr_monthly)}
                       </td>
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={13} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
+                        <td colSpan={13 + CHANNELS.length} style={{ background: "var(--bg-2)", padding: "8px 16px" }}>
                           <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>{tx.dealsHdr}</div>
                           {deals.map((d, j) => (
                             <div key={j} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, padding: "2px 0" }}>
