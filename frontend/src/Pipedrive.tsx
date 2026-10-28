@@ -80,6 +80,7 @@ const L = (lang: Lang) => ({
   count: (a: string, b: string) => lang === "ua" ? `${a} з ${b}` : `${a} of ${b}`,
   chartTitle: lang === "ua" ? "Динаміка Won / Open / Lost (по місяцях)" : "Won / Open / Lost trend (monthly)",
   moneyTitle: lang === "ua" ? "MRR відфільтрованих компаній — сума за місяцями, $ (12 міс)" : "MRR of filtered companies — monthly total, $ (12 mo)",
+  moneyNums: lang === "ua" ? "Цифри" : "Numbers",
   boardCount: lang === "ua" ? "Продажі по менеджерах — кількість" : "Sales by manager — count",
   boardMoney: lang === "ua" ? "Продажі по менеджерах — гроші (₴)" : "Sales by manager — money (₴)",
   boardNote: lang === "ua" ? "сума оплат, переважно UAH" : "paid total, mostly UAH",
@@ -159,7 +160,15 @@ function TrendChart({ data, title }: { data: Point[]; title: string }) {
 }
 
 // Simple money bar chart (SVG) — total MRR of the filtered companies per month.
-function MoneyChart({ data, title }: { data: { month: string; mrr: number; domains: number }[]; title: string }) {
+const MONEY_NUMS_KEY = "pd_money_nums"
+
+function MoneyChart({ data, title, numsLabel }: { data: { month: string; mrr: number; domains: number }[]; title: string; numsLabel: string }) {
+  // Show the MRR value above every bar at once (toggle), so the whole picture is
+  // readable without hovering each bar. Choice is remembered per-browser.
+  const [showNums, setShowNums] = useState<boolean>(() => {
+    try { return localStorage.getItem(MONEY_NUMS_KEY) === "1" } catch { return false }
+  })
+  useEffect(() => { try { localStorage.setItem(MONEY_NUMS_KEY, showNums ? "1" : "0") } catch { /* ignore */ } }, [showNums])
   if (!data.length) return null
   const W = Math.max(640, data.length * 44), H = 200, pad = 28, base = H - pad
   const max = Math.max(1, ...data.map(d => d.mrr))
@@ -168,7 +177,16 @@ function MoneyChart({ data, title }: { data: { month: string; mrr: number; domai
   const y = (v: number) => base - (v / max) * (base - 10)
   return (
     <div className="card" style={{ marginBottom: 12, overflowX: "auto" }}>
-      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", marginBottom: 6 }}>{title}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)" }}>{title}</div>
+        <button onClick={() => setShowNums(v => !v)} title={numsLabel}
+          style={{ flexShrink: 0, cursor: "pointer", fontSize: 11, padding: "2px 8px", borderRadius: 4,
+            border: `1px solid ${showNums ? "#22c55e66" : "var(--border)"}`,
+            background: showNums ? "#22c55e22" : "transparent",
+            color: showNums ? "#16a34a" : "var(--text-3)", whiteSpace: "nowrap" }}>
+          {showNums ? "●" : "○"} {numsLabel}
+        </button>
+      </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxHeight: 220 }}>
         <line x1={pad} y1={base} x2={W - pad} y2={base} stroke="var(--border)" />
         {data.map((d) => {
@@ -178,6 +196,9 @@ function MoneyChart({ data, title }: { data: { month: string; mrr: number; domai
               <rect x={x0 - bw / 2} y={y(d.mrr)} width={bw} height={base - y(d.mrr)} fill="#22c55e" rx={2}>
                 <title>{`${d.month}: ${d.mrr.toLocaleString()} · ${d.domains}`}</title>
               </rect>
+              {showNums && d.mrr > 0 && (
+                <text x={x0} y={Math.max(8, y(d.mrr) - 3)} textAnchor="middle" fontSize={8} fontWeight={600} fill="var(--text-2)">{fmtMoney(d.mrr)}</text>
+              )}
               <text x={x0} y={H - 8} textAnchor="middle" fontSize={9} fill="var(--text-3)">{d.month.slice(2)}</text>
             </g>
           )
@@ -494,7 +515,7 @@ export default function PipedrivePage({ lang, can }: { lang: Lang; can: (p: stri
         </div>
       </div>
       {/* Money chart (real MRR of the filtered companies, enabled channels only) */}
-      <MoneyChart data={mrrSeries} title={tx.moneyTitle} />
+      <MoneyChart data={mrrSeries} title={tx.moneyTitle} numsLabel={tx.moneyNums} />
 
       {/* Sales-by-manager boards (interactive → filter the table) */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
