@@ -31,9 +31,9 @@ const L = (lang: Lang) => ({
   search: lang === "ua" ? "Пошук: клієнт / домен / агенція…" : "Search: client / domain / agency…",
   clearSearch: lang === "ua" ? "очистити пошук" : "clear search",
   period: lang === "ua" ? "Період" : "Period",
-  allAgencies: lang === "ua" ? "Усі агенції" : "All agencies",
-  pickClient: lang === "ua" ? "— вибрати клієнта —" : "— pick a client —",
-  boundTo: lang === "ua" ? "привʼязаний до" : "bound to",
+  addAgency: lang === "ua" ? "+ агенція" : "+ agency",
+  addClient: lang === "ua" ? "+ клієнт" : "+ client",
+  clearAll: lang === "ua" ? "Очистити все" : "Clear all",
   moneyTitle: lang === "ua" ? "MRR партнерських клієнтів — сума за місяцями, $" : "Partner clients MRR — monthly total, $",
   moneyNums: lang === "ua" ? "Цифри" : "Numbers",
   chTogglesNote: lang === "ua"
@@ -74,10 +74,17 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
   const [error, setError] = useState("")
   const [source, setSource] = useState("")
   const [search, setSearch] = useState("")
-  const [agencyFilter, setAgencyFilter] = useState("")
-  const [clientPick, setClientPick] = useState(0)   // organisation_id, 0 = none
+  const [agencySel, setAgencySel] = useState<Set<string>>(new Set())      // selected agencies
+  const [clientSel, setClientSel] = useState<Set<number>>(new Set())      // selected org ids
   const [fromIdx, setFromIdx] = useState(0)
   const [toIdx, setToIdx] = useState(0)
+
+  const toggleAgency = (name: string) => setAgencySel(s => {
+    const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n
+  })
+  const toggleClient = (id: number) => setClientSel(s => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
+  })
 
   // Channel toggles (same set as Pipedrive; SMS/Viber off by default), per-browser.
   const [chOn, setChOn] = useState<Record<string, boolean>>(() => {
@@ -133,16 +140,18 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
     [...clients].sort((a, b) =>
       (a.organisation || a.domain || "").localeCompare(b.organisation || b.domain || "")),
     [clients])
-  const pickedClient = useMemo(() =>
-    clientPick ? clients.find(c => c.organisation_id === clientPick) : undefined,
-    [clients, clientPick])
+  const pickedClients = useMemo(() =>
+    clients.filter(c => clientSel.has(c.organisation_id)),
+    [clients, clientSel])
 
   // Filter → group by agency. Each group carries per-month sums + a period total.
+  // Agency + client selections combine as a UNION (clients of the chosen agencies
+  // OR individually-chosen clients); search always ANDs on top.
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase()
+    const noSel = agencySel.size === 0 && clientSel.size === 0
     const rows = parsed.filter(({ c }) =>
-      (!clientPick || c.organisation_id === clientPick) &&
-      (!agencyFilter || c.partner === agencyFilter) &&
+      (noSel || agencySel.has(c.partner) || clientSel.has(c.organisation_id)) &&
       (!q || c.organisation.toLowerCase().includes(q) || c.domain.includes(q) || (c.partner || "").toLowerCase().includes(q))
     )
     const byAgency = new Map<string, { c: Client; map: Record<string, MrrMonth>; perMonth: Record<string, number>; sum: number }[]>()
@@ -162,7 +171,7 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
     })
     out.sort((a, b) => b.sum - a.sum)
     return out
-  }, [parsed, search, agencyFilter, clientPick, periodMonths, valOf])
+  }, [parsed, search, agencySel, clientSel, periodMonths, valOf])
 
   const grand = useMemo(() => {
     const perMonth: Record<string, number> = {}
@@ -240,44 +249,30 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
 
         {/* Controls */}
         <div className="filter-row" style={{ marginBottom: 8 }}>
-          {/* Agency dropdown — pick one to see / sort its clients */}
+          {/* Agency dropdown — adds to the multi-selection */}
           <select className="filter-input" style={{ padding: "4px 8px" }}
-            value={agencyFilter}
-            onChange={e => { setAgencyFilter(e.target.value); setClientPick(0) }}>
-            <option value="">{tx.allAgencies} ({clients.length})</option>
-            {agencyList.map(([name, n]) => <option key={name} value={name}>{name} ({n})</option>)}
+            value="" onChange={e => { if (e.target.value) toggleAgency(e.target.value) }}>
+            <option value="">{tx.addAgency} ({clients.length})</option>
+            {agencyList.map(([name, n]) => (
+              <option key={name} value={name}>{agencySel.has(name) ? "✓ " : ""}{name} ({n})</option>
+            ))}
           </select>
-          {/* Client dropdown — pick one to see which agency it is bound to */}
+          {/* Client dropdown — adds to the multi-selection; label shows its agency */}
           <select className="filter-input" style={{ padding: "4px 8px", maxWidth: 260 }}
-            value={clientPick}
-            onChange={e => { const v = +e.target.value; setClientPick(v); if (v) { setAgencyFilter(""); setSearch("") } }}>
-            <option value={0}>{tx.pickClient}</option>
+            value="" onChange={e => { if (e.target.value) toggleClient(+e.target.value) }}>
+            <option value="">{tx.addClient}</option>
             {clientList.map(c => (
               <option key={c.organisation_id} value={c.organisation_id}>
-                {(c.organisation || c.domain || `#${c.organisation_id}`)} — {c.partner}
+                {clientSel.has(c.organisation_id) ? "✓ " : ""}{(c.organisation || c.domain || `#${c.organisation_id}`)} — {c.partner}
               </option>
             ))}
           </select>
-          {pickedClient && (
-            <button onClick={() => setClientPick(0)} title="clear client"
-              style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
-                background: "rgba(168,85,247,0.16)", color: "#a855f7", border: "1px solid rgba(168,85,247,0.4)" }}>
-              👤 {pickedClient.organisation || pickedClient.domain} → 🏢 {pickedClient.partner} ✕
-            </button>
-          )}
           <input className="filter-input" placeholder={tx.search} value={search} onChange={e => setSearch(e.target.value)} />
           {search && (
             <button onClick={() => setSearch("")} title={tx.clearSearch}
               style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
                 background: "rgba(148,163,184,0.18)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
               🔎 {search} ✕
-            </button>
-          )}
-          {agencyFilter && (
-            <button onClick={() => setAgencyFilter("")} title="clear agency filter"
-              style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
-                background: "rgba(59,130,246,0.18)", color: "#60a5fa", border: "1px solid rgba(59,130,246,0.4)" }}>
-              🏢 {agencyFilter} ✕
             </button>
           )}
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--text-3)" }}>
@@ -293,6 +288,31 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
           <span className="filter-count">{grand.nClients} {tx.clients} · {groups.length}</span>
           <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
         </div>
+
+        {/* Selected agencies / clients as removable chips */}
+        {(agencySel.size > 0 || clientSel.size > 0) && (
+          <div className="filter-row" style={{ marginBottom: 8, gap: 6, flexWrap: "wrap" }}>
+            {[...agencySel].map(name => (
+              <button key={"a" + name} onClick={() => toggleAgency(name)} title={tx.clearSearch}
+                style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
+                  background: "rgba(59,130,246,0.18)", color: "#60a5fa", border: "1px solid rgba(59,130,246,0.4)" }}>
+                🏢 {name} ✕
+              </button>
+            ))}
+            {pickedClients.map(c => (
+              <button key={"c" + c.organisation_id} onClick={() => toggleClient(c.organisation_id)} title={tx.clearSearch}
+                style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
+                  background: "rgba(168,85,247,0.16)", color: "#a855f7", border: "1px solid rgba(168,85,247,0.4)" }}>
+                👤 {c.organisation || c.domain} → 🏢 {c.partner} ✕
+              </button>
+            ))}
+            <button onClick={() => { setAgencySel(new Set()); setClientSel(new Set()) }}
+              style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
+                background: "transparent", color: "var(--text-3)", border: "1px solid var(--border)" }}>
+              {tx.clearAll}
+            </button>
+          </div>
+        )}
 
         {!groups.length ? (
           <div className="card" style={{ fontSize: 13, color: "var(--text-3)" }}>{tx.noMatch}</div>
@@ -316,7 +336,7 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
                     <tr style={{ background: "var(--bg-2)" }}>
                       <td colSpan={2} style={{ fontWeight: 700 }}>
                         <span style={{ cursor: "pointer" }} title={tx.filterByAgency}
-                          onClick={() => setAgencyFilter(agencyFilter === g.partner ? "" : g.partner)}>
+                          onClick={() => toggleAgency(g.partner)}>
                           🏢 {g.partner}
                         </span>
                         <span style={{ color: "var(--text-3)", fontWeight: 400, fontSize: 11, marginLeft: 6 }}>
