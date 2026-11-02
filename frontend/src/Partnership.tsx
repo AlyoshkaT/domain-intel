@@ -46,10 +46,17 @@ const L = (lang: Lang) => ({
   openSite: lang === "ua" ? "Відкрити сайт" : "Open site",
   filterByAgency: lang === "ua" ? "Клік — лише ця агенція" : "Click to show only this agency",
   srcSheet: lang === "ua" ? "Джерело: повний реєстр (Google-Таблиця)" : "Source: full registry (Google Sheet)",
+  srcHier: lang === "ua"
+    ? "Джерело: corpBQ — білінговий реєстр + ієрархія організацій (нативно, включно з неплатними клієнтами). Для агенцій, що не є окремою орг (напр. OL Agency), список = платні клієнти."
+    : "Source: corpBQ — billed registry + org hierarchy (native, incl. non-billing clients). For agencies not modeled as an org (e.g. OL Agency), the list is billed clients only.",
   srcBilled: lang === "ua"
-    ? "Джерело: лише клієнти з білінговим MRR. Для повного реєстру власник має розшарити Google-Таблицю на сервіс-акаунт es-analysis@esoteric-parsec-147012.iam.gserviceaccount.com (перегляд)."
-    : "Source: billed clients only. For the full registry, the owner must share the Google Sheet with service account es-analysis@esoteric-parsec-147012.iam.gserviceaccount.com (Viewer).",
+    ? "Джерело: лише клієнти з білінговим MRR."
+    : "Source: billed clients only.",
 })
+
+const srcText = (s: string, tx: ReturnType<typeof L>) =>
+  s === "sheet" ? tx.srcSheet : s === "commissions+hierarchy" ? tx.srcHier : tx.srcBilled
+const srcGood = (s: string) => s === "sheet" || s === "commissions+hierarchy"
 
 // Compact money for the many month cells; "·" for an empty cell.
 function cell(v: number) {
@@ -185,10 +192,10 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
       {!loading && !error && clients.length > 0 && (<>
         {source && (
           <div style={{ fontSize: 11, marginBottom: 10, padding: "6px 10px", borderRadius: 6,
-            background: source === "sheet" ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
-            color: source === "sheet" ? "#16a34a" : "#a16207",
-            border: `1px solid ${source === "sheet" ? "#22c55e44" : "#eab30844"}` }}>
-            {source === "sheet" ? tx.srcSheet : tx.srcBilled}
+            background: srcGood(source) ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
+            color: srcGood(source) ? "#16a34a" : "#a16207",
+            border: `1px solid ${srcGood(source) ? "#22c55e44" : "#eab30844"}` }}>
+            {srcText(source, tx)}
           </div>
         )}
         {/* Channel toggles — which spend counts into every sum/column/chart */}

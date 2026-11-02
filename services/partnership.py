@@ -25,8 +25,9 @@ The dashboard reads only these two small private tables; the corp scan
 import io
 import json
 import logging
+import re
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from google.cloud import bigquery
 
@@ -122,6 +123,74 @@ def _fetch_membership(cc, cds: str) -> tuple[list[dict], str, int]:
         return rows, "commissions", mb
 
 
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _enrich_with_hierarchy(cc, corp_project: str, mem_rows: list[dict]) -> tuple[list[dict], int]:
+    """Native corpBQ fallback-enrichment: the agency↔client link also lives in the
+    organisation hierarchy — a client's `Parent_OrganisationID` points at the agency
+    org (e.g. RTMuse = org 106395 'RTMuseAgecy', Remrkt = 108976). Where a partner's
+    registry clients share a parent org whose NAME matches the partner (so we skip
+    generic buckets like 'Trial'/'SPRINGO'/'Yespo parent'), we pull ALL that parent's
+    children — adding non-billing clients the billed registry misses (e.g. Biopell).
+    Returns (added_rows, mb_billed)."""
+    OI = f"{corp_project}.es_live.jasper_report_OrganisationsInfo"
+    mb = 0
+    by_partner: dict[str, set] = defaultdict(set)
+    for m in mem_rows:
+        by_partner[m["partner"]].add(m["organisation_id"])
+    client_ids = sorted({i for s in by_partner.values() for i in s})
+    if not client_ids:
+        return [], 0
+
+    # parents of the registry clients
+    j = cc.query(f"SELECT OrganisationID, Parent_OrganisationID FROM `{OI}` "
+                 f"WHERE OrganisationID IN ({','.join(map(str, client_ids))})")
+    parent_of = {int(r["OrganisationID"]): r["Parent_OrganisationID"] for r in j.result()}
+    mb += round((j.total_bytes_billed or 0) / 1e6)
+    parent_ids = sorted({p for p in parent_of.values() if p is not None})
+    if not parent_ids:
+        return [], mb
+
+    # names of those parent orgs
+    j = cc.query(f"SELECT OrganisationID, Organisation FROM `{OI}` "
+                 f"WHERE OrganisationID IN ({','.join(map(str, parent_ids))})")
+    parent_name = {int(r["OrganisationID"]): (r["Organisation"] or "") for r in j.result()}
+    mb += round((j.total_bytes_billed or 0) / 1e6)
+
+    # accept a parent as the agency's org only when its name matches the partner name
+    agency_org: dict[int, str] = {}   # parent_org_id → partner name
+    for partner, ids in by_partner.items():
+        cnt = Counter(parent_of.get(i) for i in ids if parent_of.get(i) is not None)
+        if not cnt:
+            continue
+        dom = cnt.most_common(1)[0][0]
+        pn, pp = _norm(parent_name.get(int(dom), "")), _norm(partner)
+        if pp and pn and (pp in pn or pn in pp):
+            agency_org[int(dom)] = partner
+    if not agency_org:
+        return [], mb
+
+    # all children of the accepted agency orgs → full client lists
+    j = cc.query(f"SELECT OrganisationID, Organisation, Parent_OrganisationID FROM `{OI}` "
+                 f"WHERE Parent_OrganisationID IN ({','.join(map(str, agency_org))})")
+    existing = {(m["partner"], m["organisation_id"]) for m in mem_rows}
+    added = []
+    for r in j.result():
+        oid = int(r["OrganisationID"])
+        partner = agency_org.get(int(r["Parent_OrganisationID"]))
+        if not partner or (partner, oid) in existing:
+            continue
+        existing.add((partner, oid))
+        added.append({"partner": partner, "organisation_id": oid,
+                      "organisation": r["Organisation"] or "", "types": ""})
+    mb += round((j.total_bytes_billed or 0) / 1e6)
+    logger.info(f"partnership hierarchy enrichment: +{len(added)} clients from "
+                f"{len(agency_org)} agency orgs")
+    return added, mb
+
+
 def sync_partnership() -> dict:
     """Pull agency↔client membership + trailing per-channel monthly MRR from corpBQ
     into the two private tables. One ~570 MB corp scan per call — schedule sparsely."""
@@ -134,6 +203,14 @@ def sync_partnership() -> dict:
     # 1) Membership: partner ↔ org (+ types), full Sheet if shared, else billed clients.
     mem_rows, source, mb_mem = _fetch_membership(cc, cds)
     mb += mb_mem
+    # Native enrichment from the org hierarchy (adds non-billing clients). Only when we
+    # fell back to the billed registry — a readable Sheet is already the full master.
+    if source == "commissions":
+        added, mb_h = _enrich_with_hierarchy(cc, CORP_PROJECT_ID, mem_rows)
+        if added:
+            mem_rows = mem_rows + added
+            source = "commissions+hierarchy"
+        mb += mb_h
     org_ids = sorted({m["organisation_id"] for m in mem_rows})
 
     # 1b) Representative domain per org (for linking / opening the site).
