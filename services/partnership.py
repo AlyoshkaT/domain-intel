@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 MEMBERS_TABLE = "partnership_members"
 MRR_MONTHLY_TABLE = "partnership_mrr_monthly"
 FREQ_KEY = "partnership_sync_frequency"
+SOURCE_KEY = "partnership_source"   # "sheet" (full) | "commissions" (billed only)
 
 # How many trailing months of MRR to keep (≈12 full + the current partial month).
 _MONTHS_WINDOW = 13
@@ -85,39 +86,71 @@ def set_frequency(freq: str) -> dict:
     return {"status": "ok", "frequency": freq}
 
 
+# Membership source preference: the master registry Google Sheet (full list,
+# incl. clients with no MRR yet) first; fall back to the commissions table
+# (billed clients only) when the Sheet is not shared with the corp SA yet.
+_MEMBERS_SHEET = "table_partnership_clients"      # Drive-backed external table
+_MEMBERS_FALLBACK = "t_partnership_commissions"   # readable, billed clients only
+
+
+def _fetch_membership(cc, cds: str) -> tuple[list[dict], str, int]:
+    """Return (rows, source, mb). Each row: partner, organisation_id, organisation,
+    types. Prefers the full master Sheet; silently falls back when it 403s."""
+    def _agg(table: str):
+        q = f"""
+            SELECT partner,
+                   SAFE_CAST(organisation_id AS INT64) AS organisation_id,
+                   ANY_VALUE(organisation) AS organisation,
+                   STRING_AGG(DISTINCT type ORDER BY type) AS types
+            FROM `{cds}.{table}`
+            WHERE partner IS NOT NULL AND organisation_id IS NOT NULL
+            GROUP BY partner, organisation_id
+        """
+        job = cc.query(q)
+        rows = [{"partner": r["partner"], "organisation_id": int(r["organisation_id"]),
+                 "organisation": r["organisation"] or "", "types": r["types"] or ""}
+                for r in job.result() if r["organisation_id"] is not None]
+        return rows, round((job.total_bytes_billed or 0) / 1e6)
+
+    try:
+        rows, mb = _agg(_MEMBERS_SHEET)
+        logger.info(f"partnership membership from master Sheet: {len(rows)} rows")
+        return rows, "sheet", mb
+    except Exception as e:
+        logger.warning(f"master Sheet not readable ({str(e)[:80]}…) — falling back to commissions table")
+        rows, mb = _agg(_MEMBERS_FALLBACK)
+        return rows, "commissions", mb
+
+
 def sync_partnership() -> dict:
     """Pull agency↔client membership + trailing per-channel monthly MRR from corpBQ
     into the two private tables. One ~570 MB corp scan per call — schedule sparsely."""
     from core.bigquery import corp_client, CORP_PROJECT_ID, CORP_DATASET
     t0 = time.time()
     cds = f"{CORP_PROJECT_ID}.{CORP_DATASET}"
+    cc = corp_client()
     mb = 0
 
-    # 1) Membership: partner ↔ org (+ types + a representative domain).
-    members_sql = f"""
-        WITH mem AS (
-          SELECT partner, organisation_id,
-                 ANY_VALUE(organisation) AS organisation,
-                 STRING_AGG(DISTINCT type ORDER BY type) AS types
-          FROM `{cds}.t_partnership_commissions`
-          WHERE partner IS NOT NULL AND organisation_id IS NOT NULL
-          GROUP BY partner, organisation_id
-        ),
-        dom AS (
-          SELECT best_org_id, ANY_VALUE(LOWER(lookup_domain_actual)) AS domain
-          FROM `{cds}.primary_domains_orgs_mrr`
-          WHERE lookup_domain_actual IS NOT NULL
-          GROUP BY best_org_id
-        )
-        SELECT mem.partner, mem.organisation_id, mem.organisation, mem.types, dom.domain
-        FROM mem LEFT JOIN dom ON dom.best_org_id = mem.organisation_id
-    """
-    job = corp_client().query(members_sql)
-    members = [{"partner": r["partner"], "organisation_id": int(r["organisation_id"]),
-                "organisation": r["organisation"], "types": r["types"] or "",
-                "domain": (r["domain"] or "")} for r in job.result()]
-    mb += round((job.total_bytes_billed or 0) / 1e6)
-    org_ids = sorted({m["organisation_id"] for m in members})
+    # 1) Membership: partner ↔ org (+ types), full Sheet if shared, else billed clients.
+    mem_rows, source, mb_mem = _fetch_membership(cc, cds)
+    mb += mb_mem
+    org_ids = sorted({m["organisation_id"] for m in mem_rows})
+
+    # 1b) Representative domain per org (for linking / opening the site).
+    dom_map: dict[int, str] = {}
+    if org_ids:
+        idlist = ",".join(str(i) for i in org_ids)
+        djob = cc.query(f"""
+            SELECT best_org_id, ANY_VALUE(LOWER(lookup_domain_actual)) AS domain
+            FROM `{cds}.primary_domains_orgs_mrr`
+            WHERE lookup_domain_actual IS NOT NULL AND best_org_id IN ({idlist})
+            GROUP BY best_org_id
+        """)
+        for r in djob.result():
+            if r["best_org_id"] is not None:
+                dom_map[int(r["best_org_id"])] = r["domain"] or ""
+        mb += round((djob.total_bytes_billed or 0) / 1e6)
+    members = [{**m, "domain": dom_map.get(m["organisation_id"], "")} for m in mem_rows]
 
     # 2) Per-org per-channel monthly MRR (each MRR row counted once), trailing window.
     monthly: list[dict] = []
@@ -141,13 +174,19 @@ def sync_partnership() -> dict:
 
     _load(MEMBERS_TABLE, _MEMBERS_SCHEMA, members)
     _load(MRR_MONTHLY_TABLE, _MRR_MONTHLY_SCHEMA, monthly)
+    try:
+        from core.bigquery import set_setting
+        set_setting(SOURCE_KEY, source)  # "sheet" (full registry) or "commissions" (billed only)
+    except Exception:
+        pass
 
     agencies = len({m["partner"] for m in members})
     elapsed = round(time.time() - t0, 1)
     logger.info(f"sync_partnership: {len(members)} clients, {agencies} agencies, "
-                f"{len(monthly)} org-month-channels, {mb} MB corp, {elapsed}s")
+                f"{len(monthly)} org-month-channels, source={source}, {mb} MB corp, {elapsed}s")
     return {"status": "ok", "clients": len(members), "agencies": agencies,
-            "org_month_channels": len(monthly), "mb_billed_corp": mb, "elapsed": elapsed}
+            "org_month_channels": len(monthly), "source": source,
+            "mb_billed_corp": mb, "elapsed": elapsed}
 
 
 def get_partnership_rows() -> dict:
@@ -208,4 +247,9 @@ def get_partnership_rows() -> dict:
         })
 
     clients.sort(key=lambda c: (c["partner"] or "", -(c["mrr"] or 0)))
-    return {"clients": clients, "months": months_sorted, "generated": True}
+    try:
+        from core.bigquery import get_setting
+        source = get_setting(SOURCE_KEY, "commissions")
+    except Exception:
+        source = "commissions"
+    return {"clients": clients, "months": months_sorted, "source": source, "generated": True}

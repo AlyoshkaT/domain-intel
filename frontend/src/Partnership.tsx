@@ -45,6 +45,10 @@ const L = (lang: Lang) => ({
   noMatch: lang === "ua" ? "Нічого не знайдено за фільтром." : "Nothing matches the filter.",
   openSite: lang === "ua" ? "Відкрити сайт" : "Open site",
   filterByAgency: lang === "ua" ? "Клік — лише ця агенція" : "Click to show only this agency",
+  srcSheet: lang === "ua" ? "Джерело: повний реєстр (Google-Таблиця)" : "Source: full registry (Google Sheet)",
+  srcBilled: lang === "ua"
+    ? "Джерело: лише клієнти з білінговим MRR. Для повного реєстру власник має розшарити Google-Таблицю на сервіс-акаунт es-analysis@esoteric-parsec-147012.iam.gserviceaccount.com (перегляд)."
+    : "Source: billed clients only. For the full registry, the owner must share the Google Sheet with service account es-analysis@esoteric-parsec-147012.iam.gserviceaccount.com (Viewer).",
 })
 
 // Compact money for the many month cells; "·" for an empty cell.
@@ -58,6 +62,7 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
   const [months, setMonths] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [source, setSource] = useState("")
   const [search, setSearch] = useState("")
   const [agencyFilter, setAgencyFilter] = useState("")
   const [fromIdx, setFromIdx] = useState(0)
@@ -78,6 +83,7 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
       .then(d => {
         setClients(d.clients || [])
         setMonths(d.months || [])
+        setSource(d.source || "")
         if ((d.months || []).length) { setFromIdx(0); setToIdx(d.months.length - 1) }
       })
       .catch(e => setError(e.message))
@@ -177,6 +183,14 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
       )}
 
       {!loading && !error && clients.length > 0 && (<>
+        {source && (
+          <div style={{ fontSize: 11, marginBottom: 10, padding: "6px 10px", borderRadius: 6,
+            background: source === "sheet" ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
+            color: source === "sheet" ? "#16a34a" : "#a16207",
+            border: `1px solid ${source === "sheet" ? "#22c55e44" : "#eab30844"}` }}>
+            {source === "sheet" ? tx.srcSheet : tx.srcBilled}
+          </div>
+        )}
         {/* Channel toggles — which spend counts into every sum/column/chart */}
         <div className="card" style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 8 }}>{tx.chTogglesNote}</div>

@@ -181,9 +181,15 @@ _AI_PARSED_SCHEMA = [
 ]
 
 
-def _make_client(env_var: str, file_path: str, project_id: str) -> bigquery.Client:
-    """Load credentials from ENV variable (Railway) or file (local dev)."""
-    scopes = ["https://www.googleapis.com/auth/bigquery"]
+def _make_client(env_var: str, file_path: str, project_id: str,
+                 extra_scopes: tuple[str, ...] = ()) -> bigquery.Client:
+    """Load credentials from ENV variable (Railway) or file (local dev).
+
+    extra_scopes lets a client reach beyond BigQuery — e.g. the corp client needs
+    the Drive read scope to query Drive-backed external tables (the partnership
+    registry Google Sheet). The scope only mints a token that CAN touch Drive; the
+    Sheet must still be shared with the service account for the read to succeed."""
+    scopes = ["https://www.googleapis.com/auth/bigquery", *extra_scopes]
 
     # Try ENV variable first (Railway)
     json_str = os.getenv(env_var, "")
@@ -215,7 +221,8 @@ _corp_client: Optional[bigquery.Client] = None
 def corp_client() -> bigquery.Client:
     global _corp_client
     if _corp_client is None:
-        _corp_client = _make_client("GOOGLE_CORP_CREDENTIALS_JSON", GOOGLE_CORP_CREDENTIALS, CORP_PROJECT_ID)
+        _corp_client = _make_client("GOOGLE_CORP_CREDENTIALS_JSON", GOOGLE_CORP_CREDENTIALS, CORP_PROJECT_ID,
+                                    extra_scopes=("https://www.googleapis.com/auth/drive.readonly",))
     return _corp_client
 
 
