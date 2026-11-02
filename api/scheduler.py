@@ -147,6 +147,27 @@ def _run_pipedrive_mrr_sync():
         logger.warning(f"Scheduled Pipedrive MRR sync failed: {e}")
 
 
+def _partnership_should_sync_today(now: datetime) -> str:
+    from services.partnership import get_frequency
+    freq = get_frequency()
+    if freq == "off":
+        return ""
+    if freq == "weekly" and now.weekday() != 0:
+        return ""
+    if freq == "monthly" and now.day != 1:
+        return ""
+    return freq
+
+
+def _run_partnership_sync():
+    from services.partnership import sync_partnership
+    logger.info("Scheduled Partnership sync started")
+    try:
+        logger.info(f"Scheduled Partnership sync done: {sync_partnership()}")
+    except Exception as e:
+        logger.warning(f"Scheduled Partnership sync failed: {e}")
+
+
 def _reset_bq_limit():
     """Reset BQ byte limit back to safe daily default. Runs at midnight UTC."""
     try:
@@ -188,6 +209,11 @@ def _scheduler_loop():
             if freq:
                 logger.info(f"Pipedrive MRR sync triggered (frequency={freq})")
                 threading.Thread(target=_run_pipedrive_mrr_sync, daemon=True, name="pipedrive-mrr-sync").start()
+            # Partnership (agency↔client) sync shares the corp MRR source and cadence slot.
+            pfreq = _partnership_should_sync_today(now)
+            if pfreq:
+                logger.info(f"Partnership sync triggered (frequency={pfreq})")
+                threading.Thread(target=_run_partnership_sync, daemon=True, name="partnership-sync").start()
             _stop_event.wait(timeout=55 * 60)
         elif now.hour == _PIPEDRIVE_SYNC_HOUR_UTC and now.minute < 5:
             freq = _pipedrive_should_sync_today(now)

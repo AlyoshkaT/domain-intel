@@ -43,7 +43,7 @@ interface MrrMonth { month: string; mrr: number; ch?: Record<string, number> }
 // value stored in pipedrive_mrr_monthly.channel. SMS & Viber are OFF by default:
 // they still count in the Σ column (full monthly MRR → status), but a toggle decides
 // whether a channel is added to the money chart's summed line.
-const CHANNELS: { key: string; label: string; short: string }[] = [
+export const CHANNELS: { key: string; label: string; short: string }[] = [
   { key: "ExtraFeatures", label: "CDP module", short: "CDP" },
   { key: "Email", label: "Email", short: "Email" },
   { key: "AppInbox", label: "App Inbox", short: "Inbox" },
@@ -55,7 +55,7 @@ const CHANNELS: { key: string; label: string; short: string }[] = [
   { key: "Sms", label: "SMS", short: "SMS" },
   { key: "Viber", label: "Viber", short: "Viber" },
 ]
-const DEFAULT_OFF = new Set(["Sms", "Viber"])
+export const DEFAULT_OFF = new Set(["Sms", "Viber"])
 const CH_KEY = "pd_mrr_channels_on"
 
 const L = (lang: Lang) => ({
@@ -115,7 +115,7 @@ const RISK_COLORS: Record<string, string> = { Alarm: "#f59e0b", Churn: "#a855f7"
 const KIND_COLORS = { won: "#22c55e", open: "#3b82f6", lost: "#ef4444" }
 
 // Compact money formatter: 14_350_000 → "14.3M", 1_200 → "1.2K".
-function fmtMoney(n: number): string {
+export function fmtMoney(n: number): string {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M"
   if (n >= 1e3) return (n / 1e3).toFixed(1) + "K"
   return Math.round(n).toLocaleString()
@@ -165,7 +165,7 @@ function TrendChart({ data, title }: { data: Point[]; title: string }) {
 // Simple money bar chart (SVG) — total MRR of the filtered companies per month.
 const MONEY_NUMS_KEY = "pd_money_nums"
 
-function MoneyChart({ data, title, numsLabel }: { data: { month: string; mrr: number; domains: number }[]; title: string; numsLabel: string }) {
+export function MoneyChart({ data, title, numsLabel }: { data: { month: string; mrr: number; domains: number }[]; title: string; numsLabel: string }) {
   // Show the MRR value above every bar at once (toggle), so the whole picture is
   // readable without hovering each bar. Choice is remembered per-browser.
   const [showNums, setShowNums] = useState<boolean>(() => {

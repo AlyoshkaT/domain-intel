@@ -319,13 +319,14 @@ const ALL_PERMISSIONS = [
   { key: "download", label: "Download",  descKey: "setup_perm_download" as const },
   { key: "sheets",   label: "Sheets",    descKey: "setup_perm_sheets" as const },
   { key: "pipedrive", label: "Pipedrive", descKey: "setup_perm_pipedrive" as const },
+  { key: "partnership", label: "Partnership", descKey: "setup_perm_partnership" as const },
   { key: "admin",    label: "Admin",     descKey: "setup_perm_admin" as const },
 ]
 
 const PRESETS = [
   { label: "Viewer",  perms: ["explorer"] },
   { label: "Manager", perms: ["explorer","jobs","download","sheets","pipedrive"] },
-  { label: "Admin",   perms: ["explorer","jobs","download","sheets","pipedrive","admin"] },
+  { label: "Admin",   perms: ["explorer","jobs","download","sheets","pipedrive","partnership","admin"] },
 ]
 
 const PERM_ORDER = ALL_PERMISSIONS.map(p => p.key)
@@ -337,7 +338,7 @@ function parsePerms(s?: string): string[] {
     read:     ["explorer"],
     add:      ["explorer","jobs"],
     download: ["explorer","download"],
-    admin:    ["explorer","jobs","download","sheets","pipedrive","admin"],
+    admin:    ["explorer","jobs","download","sheets","pipedrive","partnership","admin"],
   }
   const parts = s.split(",").map(p => p.trim()).filter(Boolean)
   // if single legacy value — map it
@@ -1140,6 +1141,91 @@ function MrrSyncSection({ lang }: { lang: Lang }) {
   )
 }
 
+// ── Partnership (agency ↔ client, corpBQ source) ──────────────────────────────
+
+function PartnershipSyncSection({ lang }: { lang: Lang }) {
+  const ua = lang === "ua"
+  const [freq, setFreq] = useState("off")
+  const [loading, setLoading] = useState(true)
+  const [toggling, setToggling] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [msg, setMsg] = useState("")
+  const [msgSync, setMsgSync] = useState("")
+
+  useEffect(() => {
+    apiFetch("/api/partnership/settings")
+      .then(r => { setFreq(r.frequency || "off"); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const setFrequency = async (f: string) => {
+    setToggling(true); setMsg("")
+    try {
+      const r = await apiFetch("/api/partnership/settings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frequency: f }),
+      })
+      if (r.status === "error") { setMsg(t('setup_err', lang)(r.error)); return }
+      setFreq(f); setMsg(t('setup_saved', lang))
+    } catch (e: any) { setMsg(t('setup_err', lang)(e.message)) }
+    finally { setToggling(false) }
+  }
+
+  const manualSync = async () => {
+    if (!window.confirm(ua ? "Підтягнути партнерства + MRR з corpBQ зараз? (~570 МБ скан corp)" : "Pull partnership + MRR from corpBQ now? (~570 MB corp scan)")) return
+    setSyncing(true); setMsgSync("")
+    try {
+      const r = await apiFetch("/api/partnership/sync", { method: "POST" })
+      if (r.status === "error") setMsgSync(t('setup_err', lang)(r.error))
+      else setMsgSync(ua ? `Готово: ${r.clients} клієнтів, ${r.agencies} агенцій, ${r.mb_billed_corp} МБ corp (${r.elapsed}с)`
+        : `Done: ${r.clients} clients, ${r.agencies} agencies, ${r.mb_billed_corp} MB corp (${r.elapsed}s)`)
+    } catch (e: any) { setMsgSync(t('setup_err', lang)(e.message)) }
+    finally { setSyncing(false) }
+  }
+
+  const OPTS: { f: string; label: string }[] = [
+    { f: "daily", label: ua ? "Щодня" : "Daily" },
+    { f: "weekly", label: ua ? "Щотижня" : "Weekly" },
+    { f: "monthly", label: ua ? "Щомісяця" : "Monthly" },
+    { f: "off", label: ua ? "Вимкнено" : "Off" },
+  ]
+
+  return (
+    <div className="card">
+      <div className="card-section-title">{ua ? "Синхронізація Партнерств (corpBQ)" : "Partnership sync (corpBQ)"}</div>
+      <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, marginBottom: 12 }}>
+        {ua
+          ? "Привʼязка клієнтів до агенцій + їхній помісячний MRR беруться з corpBQ. Один скан corp ~570 МБ за синк; дашборд читає лише маленькі private-таблиці. Йде в тому ж слоті, що й MRR-синк Pipedrive."
+          : "Agency↔client membership + each client's monthly MRR are pulled from corpBQ. One ~570 MB corp scan per sync; the dashboard reads only the small private tables. Runs in the same slot as the Pipedrive MRR sync."}
+      </p>
+      {loading ? <div className="loading-center"><span className="spinner-lg" /></div> : (<>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {OPTS.map(({ f, label }) => {
+            const active = freq === f, isOff = f === "off"
+            return (
+              <button key={f} onClick={() => setFrequency(f)} disabled={toggling || active}
+                style={{
+                  padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                  border: active ? "none" : "1px solid var(--border)",
+                  cursor: toggling ? "wait" : active ? "default" : "pointer",
+                  background: active ? (isOff ? "rgba(239,68,68,0.2)" : "rgba(52,211,153,0.2)") : "transparent",
+                  color: active ? (isOff ? "#f87171" : "#34d399") : "var(--text-2)",
+                }}>{label}</button>
+            )
+          })}
+        </div>
+        {msg && <div className="setup-msg" style={{ marginTop: 8 }}>{msg}</div>}
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+          <button className="btn-export" onClick={manualSync} disabled={syncing}>
+            {syncing ? (ua ? "Синхронізація…" : "Syncing…") : (ua ? "↻ Підтягнути зараз" : "↻ Pull now")}
+          </button>
+          {msgSync && <span style={{ fontSize: 12, color: "var(--text-2)" }}>{msgSync}</span>}
+        </div>
+      </>)}
+    </div>
+  )
+}
+
 // ── Main Setup Page ───────────────────────────────────────────────────────────
 
 export default function SetupPage({ lang }: { lang: Lang }) {
@@ -1160,6 +1246,8 @@ export default function SetupPage({ lang }: { lang: Lang }) {
       <PipedriveSyncSection lang={lang} />
       <div style={{ height: 16 }} />
       <MrrSyncSection lang={lang} />
+      <div style={{ height: 16 }} />
+      <PartnershipSyncSection lang={lang} />
       <div style={{ height: 16 }} />
       <JobsSection lang={lang} />
       <div style={{ height: 16 }} />

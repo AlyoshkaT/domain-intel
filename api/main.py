@@ -174,6 +174,12 @@ try:
 except Exception as e:
     logger.warning(f"Pipedrive router not loaded: {e}")
 
+try:
+    from api.partnership import router as partnership_router
+    app.include_router(partnership_router)
+except Exception as e:
+    logger.warning(f"Partnership router not loaded: {e}")
+
 
 # ─── Health ───────────────────────────────────────────────────────────────────
 @app.get("/api/health")
