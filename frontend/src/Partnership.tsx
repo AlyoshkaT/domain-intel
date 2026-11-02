@@ -31,6 +31,9 @@ const L = (lang: Lang) => ({
   search: lang === "ua" ? "Пошук: клієнт / домен / агенція…" : "Search: client / domain / agency…",
   clearSearch: lang === "ua" ? "очистити пошук" : "clear search",
   period: lang === "ua" ? "Період" : "Period",
+  allAgencies: lang === "ua" ? "Усі агенції" : "All agencies",
+  pickClient: lang === "ua" ? "— вибрати клієнта —" : "— pick a client —",
+  boundTo: lang === "ua" ? "привʼязаний до" : "bound to",
   moneyTitle: lang === "ua" ? "MRR партнерських клієнтів — сума за місяцями, $" : "Partner clients MRR — monthly total, $",
   moneyNums: lang === "ua" ? "Цифри" : "Numbers",
   chTogglesNote: lang === "ua"
@@ -72,6 +75,7 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
   const [source, setSource] = useState("")
   const [search, setSearch] = useState("")
   const [agencyFilter, setAgencyFilter] = useState("")
+  const [clientPick, setClientPick] = useState(0)   // organisation_id, 0 = none
   const [fromIdx, setFromIdx] = useState(0)
   const [toIdx, setToIdx] = useState(0)
 
@@ -119,10 +123,25 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
     return m.mrr || 0
   }, [enabledCh])
 
+  // Dropdown sources: agencies (with client counts) and the flat client list.
+  const agencyList = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const c of clients) m.set(c.partner, (m.get(c.partner) || 0) + 1)
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [clients])
+  const clientList = useMemo(() =>
+    [...clients].sort((a, b) =>
+      (a.organisation || a.domain || "").localeCompare(b.organisation || b.domain || "")),
+    [clients])
+  const pickedClient = useMemo(() =>
+    clientPick ? clients.find(c => c.organisation_id === clientPick) : undefined,
+    [clients, clientPick])
+
   // Filter → group by agency. Each group carries per-month sums + a period total.
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase()
     const rows = parsed.filter(({ c }) =>
+      (!clientPick || c.organisation_id === clientPick) &&
       (!agencyFilter || c.partner === agencyFilter) &&
       (!q || c.organisation.toLowerCase().includes(q) || c.domain.includes(q) || (c.partner || "").toLowerCase().includes(q))
     )
@@ -143,7 +162,7 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
     })
     out.sort((a, b) => b.sum - a.sum)
     return out
-  }, [parsed, search, agencyFilter, periodMonths, valOf])
+  }, [parsed, search, agencyFilter, clientPick, periodMonths, valOf])
 
   const grand = useMemo(() => {
     const perMonth: Record<string, number> = {}
@@ -221,6 +240,31 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
 
         {/* Controls */}
         <div className="filter-row" style={{ marginBottom: 8 }}>
+          {/* Agency dropdown — pick one to see / sort its clients */}
+          <select className="filter-input" style={{ padding: "4px 8px" }}
+            value={agencyFilter}
+            onChange={e => { setAgencyFilter(e.target.value); setClientPick(0) }}>
+            <option value="">{tx.allAgencies} ({clients.length})</option>
+            {agencyList.map(([name, n]) => <option key={name} value={name}>{name} ({n})</option>)}
+          </select>
+          {/* Client dropdown — pick one to see which agency it is bound to */}
+          <select className="filter-input" style={{ padding: "4px 8px", maxWidth: 260 }}
+            value={clientPick}
+            onChange={e => { const v = +e.target.value; setClientPick(v); if (v) { setAgencyFilter(""); setSearch("") } }}>
+            <option value={0}>{tx.pickClient}</option>
+            {clientList.map(c => (
+              <option key={c.organisation_id} value={c.organisation_id}>
+                {(c.organisation || c.domain || `#${c.organisation_id}`)} — {c.partner}
+              </option>
+            ))}
+          </select>
+          {pickedClient && (
+            <button onClick={() => setClientPick(0)} title="clear client"
+              style={{ fontSize: 12, padding: "3px 10px", borderRadius: 14, cursor: "pointer",
+                background: "rgba(168,85,247,0.16)", color: "#a855f7", border: "1px solid rgba(168,85,247,0.4)" }}>
+              👤 {pickedClient.organisation || pickedClient.domain} → 🏢 {pickedClient.partner} ✕
+            </button>
+          )}
           <input className="filter-input" placeholder={tx.search} value={search} onChange={e => setSearch(e.target.value)} />
           {search && (
             <button onClick={() => setSearch("")} title={tx.clearSearch}
