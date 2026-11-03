@@ -144,14 +144,26 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
     clients.filter(c => clientSel.has(c.organisation_id)),
     [clients, clientSel])
 
+  // Agencies that have at least one of their own clients individually picked —
+  // for those, the client pick DRILLS DOWN (narrows the agency to the picked
+  // clients) instead of being a no-op union member.
+  const drilledAgencies = useMemo(
+    () => new Set(pickedClients.map(c => c.partner)),
+    [pickedClients])
+
   // Filter → group by agency. Each group carries per-month sums + a period total.
-  // Agency + client selections combine as a UNION (clients of the chosen agencies
-  // OR individually-chosen clients); search always ANDs on top.
+  // Selection semantics (search always ANDs on top):
+  //   • a selected agency shows ALL its clients …
+  //   • … unless one of its clients is individually picked, then it narrows to
+  //     just the picked client(s) (drill-down);
+  //   • a client picked from a non-selected agency is added on its own (union).
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase()
     const noSel = agencySel.size === 0 && clientSel.size === 0
     const rows = parsed.filter(({ c }) =>
-      (noSel || agencySel.has(c.partner) || clientSel.has(c.organisation_id)) &&
+      (noSel
+        || clientSel.has(c.organisation_id)
+        || (agencySel.has(c.partner) && !drilledAgencies.has(c.partner))) &&
       (!q || c.organisation.toLowerCase().includes(q) || c.domain.includes(q) || (c.partner || "").toLowerCase().includes(q))
     )
     const byAgency = new Map<string, { c: Client; map: Record<string, MrrMonth>; perMonth: Record<string, number>; sum: number }[]>()
@@ -171,7 +183,7 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
     })
     out.sort((a, b) => b.sum - a.sum)
     return out
-  }, [parsed, search, agencySel, clientSel, periodMonths, valOf])
+  }, [parsed, search, agencySel, clientSel, drilledAgencies, periodMonths, valOf])
 
   const grand = useMemo(() => {
     const perMonth: Record<string, number> = {}
