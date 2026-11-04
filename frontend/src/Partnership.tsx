@@ -75,10 +75,8 @@ const L = (lang: Lang) => ({
     : "Source: billed clients only.",
   detail: lang === "ua" ? "Деталізація (сервіси)" : "Detail (services)",
   detailNote: lang === "ua"
-    ? "Під кожним клієнтом — розбивка по увімкнених сервісах (каналах). Входить в експорт."
-    : "Each client is broken down by enabled service (channel). Included in exports.",
-  colService: lang === "ua" ? "сервіс" : "service",
-  svcAll: lang === "ua" ? "(Σ усі)" : "(Σ all)",
+    ? "Колонки стають сервісами (каналами) замість місяців — суми за період по кожному сервісу. Діє і в таблиці, і в експорті."
+    : "Columns switch from months to services (channels) — per-service period totals. Applies to the table and the exports.",
   xlsxErr: lang === "ua" ? "Помилка експорту XLSX" : "XLSX export failed",
   sheetsErr: lang === "ua" ? "Помилка експорту в Google Sheets" : "Google Sheets export failed",
   sheetsTimeout: lang === "ua" ? "Таймаут — перевір Google Sheets API" : "Timeout — check Google Sheets API",
@@ -176,10 +174,13 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
     for (const c of clients) m.set(c.partner, (m.get(c.partner) || 0) + 1)
     return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
   }, [clients])
-  const clientList = useMemo(() =>
-    [...clients].sort((a, b) =>
-      (a.organisation || a.domain || "").localeCompare(b.organisation || b.domain || "")),
-    [clients])
+  // Client dropdown: with agencies selected, offer only their clients (so the
+  // list tracks the table); with none selected, offer every client.
+  const clientList = useMemo(() => {
+    const base = agencySel.size ? clients.filter(c => agencySel.has(c.partner)) : clients
+    return [...base].sort((a, b) =>
+      (a.organisation || a.domain || "").localeCompare(b.organisation || b.domain || ""))
+  }, [clients, agencySel])
   const pickedClients = useMemo(() =>
     clients.filter(c => clientSel.has(c.organisation_id)),
     [clients, clientSel])
@@ -206,32 +207,59 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
         || (agencySel.has(c.partner) && !drilledAgencies.has(c.partner))) &&
       (!q || c.organisation.toLowerCase().includes(q) || c.domain.includes(q) || (c.partner || "").toLowerCase().includes(q))
     )
-    const byAgency = new Map<string, { c: Client; map: Record<string, MrrMonth>; perMonth: Record<string, number>; sum: number }[]>()
+    const byAgency = new Map<string, { c: Client; map: Record<string, MrrMonth>; perMonth: Record<string, number>; svc: Record<string, number>; sum: number }[]>()
     for (const { c, map } of rows) {
       const perMonth: Record<string, number> = {}
+      const svc: Record<string, number> = {}   // per-service total over the period (enabled channels)
       let sum = 0
       for (const mo of periodMonths) { const v = valOf(map[mo]); perMonth[mo] = v; sum += v }
+      for (const ch of CHANNELS) {
+        if (!enabledCh.has(ch.key)) continue
+        let t = 0
+        for (const mo of periodMonths) t += map[mo]?.ch?.[ch.key] || 0
+        if (t) svc[ch.key] = t
+      }
       if (!byAgency.has(c.partner)) byAgency.set(c.partner, [])
-      byAgency.get(c.partner)!.push({ c, map, perMonth, sum })
+      byAgency.get(c.partner)!.push({ c, map, perMonth, svc, sum })
     }
     const out = [...byAgency.entries()].map(([partner, cls]) => {
       const perMonth: Record<string, number> = {}
+      const svc: Record<string, number> = {}
       let sum = 0
       for (const mo of periodMonths) { perMonth[mo] = cls.reduce((a, x) => a + (x.perMonth[mo] || 0), 0); sum += perMonth[mo] }
+      for (const ch of CHANNELS) { const t = cls.reduce((a, x) => a + (x.svc[ch.key] || 0), 0); if (t) svc[ch.key] = t }
       cls.sort((a, b) => b.sum - a.sum)
-      return { partner, clients: cls, perMonth, sum }
+      return { partner, clients: cls, perMonth, svc, sum }
     })
     out.sort((a, b) => b.sum - a.sum)
     return out
-  }, [parsed, search, agencySel, clientSel, drilledAgencies, periodMonths, valOf])
+  }, [parsed, search, agencySel, clientSel, drilledAgencies, periodMonths, valOf, enabledCh])
 
   const grand = useMemo(() => {
     const perMonth: Record<string, number> = {}
+    const svc: Record<string, number> = {}
     let sum = 0, nClients = 0
-    for (const g of groups) { nClients += g.clients.length; for (const mo of periodMonths) perMonth[mo] = (perMonth[mo] || 0) + g.perMonth[mo] }
+    for (const g of groups) {
+      nClients += g.clients.length
+      for (const mo of periodMonths) perMonth[mo] = (perMonth[mo] || 0) + g.perMonth[mo]
+      for (const ch of CHANNELS) if (g.svc[ch.key]) svc[ch.key] = (svc[ch.key] || 0) + g.svc[ch.key]
+    }
     for (const mo of periodMonths) sum += perMonth[mo] || 0
-    return { perMonth, sum, nClients }
+    return { perMonth, svc, sum, nClients }
   }, [groups, periodMonths])
+
+  // Services (channels) actually present in the current view — the detail columns.
+  const activeServices = useMemo(
+    () => CHANNELS.filter(c => chOn[c.key] && (grand.svc[c.key] || 0) > 0),
+    [chOn, grand])
+
+  // One column model drives the table + exports: months (default) or services (detail).
+  type ColView = { id: string; label: string; title: string; cv: (m: Record<string, number>) => number }
+  const columns = useMemo<ColView[]>(() =>
+    detail
+      ? activeServices.map(c => ({ id: c.key, label: c.short, title: c.label, cv: (m) => m[c.key] || 0 }))
+      : periodMonths.map(mo => ({ id: mo, label: mo.slice(2), title: mo, cv: (m) => m[mo] || 0 })),
+    [detail, activeServices, periodMonths])
 
   const chartData = useMemo(() =>
     periodMonths.map(mo => {
@@ -263,34 +291,25 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
       .filter(s => chartData.some(d => (d.seg?.[s.key] || 0) > 0))
   }, [detail, chOn, chartData])
 
-  // Build the export table (rows[0] = header). Shared by CSV / XLSX / Sheets so
-  // every format matches the on-screen pivot. With detail on, each client gets a
-  // "(Σ all)" total row followed by one row per enabled service (channel) > 0.
-  const buildRows = useCallback((withDetail: boolean): (string | number)[][] => {
-    const svcCol = withDetail ? [tx.colService] : []
+  // Build the export table (rows[0] = header), one row per client. Shared by
+  // CSV / XLSX / Sheets so every format matches the on-screen pivot: the data
+  // columns are the months by default, or one column per service when detail is
+  // on (wide layout — join/pivot-friendly). Header uses full service names.
+  const buildRows = useCallback((): (string | number)[][] => {
+    const colHead = detail ? activeServices.map(c => c.label) : periodMonths
     const head: (string | number)[] = ["agency", "client", "organisation_id", "domain", "type",
-      ...svcCol, ...periodMonths, "period_sum"]
+      ...colHead, "period_sum"]
     const rows: (string | number)[][] = [head]
     for (const g of groups) for (const x of g.clients) {
-      const base: (string | number)[] = [g.partner, x.c.organisation, x.c.organisation_id, siteOf(x.c), x.c.types]
-      if (!withDetail) {
-        rows.push([...base, ...periodMonths.map(mo => Math.round(x.perMonth[mo] || 0)), Math.round(x.sum)])
-        continue
-      }
-      rows.push([...base, tx.svcAll, ...periodMonths.map(mo => Math.round(x.perMonth[mo] || 0)), Math.round(x.sum)])
-      for (const c of CHANNELS) {
-        if (!chOn[c.key]) continue
-        const vals = periodMonths.map(mo => x.map[mo]?.ch?.[c.key] || 0)
-        const s = vals.reduce((a, b) => a + b, 0)
-        if (s <= 0) continue
-        rows.push([...base, c.label, ...vals.map(v => Math.round(v)), Math.round(s)])
-      }
+      const src = detail ? x.svc : x.perMonth
+      rows.push([g.partner, x.c.organisation, x.c.organisation_id, siteOf(x.c), x.c.types,
+        ...columns.map(col => Math.round(col.cv(src))), Math.round(x.sum)])
     }
     return rows
-  }, [groups, periodMonths, chOn, tx])
+  }, [groups, columns, detail, activeServices, periodMonths])
 
   const exportCSV = useCallback(() => {
-    const csv = buildRows(detail).map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n")
+    const csv = buildRows().map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n")
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" })
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob)
     a.download = "partnership_mrr.csv"; a.click()
@@ -300,7 +319,7 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
     try {
       const res = await fetch("/api/partnership/export/xlsx", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: buildRows(detail) }),
+        body: JSON.stringify({ rows: buildRows() }),
       })
       if (!res.ok) throw new Error("Export failed")
       const blob = await res.blob()
@@ -315,7 +334,7 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
     try {
       const res = await fetch("/api/partnership/export/sheets", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: buildRows(detail), label: `${grand.nClients} clients` }),
+        body: JSON.stringify({ rows: buildRows(), label: `${grand.nClients} clients` }),
       })
       if (!res.ok) throw new Error("Export failed")
       let found = false
@@ -471,8 +490,8 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
                 <tr>
                   <th style={{ textAlign: "left" }}>{tx.thClient}</th>
                   <th style={{ textAlign: "left" }}>{tx.thType}</th>
-                  {periodMonths.map(mo => (
-                    <th key={mo} style={{ textAlign: "right", whiteSpace: "nowrap", fontFamily: "var(--mono)" }}>{mo.slice(2)}</th>
+                  {columns.map(col => (
+                    <th key={col.id} title={col.title} style={{ textAlign: "right", whiteSpace: "nowrap", fontFamily: "var(--mono)" }}>{col.label}</th>
                   ))}
                   <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>{tx.thSum}</th>
                 </tr>
@@ -491,19 +510,18 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
                           {g.clients.length} {tx.clients}
                         </span>
                       </td>
-                      {periodMonths.map(mo => (
-                        <td key={mo} style={{ textAlign: "right", fontWeight: 700, fontFamily: "var(--mono)", fontSize: 11, color: "#16a34a" }}>
-                          {cell(g.perMonth[mo] || 0)}
+                      {columns.map(col => (
+                        <td key={col.id} style={{ textAlign: "right", fontWeight: 700, fontFamily: "var(--mono)", fontSize: 11, color: "#16a34a" }}>
+                          {cell(col.cv(detail ? g.svc : g.perMonth))}
                         </td>
                       ))}
                       <td style={{ textAlign: "right", fontWeight: 700, fontFamily: "var(--mono)", fontSize: 11, color: "#16a34a" }}>
                         {money(g.sum)}
                       </td>
                     </tr>
-                    {/* Client rows (+ per-service breakdown when detail is on) */}
+                    {/* Client rows — data columns are months, or services when detail is on */}
                     {g.clients.map(x => (
-                      <Fragment key={x.c.organisation_id}>
-                      <tr>
+                      <tr key={x.c.organisation_id}>
                         <td className="td-domain" style={{ paddingLeft: 18 }}>
                           {siteOf(x.c)
                             ? <>
@@ -514,10 +532,10 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
                             : <span>{x.c.organisation || `#${x.c.organisation_id}`}</span>}
                         </td>
                         <td style={{ fontSize: 10, color: "var(--text-3)", whiteSpace: "nowrap" }}>{x.c.types}</td>
-                        {periodMonths.map(mo => {
-                          const v = x.perMonth[mo] || 0
+                        {columns.map(col => {
+                          const v = col.cv(detail ? x.svc : x.perMonth)
                           return (
-                            <td key={mo} style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11,
+                            <td key={col.id} style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11,
                               color: v > 0 ? "var(--text-2)" : "var(--text-3)" }}
                               title={v > 0 ? Math.round(v).toLocaleString() : undefined}>
                               {cell(v)}
@@ -528,26 +546,6 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
                           {money(x.sum)}
                         </td>
                       </tr>
-                      {detail && CHANNELS.map(c => {
-                        if (!chOn[c.key]) return null
-                        const vals = periodMonths.map(mo => x.map[mo]?.ch?.[c.key] || 0)
-                        const s = vals.reduce((a, b) => a + b, 0)
-                        if (s <= 0) return null
-                        return (
-                          <tr key={x.c.organisation_id + "_" + c.key} style={{ background: "var(--bg-1)" }}>
-                            <td style={{ paddingLeft: 36, fontSize: 10, color: "var(--text-3)" }}>↳ {c.label}</td>
-                            <td />
-                            {vals.map((v, i) => (
-                              <td key={periodMonths[i]} style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-3)" }}
-                                title={v > 0 ? Math.round(v).toLocaleString() : undefined}>
-                                {cell(v)}
-                              </td>
-                            ))}
-                            <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-3)" }}>{money(s)}</td>
-                          </tr>
-                        )
-                      })}
-                      </Fragment>
                     ))}
                   </Fragment>
                 ))}
@@ -558,9 +556,9 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
                       {grand.nClients} {tx.clients}
                     </span>
                   </td>
-                  {periodMonths.map(mo => (
-                    <td key={mo} style={{ textAlign: "right", fontWeight: 800, fontFamily: "var(--mono)", fontSize: 11 }}>
-                      {cell(grand.perMonth[mo] || 0)}
+                  {columns.map(col => (
+                    <td key={col.id} style={{ textAlign: "right", fontWeight: 800, fontFamily: "var(--mono)", fontSize: 11 }}>
+                      {cell(col.cv(detail ? grand.svc : grand.perMonth))}
                     </td>
                   ))}
                   <td style={{ textAlign: "right", fontWeight: 800, fontFamily: "var(--mono)", fontSize: 11 }}>{money(grand.sum)}</td>
