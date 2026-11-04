@@ -23,6 +23,16 @@ interface Client {
 
 const CH_KEY = "partnership_channels_on"
 
+// Where the ↗ arrow should go. The label shows the org name; when that name is
+// itself a bare domain (e.g. "posylka.de"), link there so "what you see = where
+// you go". Otherwise fall back to the separately-mapped domain field — an org
+// can have several domains and the mapped one may differ from the name.
+const DOMAIN_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i
+const siteOf = (c: Client) => {
+  const name = (c.organisation || "").trim().toLowerCase()
+  return DOMAIN_RE.test(name) ? name : (c.domain || "")
+}
+
 const L = (lang: Lang) => ({
   title: lang === "ua" ? "Партнерства — агенції та їхні клієнти" : "Partnership — agencies & their clients",
   subtitle: lang === "ua"
@@ -204,7 +214,7 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
     const head = ["agency", "client", "organisation_id", "domain", "type", ...periodMonths, "period_sum"]
     const lines = [head.join(",")]
     for (const g of groups) for (const x of g.clients) {
-      const row = [g.partner, x.c.organisation, String(x.c.organisation_id), x.c.domain, x.c.types,
+      const row = [g.partner, x.c.organisation, String(x.c.organisation_id), siteOf(x.c), x.c.types,
         ...periodMonths.map(mo => String(Math.round(x.perMonth[mo] || 0))), String(Math.round(x.sum))]
       lines.push(row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(","))
     }
@@ -368,10 +378,10 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
                     {g.clients.map(x => (
                       <tr key={x.c.organisation_id}>
                         <td className="td-domain" style={{ paddingLeft: 18 }}>
-                          {x.c.domain
+                          {siteOf(x.c)
                             ? <>
                                 <span>{x.c.organisation || x.c.domain}</span>
-                                <a className="dom-open" href={`https://${x.c.domain}`} target="_blank" rel="noopener"
+                                <a className="dom-open" href={`https://${siteOf(x.c)}`} target="_blank" rel="noopener"
                                   title={tx.openSite}>↗</a>
                               </>
                             : <span>{x.c.organisation || `#${x.c.organisation_id}`}</span>}

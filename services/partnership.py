@@ -213,21 +213,37 @@ def sync_partnership() -> dict:
         mb += mb_h
     org_ids = sorted({m["organisation_id"] for m in mem_rows})
 
-    # 1b) Representative domain per org (for linking / opening the site).
-    dom_map: dict[int, str] = {}
+    # 1b) Representative domain per org (for linking / opening the site). An org
+    # can have several domains (e.g. posylka.de + posylka.com); pick the one that
+    # matches the org name when possible, otherwise the first alphabetically so
+    # the choice is stable across syncs (ANY_VALUE used to pick arbitrarily and
+    # could disagree with the displayed name).
+    dom_map: dict[int, list[str]] = {}
     if org_ids:
         idlist = ",".join(str(i) for i in org_ids)
         djob = cc.query(f"""
-            SELECT best_org_id, ANY_VALUE(LOWER(lookup_domain_actual)) AS domain
+            SELECT best_org_id,
+                   ARRAY_AGG(DISTINCT LOWER(lookup_domain_actual) ORDER BY LOWER(lookup_domain_actual)) AS domains
             FROM `{cds}.primary_domains_orgs_mrr`
             WHERE lookup_domain_actual IS NOT NULL AND best_org_id IN ({idlist})
             GROUP BY best_org_id
         """)
         for r in djob.result():
             if r["best_org_id"] is not None:
-                dom_map[int(r["best_org_id"])] = r["domain"] or ""
+                dom_map[int(r["best_org_id"])] = list(r["domains"] or [])
         mb += round((djob.total_bytes_billed or 0) / 1e6)
-    members = [{**m, "domain": dom_map.get(m["organisation_id"], "")} for m in mem_rows]
+
+    def _pick_domain(name: str, doms: list[str]) -> str:
+        if not doms:
+            return ""
+        n = _norm(name)
+        for d in doms:
+            if _norm(d) == n:          # org name itself is one of the domains
+                return d
+        return doms[0]                 # deterministic (alphabetical) fallback
+
+    members = [{**m, "domain": _pick_domain(m["organisation"], dom_map.get(m["organisation_id"], []))}
+               for m in mem_rows]
 
     # 2) Per-org per-channel monthly MRR (each MRR row counted once), trailing window.
     monthly: list[dict] = []
