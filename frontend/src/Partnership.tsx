@@ -24,6 +24,13 @@ interface Client {
 const CH_KEY = "partnership_channels_on"
 const DETAIL_KEY = "partnership_detail"
 
+// Per-service colours for the stacked dashboard (one per CHANNELS key).
+const CH_COLORS: Record<string, string> = {
+  ExtraFeatures: "#6366f1", Email: "#22c55e", AppInbox: "#06b6d4", WebPush: "#f59e0b",
+  InApp: "#ec4899", MobPush: "#14b8a6", TelegramBot: "#3b82f6", Widget: "#a855f7",
+  Sms: "#ef4444", Viber: "#8b5cf6",
+}
+
 // Where the ↗ arrow should go. The label shows the org name; when that name is
 // itself a bare domain (e.g. "posylka.de"), link there so "what you see = where
 // you go". Otherwise fall back to the separately-mapped domain field — an org
@@ -227,11 +234,34 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
   }, [groups, periodMonths])
 
   const chartData = useMemo(() =>
-    periodMonths.map(mo => ({
-      month: mo,
-      mrr: Math.round(grand.perMonth[mo] || 0),
-      domains: groups.reduce((a, g) => a + g.clients.filter(x => (x.perMonth[mo] || 0) > 0).length, 0),
-    })), [periodMonths, grand, groups])
+    periodMonths.map(mo => {
+      // With detail on, split each month into per-service (enabled channel) sums
+      // so the dashboard stacks the same way the table breaks down.
+      let seg: Record<string, number> | undefined
+      if (detail) {
+        seg = {}
+        for (const g of groups) for (const x of g.clients) for (const c of CHANNELS) {
+          if (!chOn[c.key]) continue
+          const v = x.map[mo]?.ch?.[c.key] || 0
+          if (v) seg[c.key] = (seg[c.key] || 0) + v
+        }
+      }
+      return {
+        month: mo,
+        mrr: Math.round(grand.perMonth[mo] || 0),
+        domains: groups.reduce((a, g) => a + g.clients.filter(x => (x.perMonth[mo] || 0) > 0).length, 0),
+        seg,
+      }
+    }), [periodMonths, grand, groups, detail, chOn])
+
+  // Legend/stack order: enabled channels that actually appear in the period.
+  const chartSegments = useMemo(() => {
+    if (!detail) return undefined
+    return CHANNELS
+      .filter(c => chOn[c.key])
+      .map(c => ({ key: c.key, label: c.label, color: CH_COLORS[c.key] || "#888" }))
+      .filter(s => chartData.some(d => (d.seg?.[s.key] || 0) > 0))
+  }, [detail, chOn, chartData])
 
   // Build the export table (rows[0] = header). Shared by CSV / XLSX / Sheets so
   // every format matches the on-screen pivot. With detail on, each client gets a
@@ -345,7 +375,7 @@ export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: s
           </div>
         </div>
 
-        <MoneyChart data={chartData} title={tx.moneyTitle} numsLabel={tx.moneyNums} />
+        <MoneyChart data={chartData} title={tx.moneyTitle} numsLabel={tx.moneyNums} segments={chartSegments} />
 
         {/* Controls */}
         <div className="filter-row" style={{ marginBottom: 8 }}>

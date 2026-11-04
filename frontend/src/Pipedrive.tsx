@@ -165,7 +165,12 @@ function TrendChart({ data, title }: { data: Point[]; title: string }) {
 // Simple money bar chart (SVG) — total MRR of the filtered companies per month.
 const MONEY_NUMS_KEY = "pd_money_nums"
 
-export function MoneyChart({ data, title, numsLabel }: { data: { month: string; mrr: number; domains: number }[]; title: string; numsLabel: string }) {
+export function MoneyChart({ data, title, numsLabel, segments }: {
+  data: { month: string; mrr: number; domains: number; seg?: Record<string, number> }[];
+  title: string; numsLabel: string;
+  // When provided (+ each point carries `seg`), bars stack by segment with a legend.
+  segments?: { key: string; label: string; color: string }[];
+}) {
   // Show the MRR value above every bar at once (toggle), so the whole picture is
   // readable without hovering each bar. Choice is remembered per-browser.
   const [showNums, setShowNums] = useState<boolean>(() => {
@@ -173,6 +178,7 @@ export function MoneyChart({ data, title, numsLabel }: { data: { month: string; 
   })
   useEffect(() => { try { localStorage.setItem(MONEY_NUMS_KEY, showNums ? "1" : "0") } catch { /* ignore */ } }, [showNums])
   if (!data.length) return null
+  const stacked = !!(segments && segments.length)
   const W = Math.max(640, data.length * 44), H = 200, pad = 28, base = H - pad
   const max = Math.max(1, ...data.map(d => d.mrr))
   const slot = (W - pad * 2) / data.length
@@ -190,15 +196,40 @@ export function MoneyChart({ data, title, numsLabel }: { data: { month: string; 
           {showNums ? "●" : "○"} {numsLabel}
         </button>
       </div>
+      {stacked && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", marginBottom: 6 }}>
+          {segments!.map(s => (
+            <span key={s.key} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text-3)" }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, display: "inline-block" }} />
+              {s.label}
+            </span>
+          ))}
+        </div>
+      )}
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxHeight: 220 }}>
         <line x1={pad} y1={base} x2={W - pad} y2={base} stroke="var(--border)" />
         {data.map((d) => {
           const x0 = pad + data.indexOf(d) * slot + slot / 2
           return (
             <g key={d.month}>
-              <rect x={x0 - bw / 2} y={y(d.mrr)} width={bw} height={base - y(d.mrr)} fill="#22c55e" rx={2}>
-                <title>{`${d.month}: ${d.mrr.toLocaleString()} · ${d.domains}`}</title>
-              </rect>
+              {stacked
+                ? (() => {
+                    let acc = 0
+                    return segments!.map(s => {
+                      const v = d.seg?.[s.key] || 0
+                      if (v <= 0) return null
+                      const yTop = y(acc + v), yBot = y(acc)
+                      acc += v
+                      return (
+                        <rect key={s.key} x={x0 - bw / 2} y={yTop} width={bw} height={Math.max(0.5, yBot - yTop)} fill={s.color}>
+                          <title>{`${d.month} · ${s.label}: ${Math.round(v).toLocaleString()}`}</title>
+                        </rect>
+                      )
+                    })
+                  })()
+                : <rect x={x0 - bw / 2} y={y(d.mrr)} width={bw} height={base - y(d.mrr)} fill="#22c55e" rx={2}>
+                    <title>{`${d.month}: ${d.mrr.toLocaleString()} · ${d.domains}`}</title>
+                  </rect>}
               {showNums && d.mrr > 0 && (
                 <text x={x0} y={Math.max(8, y(d.mrr) - 3)} textAnchor="middle" fontSize={8} fontWeight={600} fill="var(--text-2)">{fmtMoney(d.mrr)}</text>
               )}
