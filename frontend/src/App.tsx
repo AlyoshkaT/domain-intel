@@ -761,7 +761,7 @@ export default function App() {
         {view === "technologies" && <TechnologiesPage domains={techDomains} onBack={() => { requestExplorerRestore(); setView("explorer") }} can={can} lang={lang} />}
         {view === "redirects" && <RedirectsPage lang={lang} />}
         {view === "pipedrive" && <PipedrivePage lang={lang} can={can} />}
-        {view === "partnership" && <PartnershipPage lang={lang} />}
+        {view === "partnership" && <PartnershipPage lang={lang} can={can} />}
         {view === "setup" && <SetupPage lang={lang} />}
         {view === "new" && <NewJobPage onJobCreated={handleJobCreated} lang={lang} />}
         {view === "jobs" && <JobsPage onSelect={handleSelectJob} can={can} lang={lang} />}

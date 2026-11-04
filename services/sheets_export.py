@@ -524,3 +524,38 @@ def export_explorer_to_sheets(label: str, results: list[dict],
     except Exception as e:
         logger.error(f"Sheets export error: {e}")
         raise
+
+
+def export_rows_to_sheets(title: str, tab_title: str, rows: list[list],
+                          folder_id: str = "") -> Optional[str]:
+    """Export a pre-built table (rows[0] = header row) to Google Sheets.
+
+    Unlike _create_sheet this takes the finished rows straight from the caller
+    instead of mapping EXPORT_COLUMNS, so a client-side pivot (dynamic columns,
+    optional detail rows) can be exported as-is. Routes to tab-mode or
+    new-file-mode exactly like _create_sheet.
+    """
+    sheet_id = os.getenv("GOOGLE_EXPORT_SHEET_ID", "").strip()
+    if sheet_id and not folder_id:
+        return _export_as_tab(sheet_id, tab_title, rows)
+    effective_folder = _folder_id_from_url(folder_id) or os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
+    using_oauth = bool(os.getenv("GOOGLE_OAUTH_TOKEN_JSON", "").strip())
+    if effective_folder or using_oauth:
+        return _export_as_new_file(effective_folder, title, rows)
+    raise ValueError(
+        "Google Sheets export not configured. "
+        "Set GOOGLE_OAUTH_TOKEN_JSON (run get_google_token.py) "
+        "or GOOGLE_EXPORT_SHEET_ID (existing sheet ID)."
+    )
+
+
+def export_partnership_to_sheets(label: str, rows: list[list], folder_id: str = "") -> Optional[str]:
+    """Export a pre-built Partnership pivot (rows[0] = header row) to Google Sheets."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    title = f"Domain Intel — Partnership — {label} — {ts}"
+    tab_title = f"Partnership {ts[5:16]}"
+    try:
+        return export_rows_to_sheets(title, tab_title, rows, folder_id=folder_id)
+    except Exception as e:
+        logger.error(f"Partnership sheets export error: {e}")
+        raise

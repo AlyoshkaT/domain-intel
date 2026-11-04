@@ -22,6 +22,7 @@ interface Client {
 }
 
 const CH_KEY = "partnership_channels_on"
+const DETAIL_KEY = "partnership_detail"
 
 // Where the ↗ arrow should go. The label shows the org name; when that name is
 // itself a bare domain (e.g. "posylka.de"), link there so "what you see = where
@@ -65,6 +66,17 @@ const L = (lang: Lang) => ({
   srcBilled: lang === "ua"
     ? "Джерело: лише клієнти з білінговим MRR."
     : "Source: billed clients only.",
+  detail: lang === "ua" ? "Деталізація (сервіси)" : "Detail (services)",
+  detailNote: lang === "ua"
+    ? "Під кожним клієнтом — розбивка по увімкнених сервісах (каналах). Входить в експорт."
+    : "Each client is broken down by enabled service (channel). Included in exports.",
+  colService: lang === "ua" ? "сервіс" : "service",
+  svcAll: lang === "ua" ? "(Σ усі)" : "(Σ all)",
+  xlsxErr: lang === "ua" ? "Помилка експорту XLSX" : "XLSX export failed",
+  sheetsErr: lang === "ua" ? "Помилка експорту в Google Sheets" : "Google Sheets export failed",
+  sheetsTimeout: lang === "ua" ? "Таймаут — перевір Google Sheets API" : "Timeout — check Google Sheets API",
+  sheetsExporting: lang === "ua" ? "Експортую…" : "Exporting…",
+  openSheet: lang === "ua" ? "Відкрити таблицю ↗" : "Open sheet ↗",
 })
 
 const srcText = (s: string, tx: ReturnType<typeof L>) =>
@@ -76,7 +88,8 @@ function cell(v: number) {
   return v > 0 ? fmtMoney(v) : "·"
 }
 
-export default function PartnershipPage({ lang }: { lang: Lang }) {
+export default function PartnershipPage({ lang, can }: { lang: Lang; can?: (p: string) => boolean }) {
+  const canDo = can || (() => true)
   const tx = L(lang)
   const [clients, setClients] = useState<Client[]>([])
   const [months, setMonths] = useState<string[]>([])
@@ -105,6 +118,16 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
   })
   useEffect(() => { try { localStorage.setItem(CH_KEY, JSON.stringify(chOn)) } catch { /* ignore */ } }, [chOn])
   const enabledCh = useMemo(() => new Set(CHANNELS.filter(c => chOn[c.key]).map(c => c.key)), [chOn])
+
+  // Per-service (channel) breakdown under each client, per-browser.
+  const [detail, setDetail] = useState<boolean>(() => {
+    try { return localStorage.getItem(DETAIL_KEY) === "1" } catch { return false }
+  })
+  useEffect(() => { try { localStorage.setItem(DETAIL_KEY, detail ? "1" : "0") } catch { /* ignore */ } }, [detail])
+
+  // Google-Sheets export is async (backend writes, we poll for the URL).
+  const [sheetsExporting, setSheetsExporting] = useState(false)
+  const [sheetsUrl, setSheetsUrl] = useState("")
 
   useEffect(() => {
     apiFetch("/api/partnership/data")
@@ -210,18 +233,73 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
       domains: groups.reduce((a, g) => a + g.clients.filter(x => (x.perMonth[mo] || 0) > 0).length, 0),
     })), [periodMonths, grand, groups])
 
-  const exportCSV = useCallback(() => {
-    const head = ["agency", "client", "organisation_id", "domain", "type", ...periodMonths, "period_sum"]
-    const lines = [head.join(",")]
+  // Build the export table (rows[0] = header). Shared by CSV / XLSX / Sheets so
+  // every format matches the on-screen pivot. With detail on, each client gets a
+  // "(Σ all)" total row followed by one row per enabled service (channel) > 0.
+  const buildRows = useCallback((withDetail: boolean): (string | number)[][] => {
+    const svcCol = withDetail ? [tx.colService] : []
+    const head: (string | number)[] = ["agency", "client", "organisation_id", "domain", "type",
+      ...svcCol, ...periodMonths, "period_sum"]
+    const rows: (string | number)[][] = [head]
     for (const g of groups) for (const x of g.clients) {
-      const row = [g.partner, x.c.organisation, String(x.c.organisation_id), siteOf(x.c), x.c.types,
-        ...periodMonths.map(mo => String(Math.round(x.perMonth[mo] || 0))), String(Math.round(x.sum))]
-      lines.push(row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(","))
+      const base: (string | number)[] = [g.partner, x.c.organisation, x.c.organisation_id, siteOf(x.c), x.c.types]
+      if (!withDetail) {
+        rows.push([...base, ...periodMonths.map(mo => Math.round(x.perMonth[mo] || 0)), Math.round(x.sum)])
+        continue
+      }
+      rows.push([...base, tx.svcAll, ...periodMonths.map(mo => Math.round(x.perMonth[mo] || 0)), Math.round(x.sum)])
+      for (const c of CHANNELS) {
+        if (!chOn[c.key]) continue
+        const vals = periodMonths.map(mo => x.map[mo]?.ch?.[c.key] || 0)
+        const s = vals.reduce((a, b) => a + b, 0)
+        if (s <= 0) continue
+        rows.push([...base, c.label, ...vals.map(v => Math.round(v)), Math.round(s)])
+      }
     }
-    const blob = new Blob([lines.join("\n")], { type: "text/csv" })
+    return rows
+  }, [groups, periodMonths, chOn, tx])
+
+  const exportCSV = useCallback(() => {
+    const csv = buildRows(detail).map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n")
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" })
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob)
     a.download = "partnership_mrr.csv"; a.click()
-  }, [groups, periodMonths])
+  }, [buildRows, detail])
+
+  const exportXLSX = useCallback(async () => {
+    try {
+      const res = await fetch("/api/partnership/export/xlsx", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: buildRows(detail) }),
+      })
+      if (!res.ok) throw new Error("Export failed")
+      const blob = await res.blob()
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob)
+      a.download = `partnership_${new Date().toISOString().slice(0, 10)}.xlsx`; a.click()
+    } catch { alert(tx.xlsxErr) }
+  }, [buildRows, detail, tx])
+
+  const exportSheets = useCallback(async () => {
+    if (!groups.length) return
+    setSheetsExporting(true); setSheetsUrl("")
+    try {
+      const res = await fetch("/api/partnership/export/sheets", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: buildRows(detail), label: `${grand.nClients} clients` }),
+      })
+      if (!res.ok) throw new Error("Export failed")
+      let found = false
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 3000))
+        const r = await fetch("/api/partnership/export/sheets/url")
+        const d = await r.json()
+        if (d.url) { setSheetsUrl(d.url); found = true; break }
+        if (d.error) throw new Error(d.error)
+      }
+      if (!found) throw new Error(tx.sheetsTimeout)
+    } catch (e: any) { alert(tx.sheetsErr + (e?.message ? `: ${e.message}` : "")) }
+    finally { setSheetsExporting(false) }
+  }, [buildRows, detail, groups, grand, tx])
 
   const money = (v: number) => (v > 0 ? Math.round(v).toLocaleString() : "0")
 
@@ -308,7 +386,25 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
             </select>
           </span>
           <span className="filter-count">{grand.nClients} {tx.clients} · {groups.length}</span>
+          {/* Detail (per-service) toggle */}
+          <button onClick={() => setDetail(d => !d)} title={tx.detailNote}
+            style={{ cursor: "pointer", fontSize: 12, padding: "3px 10px", borderRadius: 14,
+              border: `1px solid ${detail ? "#a855f766" : "var(--border)"}`,
+              background: detail ? "#a855f722" : "transparent",
+              color: detail ? "#a855f7" : "var(--text-3)" }}>
+            {detail ? "●" : "○"} {tx.detail}
+          </button>
           <button className="btn-export" onClick={exportCSV}>↓ CSV</button>
+          {canDo("download") && <button className="btn-export" onClick={exportXLSX}>↓ XLSX</button>}
+          {canDo("sheets") && (
+            <button className="btn-export" onClick={exportSheets} disabled={sheetsExporting}>
+              {sheetsExporting ? tx.sheetsExporting : "↗ Google Sheets"}
+            </button>
+          )}
+          {canDo("sheets") && sheetsUrl && (
+            <a className="btn-export" href={sheetsUrl} target="_blank" rel="noopener"
+              style={{ textDecoration: "none" }}>{tx.openSheet}</a>
+          )}
         </div>
 
         {/* Selected agencies / clients as removable chips */}
@@ -374,9 +470,10 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
                         {money(g.sum)}
                       </td>
                     </tr>
-                    {/* Client rows */}
+                    {/* Client rows (+ per-service breakdown when detail is on) */}
                     {g.clients.map(x => (
-                      <tr key={x.c.organisation_id}>
+                      <Fragment key={x.c.organisation_id}>
+                      <tr>
                         <td className="td-domain" style={{ paddingLeft: 18 }}>
                           {siteOf(x.c)
                             ? <>
@@ -401,6 +498,26 @@ export default function PartnershipPage({ lang }: { lang: Lang }) {
                           {money(x.sum)}
                         </td>
                       </tr>
+                      {detail && CHANNELS.map(c => {
+                        if (!chOn[c.key]) return null
+                        const vals = periodMonths.map(mo => x.map[mo]?.ch?.[c.key] || 0)
+                        const s = vals.reduce((a, b) => a + b, 0)
+                        if (s <= 0) return null
+                        return (
+                          <tr key={x.c.organisation_id + "_" + c.key} style={{ background: "var(--bg-1)" }}>
+                            <td style={{ paddingLeft: 36, fontSize: 10, color: "var(--text-3)" }}>↳ {c.label}</td>
+                            <td />
+                            {vals.map((v, i) => (
+                              <td key={periodMonths[i]} style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-3)" }}
+                                title={v > 0 ? Math.round(v).toLocaleString() : undefined}>
+                                {cell(v)}
+                              </td>
+                            ))}
+                            <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-3)" }}>{money(s)}</td>
+                          </tr>
+                        )
+                      })}
+                      </Fragment>
                     ))}
                   </Fragment>
                 ))}
